@@ -718,11 +718,19 @@ class BookScannerService @Inject constructor(
 
         contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
+                if (selfChange) return
+                if (uri != null) {
+                    val uriStr = uri.toString().lowercase()
+                    // Filter out photos, video, audio changes to avoid useless full scans
+                    if (uriStr.contains("images") || uriStr.contains("audio") || uriStr.contains("video")) {
+                        return
+                    }
+                }
                 // Debounced: only trigger after DEBOUNCE_MS of inactivity
                 debounceJob?.cancel()
                 debounceJob = scope.launch {
                     delay(DEBOUNCE_MS)
-                    Log.d(TAG, "MediaStore change detected â€” triggering debounced quick scan")
+                    Log.d(TAG, "MediaStore relevant change detected — triggering debounced quick scan")
                     quickScan()
                 }
             }

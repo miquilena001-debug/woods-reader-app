@@ -108,7 +108,7 @@ class SherpaTtsEngine(
 
     private fun speakWithSherpa(requestId: TtsEngine.RequestId, text: String) {
         activeJob?.cancel()
-        activeJob = scope.launch {
+        activeJob = scope.launch(Dispatchers.Default) {
             engineListener?.onStart(requestId)
             try {
                 val prefs = userPreferencesRepository.userPreferencesFlow.first()

@@ -143,10 +143,14 @@ class StatsViewModel @Inject constructor(
     private fun calculateTimeSaved(summaries: List<com.example.woodsreader.data.database.SessionSummary>): String {
         val ttsSummary    = summaries.find { it.mode == com.example.woodsreader.data.model.ReadingMode.TTS }
         val manualSummary = summaries.find { it.mode == com.example.woodsreader.data.model.ReadingMode.MANUAL }
-        if (ttsSummary == null || manualSummary == null) return "0h"
+        if (ttsSummary == null || ttsSummary.avgWords <= 0.0) return "0h 0m"
         
         val ttsWords = ttsSummary.avgWords
-        val manualWpm = (manualSummary.avgWords / (manualSummary.avgMinutes.coerceAtLeast(1.0)))
+        val manualWpm = if (manualSummary != null && manualSummary.avgMinutes > 0) {
+            (manualSummary.avgWords / manualSummary.avgMinutes).coerceIn(100.0, 600.0)
+        } else {
+            250.0 // Velocidad base de lectura manual
+        }
         val ttsMinutes = ttsSummary.avgMinutes
         val manualEquivalentMinutes = if (manualWpm > 0) ttsWords / manualWpm else 0.0
         val savedMinutes = (manualEquivalentMinutes - ttsMinutes).coerceAtLeast(0.0)

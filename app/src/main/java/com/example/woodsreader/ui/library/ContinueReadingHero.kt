@@ -92,7 +92,7 @@ fun ContinueReadingHero(
                     contentAlignment = Alignment.Center
                 ) {
                     val coverFile = remember(coverPath) {
-                        coverPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+                        coverPath?.takeIf { it.isNotBlank() }?.let { File(it) }
                     }
 
                     if (coverFile != null) {

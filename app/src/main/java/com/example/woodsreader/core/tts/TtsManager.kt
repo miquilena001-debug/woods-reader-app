@@ -593,9 +593,9 @@ class TtsManager @Inject constructor(
         }
     }
 
-    private suspend fun initSherpaIfNeeded(): Boolean {
-        if (offlineTts != null) return true
-        return sherpaMutex.withLock {
+    private suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
+        if (offlineTts != null) return@withContext true
+        sherpaMutex.withLock {
             if (offlineTts != null) return@withLock true
             try {
                 Timber.d("Initializing Sherpa ONNX...")
@@ -605,13 +605,11 @@ class TtsManager @Inject constructor(
                 val espeakDir = File(context.filesDir, "espeak-ng-data")
                 if (!espeakDir.exists() || espeakDir.list()?.isEmpty() == true) {
                     Timber.d("Copying espeak-ng-data from assets to ${espeakDir.absolutePath}...")
-                    withContext(Dispatchers.IO) {
-                        copyAssetsFolder(
-                            context.assets,
-                            "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
-                            espeakDir.absolutePath
-                        )
-                    }
+                    copyAssetsFolder(
+                        context.assets,
+                        "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
+                        espeakDir.absolutePath
+                    )
                     Timber.d("espeak-ng-data copied successfully")
                 }
 

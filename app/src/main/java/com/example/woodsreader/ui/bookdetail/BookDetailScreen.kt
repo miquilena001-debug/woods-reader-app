@@ -194,7 +194,7 @@ private fun CoverHeroSection(
             .height(340.dp)
     ) {
         val coverFile = remember(book.coverCachePath) {
-            book.coverCachePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+            book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }
         }
 
         // Blurred background cover
@@ -342,7 +342,7 @@ private fun BookCoverCard(book: BookEntity, modifier: Modifier = Modifier) {
             .ambientGlow(HiddenForest.Accent, radius = 24.dp, alpha = 0.3f)
     ) {
         val coverFile = remember(book.coverCachePath) {
-            book.coverCachePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+            book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }
         }
 
         if (coverFile != null) {

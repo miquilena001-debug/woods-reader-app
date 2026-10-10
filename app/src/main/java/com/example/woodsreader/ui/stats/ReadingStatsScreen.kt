@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import java.time.LocalDate
 import java.util.Locale
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import javax.inject.Inject
@@ -43,20 +44,20 @@ fun ReadingStatsScreen(
     onBack: () -> Unit = {},
     viewModel: StatsViewModel = hiltViewModel()
 ) {
-    val completedBooks     by viewModel.completedBooksCount.collectAsState()
-    val totalTimeFormatted by viewModel.totalReadingTimeFormatted.collectAsState()
-    val streak             by viewModel.currentStreak.collectAsState()
-    val weeklyWords        by viewModel.weeklyWords.collectAsState()
-    val heatmapDays        by viewModel.heatmapDays.collectAsState()
-    val todayMinutes       by viewModel.todayReadingMinutes.collectAsState()
-    val todayWords         by viewModel.todayWordsProcessed.collectAsState()
-    val hourlyActivity     by viewModel.hourlyActivity.collectAsState()
-    val bookDistribution   by viewModel.bookDistribution.collectAsState()
-    val averageWpm         by viewModel.averageWpm.collectAsState()
-    val dailyCapacity      by viewModel.dailyCapacityWords.collectAsState()
-    val modeEndurance      by viewModel.modeEndurance.collectAsState()
-    val timeSaved          by viewModel.totalTimeSaved.collectAsState()
-    val smartGoal          by viewModel.smartDailyGoalWords.collectAsState()
+    val completedBooks     by viewModel.completedBooksCount.collectAsStateWithLifecycle()
+    val totalTimeFormatted by viewModel.totalReadingTimeFormatted.collectAsStateWithLifecycle()
+    val streak             by viewModel.currentStreak.collectAsStateWithLifecycle()
+    val weeklyWords        by viewModel.weeklyWords.collectAsStateWithLifecycle()
+    val heatmapDays        by viewModel.heatmapDays.collectAsStateWithLifecycle()
+    val todayMinutes       by viewModel.todayReadingMinutes.collectAsStateWithLifecycle()
+    val todayWords         by viewModel.todayWordsProcessed.collectAsStateWithLifecycle()
+    val hourlyActivity     by viewModel.hourlyActivity.collectAsStateWithLifecycle()
+    val bookDistribution   by viewModel.bookDistribution.collectAsStateWithLifecycle()
+    val averageWpm         by viewModel.averageWpm.collectAsStateWithLifecycle()
+    val dailyCapacity      by viewModel.dailyCapacityWords.collectAsStateWithLifecycle()
+    val modeEndurance      by viewModel.modeEndurance.collectAsStateWithLifecycle()
+    val timeSaved          by viewModel.totalTimeSaved.collectAsStateWithLifecycle()
+    val smartGoal          by viewModel.smartDailyGoalWords.collectAsStateWithLifecycle()
     val monthLabel         = viewModel.currentMonthLabel
 
     var selectedPeriod by remember { mutableStateOf(StatsPeriod.Weekly) }

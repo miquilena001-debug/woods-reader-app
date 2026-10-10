@@ -134,7 +134,7 @@ fun WoodsBookCard(
             contentAlignment = Alignment.Center
         ) {
             val coverFile = remember(book.coverCachePath) {
-                book.coverCachePath?.let { java.io.File(it) }?.takeIf { it.exists() && it.length() > 0 }
+                book.coverCachePath?.takeIf { it.isNotBlank() }?.let { java.io.File(it) }
             }
 
             if (coverFile != null) {

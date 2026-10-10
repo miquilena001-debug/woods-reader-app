@@ -281,11 +281,11 @@ interface ReadingSessionDao {
     fun getAverageWordsPerDay(sinceMs: Long): Flow<Double?>
 
     @Query("""
-        SELECT AVG(wordsRead) as avgWords, 
-               AVG((endAt - startAt) / 60000.0) as avgMinutes,
+        SELECT SUM(wordsRead) as avgWords, 
+               SUM(CASE WHEN endAt IS NOT NULL THEN (endAt - startAt) / 60000.0 ELSE 0.0 END) as avgMinutes,
                mode
         FROM reading_sessions 
-        WHERE startAt >= :sinceMs
+        WHERE startAt >= :sinceMs AND endAt IS NOT NULL
         GROUP BY mode
     """)
     fun getSessionSummaries(sinceMs: Long): Flow<List<SessionSummary>>

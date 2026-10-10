@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 
 @HiltViewModel
@@ -54,8 +56,9 @@ class LibraryViewModel @Inject constructor(
                 }
             }
         }
-        viewModelScope.launch {
-            // Auto-heal any missing or broken covers in the background
+        viewModelScope.launch(Dispatchers.IO) {
+            // Allow UI first paint to complete smoothly before background cover enrichment starts
+            delay(2_500)
             scannerService.enrichMissingCovers()
         }
     }

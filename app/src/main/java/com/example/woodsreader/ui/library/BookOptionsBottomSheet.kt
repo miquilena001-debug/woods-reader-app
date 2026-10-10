@@ -88,7 +88,7 @@ fun BookOptionsBottomSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     val coverFile = remember(book.coverCachePath) {
-                        book.coverCachePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+                        book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }
                     }
 
                     if (coverFile != null) {

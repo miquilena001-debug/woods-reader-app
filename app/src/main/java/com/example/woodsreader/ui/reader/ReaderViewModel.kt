@@ -258,7 +258,7 @@ class ReaderViewModel @Inject constructor(
 
                 publication = pub
 
-                withContext(Dispatchers.Default) {
+                viewModelScope.launch(Dispatchers.Default) {
                     val positions = try { pub.positions() } catch (e: Exception) {
                         Log.w(TAG, "Error calculating positions", e)
                         emptyList()
