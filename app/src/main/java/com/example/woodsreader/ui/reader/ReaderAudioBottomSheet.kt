@@ -93,19 +93,23 @@ fun ReaderControlBottomSheet(
                 .padding(bottom = 24.dp)
         ) {
             // ── TAB SELECTOR ─────────────────────────────────────────────────────
+            val availableTabs = listOf(ReaderTab.TEXT, ReaderTab.NOTES)
+            val selectedTabIndex = availableTabs.indexOf(activeTab).let { if (it >= 0) it else 0 }
+
             TabRow(
-                selectedTabIndex = activeTab.ordinal,
+                selectedTabIndex = selectedTabIndex,
                 containerColor = Color.Transparent,
                 contentColor = HiddenForest.Accent,
                 indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        Modifier.tabIndicatorOffset(tabPositions[activeTab.ordinal]),
-                        color = HiddenForest.Accent
-                    )
+                    if (selectedTabIndex in tabPositions.indices) {
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                            color = HiddenForest.Accent
+                        )
+                    }
                 },
                 divider = { HorizontalDivider(color = HiddenForest.Outline.copy(alpha = 0.1f)) }
             ) {
-                val availableTabs = listOf(ReaderTab.TEXT, ReaderTab.NOTES)
                 availableTabs.forEach { tab ->
                     Tab(
                         selected = activeTab == tab,

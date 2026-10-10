@@ -39,7 +39,7 @@ android {
     }
 
     androidResources {
-        noCompress += listOf("onnx", "txt", "")
+        noCompress += listOf("onnx", "txt")
     }
 
     // NDK r27b obligatorio para Android 15 (alineación de páginas 16KB)

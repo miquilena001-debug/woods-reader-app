@@ -292,6 +292,7 @@ class ReaderViewModel @Inject constructor(
 
                 withContext(Dispatchers.IO) {
                     bookRepository.markOpened(book.id)
+                    userPreferencesRepository.updateLastReadBookId(book.id)
                 }
 
                 _uiState.value = ReaderUiState.Success(
@@ -519,7 +520,18 @@ class ReaderViewModel @Inject constructor(
     fun deleteHighlight(highlight: HighlightEntity) = viewModelScope.launch { bookRepository.deleteHighlight(highlight) }
 
     fun addHighlight(locator: Locator, color: HighlightColor, text: String) {
-
+        viewModelScope.launch {
+            val chapter = locator.title ?: _chapterInfo.value.title ?: ""
+            val entity = HighlightEntity(
+                bookId = bookId,
+                locatorJson = locator.toJSON().toString(),
+                highlightedText = text,
+                color = color,
+                chapterTitle = chapter,
+                createdAt = System.currentTimeMillis()
+            )
+            bookRepository.saveHighlight(entity)
+        }
     }
 
     fun addBookmark(locator: Locator) = viewModelScope.launch {

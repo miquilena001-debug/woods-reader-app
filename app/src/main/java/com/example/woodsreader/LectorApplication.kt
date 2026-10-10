@@ -7,6 +7,9 @@ import androidx.hilt.work.HiltWorkerFactory
 import javax.inject.Inject
 import dagger.hilt.android.HiltAndroidApp
 
+import timber.log.Timber
+import com.example.woodsreader.BuildConfig
+
 /**
  * Clase Application del proyecto.
  * @HiltAndroidApp es obligatorio para que Hilt genere el grafo de dependencias.
@@ -24,7 +27,11 @@ class LectorApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        
+
+        if (BuildConfig.DEBUG) {
+            Timber.plant(Timber.DebugTree())
+        }
+
         // Inicializar el subsistema local para PDF (PDFBox)
         PDFBoxResourceLoader.init(applicationContext)
     }

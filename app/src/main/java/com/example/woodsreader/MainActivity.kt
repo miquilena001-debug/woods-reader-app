@@ -309,7 +309,7 @@ fun MainLayout(
             if (showBottomBar) {
                 com.example.woodsreader.ui.library.WoodsBottomNavigation(
                     currentRoute      = currentRoute,
-                    lastBookId        = lastBookId,
+                    lastBookId        = lastBookId ?: recentBooks.firstOrNull()?.id,
                     recentBooks       = recentBooks,
                     onNavigate        = { route ->
                         if (currentRoute != route) {
