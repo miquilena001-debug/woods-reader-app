@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Woods Reader</string>
+    
+    <!-- Reader TopBar -->
+    <string name="reader_back">Volver</string>
+    <string name="reader_reading_in_progress">LECTURA EN CURSO</string>
+    <string name="reader_highlight">Resaltar</string>
+    <string name="reader_tts_pause">Pausar TTS</string>
+    <string name="reader_tts_play">Iniciar TTS</string>
+    <string name="reader_menu">Más opciones</string>
+    
+    <!-- Reader TTS Macro Window -->
+    <string name="tts_open_macro">Abrir Macro Ventana TTS</string>
+    
+    <!-- Reader Controls -->
+    <string name="reader_next_chapter">Siguiente Capítulo</string>
+    <string name="reader_previous_chapter">Capítulo Anterior</string>
+
+    <!-- Notificación TTS -->
+    <string name="tts_notification_channel_id">woods_tts_playback</string>
+    <string name="tts_notification_channel_name">Woods Reader · Narración</string>
+    <string name="tts_notification_channel_desc">Controles de narración TTS, pantalla de bloqueo y Bluetooth</string>
+    <string name="tts_notification_title">Leyendo</string>
+    <string name="tts_action_prev">Enunciado anterior</string>
+    <string name="tts_action_play">Reproducir</string>
+    <string name="tts_action_pause">Pausar</string>
+    <string name="tts_action_next">Siguiente enunciado</string>
+</resources>

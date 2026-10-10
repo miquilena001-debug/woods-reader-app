@@ -1,0 +1,15 @@
+<resources>
+
+    <style name="Theme.WoodsReader" parent="Theme.MaterialComponents.Light" />
+
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Establece el color de fondo de la splash screen -->
+        <item name="windowSplashScreenBackground">#0A0D0A</item>
+        
+        <!-- Usa el vector generado en foreground como animación del centro -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        
+        <!-- Establece el tema que se aplicará después de cargar -->
+        <item name="postSplashScreenTheme">@style/Theme.WoodsReader</item>
+    </style>
+</resources>

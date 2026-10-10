@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ── Red ─────────────────────────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- ── Almacenamiento — acceso completo para escanear libros ──────────── -->
+    <!-- Equivalente a la app Files de Android. Restringido en Play Store,    -->
+    <!-- pero correcto para APK de uso personal (sin Play Store).             -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- ── TTS y Audio ──────────────────────────────────────────────────────── -->
+    <!-- WAKE_LOCK: mantiene CPU activa mientras el TTS lee con pantalla apagada -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- POST_NOTIFICATIONS: requerido en Android 13+ para mostrar la notificación TTS -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- BLUETOOTH_CONNECT: permite que los auriculares A40 reciban comandos AVRCP -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application
+        android:name=".LectorApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WoodsReader"
+        android:enableOnBackInvokedCallback="true"
+        android:largeHeap="true"
+        tools:targetApi="34">
+
+        <!-- ── Activity principal ─────────────────────────────────────────── -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.App.Starting"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- ── Abrir archivos EPUB desde cualquier explorador de archivos ── -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="application/epub+zip" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file"
+                    android:host="*"
+                    android:pathPattern=".*\\.epub"
+                    android:mimeType="application/epub+zip" />
+            </intent-filter>
+
+            <!-- ── Abrir archivos PDF desde cualquier explorador de archivos ── -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file"
+                    android:host="*"
+                    android:pathPattern=".*\\.pdf"
+                    android:mimeType="application/pdf" />
+            </intent-filter>
+        </activity>
+
+        <!-- ── Foreground Service para Escaneo de Libros ──────────────────────── -->
+        <service
+            android:name=".service.BookScannerForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <!-- ── Foreground Service para Narración (TTS) ────────────────────────── -->
+        <!-- exported="true" + intent-filter son OBLIGATORIOS para que:
+             1. La pantalla de bloqueo muestre controles de medios.
+             2. Los auriculares Bluetooth (ej. Soundcore A40) envíen comandos AVRCP.
+             3. El panel de notificaciones enlace correctamente con MediaSession. -->
+        <service
+            android:name=".service.ReaderTtsService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+    </application>
+
+</manifest>
