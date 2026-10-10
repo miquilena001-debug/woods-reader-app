@@ -28,13 +28,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Woods Reader"
 
-// ── Módulos Habilitados ───────────────────────────────────────────────────────
+// ── Módulos ───────────────────────────────────────────────────────────────────
 include(":app")
-include(":core:common")
-include(":core:database")
-include(":core:datastore")
-include(":core:model")
-include(":core:ui")
-include(":feature:library")
-include(":feature:reader")
-include(":feature:settings")
