@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import javax.inject.Inject
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -194,10 +195,49 @@ class MainActivity : FragmentActivity() {
 
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.action == Intent.ACTION_VIEW) {
-            val uri = intent.data
-            if (uri != null) {
-                Log.d("WoodsReader", "URI externo recibido: $uri")
-                Toast.makeText(this, "Abriendo libro...", Toast.LENGTH_SHORT).show()
+            val uri = intent.data ?: return
+            Log.d("WoodsReader", "URI externo recibido: $uri")
+            Toast.makeText(this, "Abriendo libro...", Toast.LENGTH_SHORT).show()
+            lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    val name = resolveFileName(uri)
+                    val size = resolveFileSize(uri)
+                    val hash = try { computePartialHash(uri) } catch (_: Exception) { "" }
+
+                    val existing = if (hash.isNotBlank()) {
+                        bookRepository.getBookByHash(hash)
+                    } else {
+                        null
+                    } ?: bookRepository.getBookByPath(uri.toString())
+
+                    if (existing != null) {
+                        _pendingBookId.value = existing.id
+                        return@launch
+                    }
+
+                    // Extraer metadatos e insertar
+                    val entity = bookMetadataExtractor.extractMetadata(uri, name, size, hash)
+                        ?: com.example.woodsreader.data.database.BookEntity(
+                            id = java.util.UUID.randomUUID().toString(),
+                            title = name.substringBeforeLast('.'),
+                            author = "Desconocido",
+                            filePath = uri.toString(),
+                            format = when {
+                                name.endsWith(".pdf", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.PDF
+                                name.endsWith(".cbz", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.CBZ
+                                name.endsWith(".cbr", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.CBR
+                                name.endsWith(".fb2", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.FB2
+                                else -> com.example.woodsreader.data.model.BookFormat.EPUB
+                            },
+                            fileSizeBytes = size,
+                            fileHash = hash,
+                            importedAt = System.currentTimeMillis()
+                        )
+                    bookRepository.upsertBook(entity)
+                    _pendingBookId.value = entity.id
+                } catch (e: Exception) {
+                    Log.e("WoodsReader", "Error al importar libro externo: $uri", e)
+                }
             }
         }
     }

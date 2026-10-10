@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.core.managers
+package com.example.woodsreader.core.managers
 
 import com.example.woodsreader.data.database.ReadingSessionEntity
 import com.example.woodsreader.data.database.ReadingStatsEntity
@@ -7,8 +7,10 @@ import com.example.woodsreader.data.repository.BookRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,10 +30,15 @@ class ReadingSessionManager @Inject constructor(
         const val MIN_WORDS_FOR_GHOST = 10L
     }
 
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionMutex = Mutex()
 
     @Volatile
     var activeSessionId: String? = null
+        private set
+
+    @Volatile
+    var activeBookId: String? = null
         private set
 
     @Volatile
@@ -72,26 +79,29 @@ class ReadingSessionManager @Inject constructor(
         }
     }
 
-    fun startNewSession(scope: CoroutineScope, bookId: String, mode: ReadingMode, initialLocator: Locator?) {
-        scope.launch {
+    fun startNewSession(scope: CoroutineScope = appScope, bookId: String, mode: ReadingMode, initialLocator: Locator?) {
+        val targetScope = if (scope.isActive) scope else appScope
+        targetScope.launch {
             sessionMutex.withLock {
                 internalStartSession(bookId, mode, initialLocator)
             }
         }
     }
 
-    fun stopActiveSession(scope: CoroutineScope, bookId: String, currentLocator: Locator?) {
-        scope.launch {
+    fun stopActiveSession(scope: CoroutineScope = appScope, bookId: String, currentLocator: Locator?) {
+        val targetScope = if (scope.isActive) scope else appScope
+        targetScope.launch {
             sessionMutex.withLock {
                 internalStopSession(bookId, currentLocator)
             }
         }
     }
 
-    fun switchSessionMode(scope: CoroutineScope, bookId: String, newMode: ReadingMode, currentLocator: Locator?) {
-        scope.launch {
+    fun switchSessionMode(scope: CoroutineScope = appScope, bookId: String, newMode: ReadingMode, currentLocator: Locator?) {
+        val targetScope = if (scope.isActive) scope else appScope
+        targetScope.launch {
             sessionMutex.withLock {
-                if (currentSessionMode == newMode && activeSessionId != null) {
+                if (currentSessionMode == newMode && activeSessionId != null && activeBookId == bookId) {
                     lastActivityTime = timeProvider.currentTimeMillis()
                     return@withLock
                 }
@@ -101,8 +111,9 @@ class ReadingSessionManager @Inject constructor(
         }
     }
 
-    fun recordActivity(scope: CoroutineScope, bookId: String, currentLocator: Locator?) {
-        scope.launch {
+    fun recordActivity(scope: CoroutineScope = appScope, bookId: String, currentLocator: Locator?) {
+        val targetScope = if (scope.isActive) scope else appScope
+        targetScope.launch {
             sessionMutex.withLock {
                 lastActivityTime = timeProvider.currentTimeMillis()
                 if (activeSessionId == null) {
@@ -113,7 +124,17 @@ class ReadingSessionManager @Inject constructor(
     }
 
     private suspend fun internalStartSession(bookId: String, mode: ReadingMode, initialLocator: Locator?) {
-        if (activeSessionId != null) return // Already active
+        if (activeSessionId != null) {
+            if (activeBookId == bookId) return // Already active for this book
+            // Different book: close previous session cleanly first
+            val prevBook = activeBookId
+            if (prevBook != null) {
+                internalStopSession(prevBook, null)
+            } else {
+                activeSessionId = null
+                activeBookId = null
+            }
+        }
 
         val startTime = timeProvider.currentTimeMillis()
         sessionStartTime = startTime
@@ -121,6 +142,7 @@ class ReadingSessionManager @Inject constructor(
         val sessionId = UUID.randomUUID().toString()
         
         activeSessionId = sessionId
+        activeBookId = bookId
         currentSessionMode = mode
         sessionStartLocator = initialLocator
         sessionStartLocatorJson = initialLocator?.toJSON()?.toString() ?: ""
@@ -140,7 +162,9 @@ class ReadingSessionManager @Inject constructor(
 
     private suspend fun internalStopSession(bookId: String, currentLocator: Locator?) {
         val sessionId = activeSessionId ?: return
+        val targetBookId = activeBookId ?: bookId
         activeSessionId = null // Detach immediately
+        activeBookId = null
 
         val startTime = sessionStartTime
         val currentTime = timeProvider.currentTimeMillis()
@@ -161,7 +185,7 @@ class ReadingSessionManager @Inject constructor(
             if (shouldDiscard) {
                 bookRepository.deleteSession(sessionId)
             } else {
-                saveValidSession(sessionId, bookId, durationMs, words, currentLocator)
+                saveValidSession(sessionId, targetBookId, durationMs, words, currentLocator)
             }
         }
     }

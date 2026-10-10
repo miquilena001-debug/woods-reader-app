@@ -282,9 +282,12 @@ class ReaderViewModel @Inject constructor(
                         recordActivity()
                     }
                 } else {
-                    val initialLocator = book.currentLocatorJson?.let {
-                        try { Locator.fromJSON(org.json.JSONObject(it)) } catch (_: Exception) { null }
-                    }
+                    val initialLocator = validateAndRestoreLocator(
+                        publication = pub,
+                        cfiJson = book.currentLocatorJson,
+                        fallbackHref = book.fallbackLocatorHref,
+                        fallbackPosition = book.fallbackLocatorPosition
+                    )
                     viewModelScope.launch {
                         epubFormatManager.initNavigator(pub, initialLocator, viewModelScope, navigator)
                     }
@@ -423,7 +426,7 @@ class ReaderViewModel @Inject constructor(
         } else {
             (navigator as? VisualNavigator)?.currentLocator?.value
         }
-        readingSessionManager.stopActiveSession(viewModelScope, bookId, currentLocator)
+        readingSessionManager.stopActiveSession(bookId = bookId, currentLocator = currentLocator)
     }
 
     fun switchSessionMode(newMode: ReadingMode) {
@@ -644,9 +647,24 @@ class ReaderViewModel @Inject constructor(
                 _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
 
             }
-
         }
 
+        updateChapterMetadata(locator)
+
+        val totalProg = (locator.locations.totalProgression ?: 0.0).toFloat()
+        val locJson = locator.toJSON().toString()
+        val fHref = locator.href.toString()
+        val fPos = locator.locations.position ?: 0
+
+        viewModelScope.launch(Dispatchers.IO) {
+            bookRepository.updateReadingProgressWithFallback(
+                bookId = bookId,
+                progress = totalProg,
+                locatorJson = locJson,
+                fallbackHref = fHref,
+                fallbackPosition = fPos
+            )
+        }
 
         recordActivity()
     }

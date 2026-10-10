@@ -411,36 +411,66 @@ class BookScannerService @Inject constructor(
             return
         }
 
+        val storageState = android.os.Environment.getExternalStorageState()
+        if (storageState != android.os.Environment.MEDIA_MOUNTED && storageState != android.os.Environment.MEDIA_MOUNTED_READ_ONLY) {
+            Log.w(TAG, "OrphanCleanup: External storage not mounted ($storageState), skipping cleanup to protect books")
+            return
+        }
+
         _scanProgress.value = "Verificando archivos existentes…"
         Log.d(TAG, "OrphanCleanup: starting")
 
         try {
             val allPaths = repository.getAllBookPaths()
-            var orphanCount = 0
+            val orphansToDelete = mutableListOf<String>()
 
             for (bookPath in allPaths) {
                 val path = bookPath.filePath
 
                 // Only check legacy file:// and absolute paths — SAF content:// can't be verified
                 val isAccessible = when {
-                    path.startsWith("/") -> File(path).exists()
+                    path.startsWith("/") -> {
+                        val f = File(path)
+                        val parent = f.parentFile
+                        if (parent != null && !parent.exists() && path.startsWith("/storage/") && !path.startsWith("/storage/emulated/")) {
+                            true // SD card or external volume unmounted; protect book
+                        } else {
+                            f.exists()
+                        }
+                    }
                     path.startsWith("file://") -> {
                         val filePath = Uri.decode(path.removePrefix("file://"))
-                        File(filePath).exists()
+                        val f = File(filePath)
+                        val parent = f.parentFile
+                        if (parent != null && !parent.exists() && filePath.startsWith("/storage/") && !filePath.startsWith("/storage/emulated/")) {
+                            true
+                        } else {
+                            f.exists()
+                        }
                     }
                     else -> true // content:// URIs — assume accessible, can't verify cheaply
                 }
 
                 if (!isAccessible) {
-                    Log.d(TAG, "OrphanCleanup: removing orphan ${bookPath.id} (${path})")
-                    repository.deleteBookById(bookPath.id)
-                    orphanCount++
+                    orphansToDelete.add(bookPath.id)
                 }
             }
 
+            // Circuit breaker: do not wipe whole library on sudden mount loss
+            if (allPaths.size > 4 && orphansToDelete.size.toFloat() / allPaths.size > 0.4f) {
+                Log.w(TAG, "OrphanCleanup: Mass-deletion circuit breaker triggered (${orphansToDelete.size}/${allPaths.size}). Aborting cleanup.")
+                return
+            }
+
+            for (id in orphansToDelete) {
+                Log.d(TAG, "OrphanCleanup: removing orphan $id")
+                repository.deleteBookById(id)
+            }
+
+            val orphanCount = orphansToDelete.size
             if (orphanCount > 0) {
                 Log.d(TAG, "OrphanCleanup: removed $orphanCount orphaned books")
-                _scanProgress.value = "âœ“ $orphanCount libros huÃ©rfanos eliminados"
+                _scanProgress.value = "✓ $orphanCount libros huérfanos eliminados"
                 delay(2_000)
             }
         } catch (e: Exception) {
