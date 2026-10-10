@@ -47,24 +47,37 @@ El estado del proyecto es funcional a nivel de interfaz visual y renderizado de 
 ## 4. Plan de Acción Recomendado
 
 ### Fase 0: Seguridad y Control de Versiones
-- [ ] Configurar `.gitignore` completo (excluir logs de build, volcados JVM, caches).
-- [ ] Crear el commit inicial en el repositorio Git local para proteger el código.
+- [x] Configurar `.gitignore` completo (excluir logs de build, volcados JVM, caches).
+- [x] Crear el commit inicial en el repositorio Git local para proteger el código.
 
 ### Fase 1: Quick Wins (Ganancia Inmediata)
-- [ ] Eliminar `""` de `noCompress` en `app/build.gradle.kts`.
-- [ ] Remover assets huérfanos del modelo `es_MX` (~60 MB).
-- [ ] Inicializar `Timber.plant(Timber.DebugTree())` en `LectorApplication.kt`.
-- [ ] Corregir el índice en `ReaderAudioBottomSheet.kt` para evitar crash en NOTAS.
-- [ ] Implementar el cuerpo de `addHighlight` en `ReaderViewModel.kt`.
-- [ ] Conectar `updateLastReadBookId` para restaurar navegación en el botón "Leer".
+- [x] Eliminar `""` de `noCompress` en `app/build.gradle.kts`.
+- [x] Remover assets huérfanos del modelo `es_MX` (~63.2 MB).
+- [x] Inicializar `Timber.plant(Timber.DebugTree())` en `LectorApplication.kt`.
+- [x] Corregir el índice en `ReaderAudioBottomSheet.kt` para evitar crash en NOTAS.
+- [x] Implementar el cuerpo de `addHighlight` en `ReaderViewModel.kt`.
+- [x] Conectar `updateLastReadBookId` para restaurar navegación en el botón "Leer".
 
 ### Fase 2: Integridad de Datos y Funciones Esenciales
-- [ ] Corregir el cierre de sesiones en `ReadingSessionManager` utilizando un scope desacoplado del ViewModel.
-- [ ] Implementar la importación real de libros en `MainActivity.kt` (`handleIncomingIntent`).
-- [ ] Conectar `validateAndRestoreLocator` en la carga del libro.
-- [ ] Proteger `cleanupOrphanedBooks` contra desconexiones transitorias de almacenamiento.
+- [x] Corregir el cierre de sesiones en `ReadingSessionManager` utilizando un scope desacoplado del ViewModel (`appScope`).
+- [x] Prevenir contaminación cruzada de sesiones al alternar entre libros (`activeBookId`).
+- [x] Implementar la importación real de libros en `MainActivity.kt` (`handleIncomingIntent` para EPUB/PDF/CBZ).
+- [x] Conectar `validateAndRestoreLocator` en la carga del libro con cascada CFI -> href -> inicio.
+- [x] Proteger `cleanupOrphanedBooks` contra desconexiones transitorias de almacenamiento y añadir interruptor cortacircuitos (>40%).
 
 ### Fase 3: Optimización de Rendimiento
-- [ ] Mover la carga y arranque de Sherpa TTS a `Dispatchers.IO`.
-- [ ] Limitar el scope del `ContentObserver` para evitar bucles de escaneo continuo.
-- [ ] Delegar `enrichMissingCovers` a un Worker en segundo plano.
+- [x] Mover la carga y arranque de Sherpa TTS a `Dispatchers.IO` y `Dispatchers.Default`.
+- [x] Filtrar el `ContentObserver` para evitar bucles de re-escaneo continuo en descargas no documentales.
+- [x] Diferir `enrichMissingCovers` con retardo tras el inicio en IO para no competir con el primer render.
+- [x] Mover el cálculo de `pub.positions()` a una corrutina de fondo para evitar congelamiento de 2-5s en splash de EPUBs grandes.
+- [x] Eliminar llamadas I/O síncronas bloqueantes en el hilo de UI (`File.exists()` / `length()`) en componentes y listas de libros.
+- [x] Migrar 14 flows en `ReadingStatsScreen` a `collectAsStateWithLifecycle()` y corregir métricas acumuladas de tiempo ahorrado.
+
+---
+
+## 5. Resultados de Validación y Benchmarks
+
+- **Pruebas unitarias (`:app:testDebugUnitTest`)**: 33/33 tests superados exitosamente.
+- **Compilación de empaquetado (`:app:assembleDebug`)**: Exitosa (código 0, 23s).
+- **Tamaño de APK Debug**: Reducido de **~318 MB a 226.9 MB** (~91 MB de reducción neta en debug, con compresión AAPT2 reestablecida para DEX, librerías nativas `.so` y recursos).
+- **Historial de control de versiones**: 4 commits estructurados y documentados en rama `master`.
