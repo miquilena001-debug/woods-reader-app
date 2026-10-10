@@ -1,5 +1,6 @@
 package com.example.woodsreader.ui.reader
 import android.app.Application
+import com.example.woodsreader.core.pipeline.PdfBookViewSynchronizer
 import com.example.woodsreader.core.managers.SleepTimer
 import com.example.woodsreader.core.managers.ReadingSessionManager
 import com.example.woodsreader.core.managers.ReadingProgressManager
@@ -91,8 +92,8 @@ class ReaderViewModel @Inject constructor(
 
     private val readingSessionManager: ReadingSessionManager,
     private val readingProgressManager: ReadingProgressManager,
-    private val sleepTimer: SleepTimer
-
+    private val sleepTimer: SleepTimer,
+    private val pdfBookViewSynchronizer: PdfBookViewSynchronizer
 ) : ViewModel() {
 
         companion object {
@@ -1194,6 +1195,39 @@ class ReaderViewModel @Inject constructor(
     fun onUserInteraction()      { lastUserInteractionTime = System.currentTimeMillis() }
 
     fun isInteractionLockActive() = (System.currentTimeMillis() - lastUserInteractionTime) < 3000L
+
+    fun togglePdfBookView() {
+        val currentState = _viewState.value
+        val isActivating = !currentState.isPdfBookViewActive
+        val processedDoc = epubFormatManager.currentProcessedDocument.value
+        val blocks = processedDoc?.displayBlocks ?: emptyList()
+
+        if (isActivating) {
+            val currentPage = currentTtsPage.value
+            val targetBlock = pdfBookViewSynchronizer.findBlockIndexForPage(blocks, currentPage)
+            _viewState.update {
+                it.copy(
+                    isPdfBookViewActive = true,
+                    pdfBookViewBlockIndex = targetBlock
+                )
+            }
+        } else {
+            val currentBlock = currentState.pdfBookViewBlockIndex
+            val totalPages = pdfReflowManager.reflowState.value.totalPages
+            val targetPage = pdfBookViewSynchronizer.findPageForBlockIndex(blocks, currentBlock, totalPages)
+            pdfReflowManager.jumpToPage(viewModelScope, targetPage)
+            _viewState.update {
+                it.copy(
+                    isPdfBookViewActive = false
+                )
+            }
+        }
+    }
+
+    fun updatePdfBookViewBlockIndex(blockIndex: Int) {
+        _viewState.update { it.copy(pdfBookViewBlockIndex = blockIndex) }
+    }
+
     override fun onCleared() {
 
         stopActiveSession()
@@ -1227,6 +1261,8 @@ data class ReaderViewState(
     val globalProgress: Float = 0f,
     val chapterProgress: Float = 0f,
     val activeNarrationBlockId: String? = null,
-    val activeNarrationWordRange: IntRange? = null
+    val activeNarrationWordRange: IntRange? = null,
+    val isPdfBookViewActive: Boolean = false,
+    val pdfBookViewBlockIndex: Int = 0
 )
 

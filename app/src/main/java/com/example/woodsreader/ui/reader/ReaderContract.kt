@@ -32,3 +32,9 @@ data class NarrationHighlight(
     val blockId: String? = null,
     val wordRange: IntRange? = null
 )
+
+// ── Reader State ──────────────────────────────────────────────────────
+data class ReaderState(
+    val isPdfBookViewActive: Boolean = false,
+    val pdfBookViewBlockIndex: Int = 0
+)

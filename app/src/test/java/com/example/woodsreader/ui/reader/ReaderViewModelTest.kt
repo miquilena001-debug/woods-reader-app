@@ -141,6 +141,21 @@ class ReaderViewModelTest {
         val defaultPrefs = com.example.woodsreader.data.datastore.UserPreferences()
         assertEquals(com.example.woodsreader.model.PageTurnStyle.BOOK_FLIP, defaultPrefs.pageTurnStyle)
     }
+
+    @Test
+    fun `test ReaderViewState and ReaderState pdfBookView properties`() {
+        val viewState = ReaderViewState()
+        org.junit.Assert.assertFalse(viewState.isPdfBookViewActive)
+        assertEquals(0, viewState.pdfBookViewBlockIndex)
+
+        val updatedState = viewState.copy(isPdfBookViewActive = true, pdfBookViewBlockIndex = 42)
+        assertTrue(updatedState.isPdfBookViewActive)
+        assertEquals(42, updatedState.pdfBookViewBlockIndex)
+
+        val readerState = ReaderState()
+        org.junit.Assert.assertFalse(readerState.isPdfBookViewActive)
+        assertEquals(0, readerState.pdfBookViewBlockIndex)
+    }
 }
 
 
