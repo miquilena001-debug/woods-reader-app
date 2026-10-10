@@ -92,6 +92,8 @@ class TtsManager @Inject constructor(
         val charOffset: Int = 0
     )
 
+    private val wordExclusionEngine = com.example.woodsreader.core.pipeline.WordExclusionEngine()
+
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS,
@@ -149,18 +151,15 @@ class TtsManager @Inject constructor(
             emptyList()
         }
         
-        var processedText = text
-        for (rule in activeRules) {
-            val pattern = rule.pattern
-            if (pattern.isEmpty()) continue
-            try {
-                if (rule.isRegex) {
-                    processedText = processedText.replace(pattern.toRegex(RegexOption.IGNORE_CASE), rule.replacement)
-                } else {
-                    processedText = processedText.replace(pattern, rule.replacement, ignoreCase = true)
-                }
-            } catch (_: Exception) {}
+        val exclusionRules = activeRules.map {
+            com.example.woodsreader.core.pipeline.WordExclusionRule(
+                id = it.id.toString(),
+                target = it.pattern,
+                replacement = it.replacement,
+                isRegex = it.isRegex
+            )
         }
+        val processedText = wordExclusionEngine.filterText(text, exclusionRules)
         
         // Ã¢â€â‚¬Ã¢â€â‚¬ SegmentaciÃƒÂ³n y orquestaciÃƒÂ³n contextual Ã¢â€â‚¬Ã¢â€â‚¬
         val items = parseTextToPlaybackItems(processedText)
@@ -862,18 +861,15 @@ class TtsManager @Inject constructor(
             emptyList()
         }
 
-        var processedText = text
-        for (rule in activeRules) {
-            val pattern = rule.pattern
-            if (pattern.isEmpty()) continue
-            try {
-                if (rule.isRegex) {
-                    processedText = processedText.replace(pattern.toRegex(RegexOption.IGNORE_CASE), rule.replacement)
-                } else {
-                    processedText = processedText.replace(pattern, rule.replacement, ignoreCase = true)
-                }
-            } catch (_: Exception) {}
+        val exclusionRules = activeRules.map {
+            com.example.woodsreader.core.pipeline.WordExclusionRule(
+                id = it.id.toString(),
+                target = it.pattern,
+                replacement = it.replacement,
+                isRegex = it.isRegex
+            )
         }
+        val processedText = wordExclusionEngine.filterText(text, exclusionRules)
 
         val items = parseTextToPlaybackItemsForSherpa(processedText)
 

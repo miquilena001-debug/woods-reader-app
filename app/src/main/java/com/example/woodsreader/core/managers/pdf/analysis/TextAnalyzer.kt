@@ -1,14 +1,16 @@
 package com.example.woodsreader.core.managers.pdf.analysis
 
 import android.graphics.RectF
-import com.tom_roush.pdfbox.text.TextPosition
+import com.example.woodsreader.core.pipeline.NoiseClassifier
+import com.example.woodsreader.core.pipeline.SpanishTextFormatter
 import timber.log.Timber
-import kotlin.math.abs
 
 class TextAnalyzer(
     private val baseFontSize: Float = 12f,
     private val headerThreshold: Float = 1.3f,
-    private val pageMargins: RectF = RectF(36f, 36f, 36f, 36f)
+    private val pageMargins: RectF = RectF(36f, 36f, 36f, 36f),
+    private val noiseClassifier: NoiseClassifier = NoiseClassifier(),
+    private val spanishFormatter: SpanishTextFormatter = SpanishTextFormatter()
 ) {
 
     sealed class SemanticElement {
@@ -33,20 +35,26 @@ class TextAnalyzer(
 
         fun flushCurrentParagraph() {
             if (currentParagraph.isNotEmpty()) {
-                mergedElements.add(SemanticElement.Paragraph(currentParagraph.toString(), pageNumber))
+                val raw = currentParagraph.toString().trim()
+                if (raw.isNotEmpty()) {
+                    val formatted = spanishFormatter.formatParagraph(raw)
+                    mergedElements.add(SemanticElement.Paragraph(formatted, pageNumber))
+                }
                 currentParagraph.setLength(0)
             }
         }
 
-        for (line in lines) {
+        for (i in lines.indices) {
+            val line = lines[i]
             val text = line.text.trim()
             if (text.isEmpty()) continue
 
             val fontSize = line.fontSize
-            val yPosition = line.y
+            val isFirstLine = (i == 0)
+            val isLastLine = (i == lines.size - 1)
 
-            // Detectar número de página
-            if (isLikelyPageNumber(text, yPosition)) {
+            // 1. Detección avanzada de número de página mediante NoiseClassifier
+            if (noiseClassifier.isPageNumber(text)) {
                 flushCurrentParagraph()
                 mergedElements.add(SemanticElement.PageNumber(text, pageNumber))
                 processedLines.add(text)
@@ -54,12 +62,26 @@ class TextAnalyzer(
                 continue
             }
 
-            // Detectar encabezados
+            // 2. Detección de ruido (ornamentos, avisos legales, URLs aisladas)
+            val noiseReason = noiseClassifier.classify(
+                text = text,
+                isFirstLineOfPage = isFirstLine,
+                isLastLineOfPage = isLastLine
+            )
+            if (noiseReason != null) {
+                flushCurrentParagraph()
+                mergedElements.add(SemanticElement.Ignored(text, pageNumber, noiseReason.name))
+                processedLines.add(text)
+                lastLineInfo = null
+                continue
+            }
+
+            // 3. Detectar encabezados
             if (isLikelyHeader(fontSize, text)) {
                 flushCurrentParagraph()
                 val level = calculateHeaderLevel(fontSize)
                 if (processedLines.contains(text)) {
-                    mergedElements.add(SemanticElement.Ignored(text, pageNumber, "header_repeated"))
+                    mergedElements.add(SemanticElement.Ignored(text, pageNumber, "HEADER_REPEATED"))
                 } else {
                     mergedElements.add(SemanticElement.Header(text, level, pageNumber))
                     processedLines.add(text)
@@ -68,7 +90,7 @@ class TextAnalyzer(
                 continue
             }
 
-            // Detectar límite de párrafo basado en la línea anterior
+            // 4. Detectar límite de párrafo basado en la línea anterior
             val lastLine = lastLineInfo
             var isNewParagraph = false
             if (lastLine != null) {
@@ -90,7 +112,7 @@ class TextAnalyzer(
                 flushCurrentParagraph()
             }
 
-            // Unir líneas del mismo párrafo
+            // 5. Unir líneas del mismo párrafo respetando cortes de palabra (guiones)
             if (currentParagraph.isNotEmpty()) {
                 val currentTextStr = currentParagraph.toString()
                 val endsWithHyphen = currentTextStr.endsWith('-') || 
@@ -117,12 +139,6 @@ class TextAnalyzer(
         return mergedElements
     }
 
-    private fun isLikelyPageNumber(text: String, yPosition: Float): Boolean {
-        // Heurística: números pequeños en bordes superior/inferior (ajustar 50f/750f según tamaño)
-        val isEdge = yPosition < 50f || yPosition > 750f
-        return text.matches(Regex("\\d+")) && isEdge
-    }
-
     private fun isLikelyHeader(fontSize: Float, text: String): Boolean {
         return fontSize > baseFontSize * headerThreshold
     }
@@ -134,11 +150,6 @@ class TextAnalyzer(
             fontSize > baseFontSize * 1.2f -> 3
             else -> 4
         }
-    }
-
-    // Verifica sangría (indentación)
-    private fun isIndented(xPosition: Float): Boolean {
-        return xPosition > pageMargins.left + 20f 
     }
 
     data class LineInfo(
