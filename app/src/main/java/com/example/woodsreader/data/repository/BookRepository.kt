@@ -296,4 +296,19 @@ class BookRepository @Inject constructor(
     fun getTtsRules(): Flow<List<TtsRuleEntity>> = ttsRuleDao.getAllRulesFlow()
     suspend fun saveTtsRule(rule: TtsRuleEntity) = ttsRuleDao.insert(rule)
     suspend fun deleteTtsRule(rule: TtsRuleEntity) = ttsRuleDao.delete(rule)
+
+    suspend fun addWordExclusionRule(
+        pattern: String,
+        isExactMatch: Boolean = true,
+        applyToAllBooks: Boolean = true
+    ): TtsRuleEntity {
+        val rule = TtsRuleEntity(
+            pattern = pattern.trim(),
+            replacement = "",
+            isRegex = !isExactMatch,
+            isEnabled = true
+        )
+        ttsRuleDao.insert(rule)
+        return rule
+    }
 }

@@ -572,6 +572,14 @@ class ReaderViewModel @Inject constructor(
         bookRepository.deleteTtsRule(rule)
     }
 
+    fun addWordExclusionRule(
+        pattern: String,
+        isExactMatch: Boolean = true,
+        applyToAllBooks: Boolean = true
+    ) = viewModelScope.launch {
+        bookRepository.addWordExclusionRule(pattern, isExactMatch, applyToAllBooks)
+    }
+
     fun updateTtsVoiceName(voiceName: String?) = viewModelScope.launch {
         userPreferencesRepository.updateTtsVoiceName(voiceName)
         if (isReflowMode.value || isPdfBook) {

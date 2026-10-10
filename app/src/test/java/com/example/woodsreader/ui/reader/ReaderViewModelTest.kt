@@ -156,6 +156,29 @@ class ReaderViewModelTest {
         org.junit.Assert.assertFalse(readerState.isPdfBookViewActive)
         assertEquals(0, readerState.pdfBookViewBlockIndex)
     }
+
+    @Test
+    fun `test TtsRuleEntity creation for exact and regex patterns`() {
+        val exactRule = com.example.woodsreader.data.database.TtsRuleEntity(
+            pattern = "patrocinador",
+            replacement = "",
+            isRegex = false,
+            isEnabled = true
+        )
+        assertEquals("patrocinador", exactRule.pattern)
+        assertEquals("", exactRule.replacement)
+        org.junit.Assert.assertFalse(exactRule.isRegex)
+        assertTrue(exactRule.isEnabled)
+
+        val regexRule = com.example.woodsreader.data.database.TtsRuleEntity(
+            pattern = """\[\d+\]""",
+            replacement = "",
+            isRegex = true,
+            isEnabled = true
+        )
+        assertEquals("""\[\d+\]""", regexRule.pattern)
+        assertTrue(regexRule.isRegex)
+    }
 }
 
 
