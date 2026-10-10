@@ -2,6 +2,7 @@ package com.example.woodsreader.core.managers.pdf.analysis
 
 import android.graphics.RectF
 import com.example.woodsreader.core.pipeline.NoiseClassifier
+import com.example.woodsreader.core.pipeline.RawDocumentBlock
 import com.example.woodsreader.core.pipeline.SpanishTextFormatter
 import timber.log.Timber
 
@@ -159,4 +160,71 @@ class TextAnalyzer(
         val xStart: Float,
         val xEnd: Float
     )
+
+    data class PageImage(
+        val uri: String? = null,
+        val caption: String? = null,
+        val y: Float = 0f
+    )
+
+    /**
+     * Convierte líneas e imágenes de una página PDF a una lista de [RawDocumentBlock]
+     * compatible directamente con [ReadingPipeline].
+     */
+    fun convertPageToRawBlocks(
+        lines: List<LineInfo>,
+        pageIndex: Int,
+        images: List<PageImage> = emptyList()
+    ): List<RawDocumentBlock> {
+        if (lines.isEmpty() && images.isEmpty()) return emptyList()
+
+        val rawBlocks = mutableListOf<RawDocumentBlock>()
+        var orderIndex = 0
+
+        data class PageItem(val line: LineInfo?, val image: PageImage?, val y: Float)
+
+        val items = mutableListOf<PageItem>()
+        lines.forEach { items.add(PageItem(line = it, image = null, y = it.y)) }
+        images.forEach { items.add(PageItem(line = null, image = it, y = it.y)) }
+        items.sortBy { it.y }
+
+        val firstLineIndex = items.indexOfFirst { it.line != null }
+        val lastLineIndex = items.indexOfLast { it.line != null }
+
+        for ((idx, item) in items.withIndex()) {
+            if (item.image != null) {
+                rawBlocks.add(
+                    RawDocumentBlock(
+                        id = "pdf-p$pageIndex-img-$orderIndex",
+                        text = item.image.caption ?: "",
+                        isImage = true,
+                        imageCaption = item.image.caption,
+                        imageUri = item.image.uri,
+                        pageIndex = pageIndex,
+                        orderIndex = orderIndex++,
+                        fontSize = baseFontSize
+                    )
+                )
+            } else if (item.line != null) {
+                val line = item.line
+                val trimmed = line.text.trim()
+                if (trimmed.isNotEmpty()) {
+                    rawBlocks.add(
+                        RawDocumentBlock(
+                            id = "pdf-p$pageIndex-blk-$orderIndex",
+                            text = trimmed,
+                            isImage = false,
+                            pageIndex = pageIndex,
+                            orderIndex = orderIndex++,
+                            isFirstLineOfPage = (idx == firstLineIndex),
+                            isLastLineOfPage = (idx == lastLineIndex),
+                            fontSize = line.fontSize
+                        )
+                    )
+                }
+            }
+        }
+
+        return rawBlocks
+    }
 }
