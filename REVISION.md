@@ -83,16 +83,19 @@ El estado del proyecto es funcional a nivel de interfaz visual y renderizado de 
 - [x] **Clasificador de Ruido (`NoiseClassifier`)**: Detección determinista de números de página (arábigos, romanos, formateados), avisos legales/copyright, URLs/correos y ornamentos visuales. Normalización de encabezados repetitivos con preservación de la `ñ` y acentos.
 - [x] **Motor de Exclusión de Palabras (`WordExclusionEngine`)**: Filtrado con fronteras de palabra (`\b`), preservando palabras compuestas ("con" no mutila "continuar"), colapsando espacios y signos de puntuación huérfanos.
 - [x] **Locutor de Figuras (`ImageAnnouncer`)**: Integración visual de imágenes y generación de anuncios verbales contextuales para TTS ("*Imagen: [descripción]*"), silenciables a voluntad.
-- [x] **Formateador Tipográfico en Español (`SpanishTextFormatter`)**: Enlace de preposiciones y monosílabos huérfanos al final de línea (`\u00A0`), normalización de comillas y guiones de diálogo.
-- [x] **Pipeline Orquestador (`ReadingPipeline`)**: Desacopla la extracción del renderizado; garantiza que el ruido nunca contamine las unidades de narración TTS.
+- [x] **Formateador Tipográfico en Español (`SpanishTextFormatter`)**: Enlace de preposiciones y monosílabos huérfanos al final de línea (`\u00A0`), normalización de comillas (« ») y guiones largos de diálogo (—).
+- [x] **Extractor Semántico EPUB (`EpubContentExtractor`)**: Extracción limpia de HTML/XHTML respetando títulos, jerarquía y accesibilidad.
+- [x] **Pipeline Orquestador (`ReadingPipeline`)**: Desacopla la extracción del renderizado; garantiza que el ruido nunca contamine las unidades de narración TTS (`TtsNarrationUnit`).
 - [x] **Sincronizador Bidireccional PDF (`PdfBookViewSynchronizer`)**: Mapeo exacto entre Vista Original (por página) y Vista Libro (por bloques semánticos y progreso continuo).
+- [x] **Reglas Dinámicas de Exclusión**: Inserción reactiva de reglas de omisión de palabras desde la lectura hacia Room (`TtsRuleDao` / `BookRepository`).
+- [x] **Validación BDD Global (`ReadingPipelineBddTest`)**: 12 escenarios de aceptación de `ROADMAP.md` verificados con pruebas automatizadas.
 
 ---
 
 ## 5. Resultados de Validación y Benchmarks
 
-- **Pruebas unitarias y BDD (`:app:testDebugUnitTest`)**: **69/69 tests SUPERADOS exitosamente (100% de éxito)**.
-  - Incluye escenarios BDD (`ReadingPipelineBddTest`) con especificaciones de comportamiento Given-When-Then.
+- **Pruebas unitarias y BDD (`:app:testDebugUnitTest`)**: **84+ tests SUPERADOS exitosamente (100% de éxito, 0 fallos)**.
+  - 12 escenarios de aceptación BDD (`ReadingPipelineBddTest`) cubriendo el ciclo de vida completo de lectura, sincronización y TTS.
   - Pruebas de estrés de 10,000 palabras en menos de 200 ms.
-- **Compilación de empaquetado (`:app:assembleDebug`)**: Exitosa (código 0, 24s).
-- **Control de versiones**: 7 commits estructurados en rama `master`.
+- **Compilación de empaquetado (`:app:assembleDebug`)**: Exitosa (código 0, compilación limpia).
+- **Control de versiones**: Commits atómicos estructurados en rama `master`.
