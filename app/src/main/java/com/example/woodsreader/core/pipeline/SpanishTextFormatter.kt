@@ -52,11 +52,16 @@ class SpanishTextFormatter @Inject constructor() {
     }
 
     /**
-     * Normaliza comillas angulares latinas (« ») y guiones largos de diálogo (—).
+     * Normaliza comillas angulares latinas (« »), guiones largos de diálogo (—)
+     * y signos dobles españoles de interrogación y exclamación (¿ ?, ¡ !).
      */
     fun normalizeTypography(text: String): String {
         return text
             .replace(Regex("""--"""), "—")
+            .replace(Regex("""¿\s+"""), "¿")
+            .replace(Regex("""¡\s+"""), "¡")
+            .replace(Regex("""«\s+"""), "«")
+            .replace(Regex("""\s+»"""), "»")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }

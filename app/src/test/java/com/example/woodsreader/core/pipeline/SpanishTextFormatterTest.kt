@@ -33,6 +33,14 @@ class SpanishTextFormatterTest {
     }
 
     @Test
+    fun `normalizeTypography cleans spaces in Spanish inverted marks and Latin quotes`() {
+        val input = "¿  Cómo estás ? ¡  Qué sorpresa ! Y dijo «  hola  » con entusiasmo."
+        val output = formatter.normalizeTypography(input)
+
+        assertEquals("¿Cómo estás ? ¡Qué sorpresa ! Y dijo «hola» con entusiasmo.", output)
+    }
+
+    @Test
     fun `formatParagraph runs complete typographic pipeline`() {
         val input = "En un lugar de la Mancha, de cuyo nombre no quiero acordarme..."
         val output = formatter.formatParagraph(input)

@@ -26,7 +26,7 @@ data class UserPreferences(
     val horizontalMargin: Float = 12f,
     val textAlign: String = "justify",
     val fontFamily: String = "serif",
-    val hyphenation: Boolean = false,
+    val hyphenation: Boolean = true,
 
     // ── Navigation ────────────────────────────────────────────────────────────
     val volumeKeysNavigation: Boolean = true,
