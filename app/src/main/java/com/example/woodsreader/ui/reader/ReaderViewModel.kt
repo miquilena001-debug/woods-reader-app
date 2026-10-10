@@ -187,6 +187,23 @@ class ReaderViewModel @Inject constructor(
 
     val currentProcessedDocument: StateFlow<com.example.woodsreader.core.pipeline.ProcessedDocument?> =
         epubFormatManager.currentProcessedDocument
+
+    private val _activeNarrationBlockId = MutableStateFlow<String?>(null)
+    val activeNarrationBlockId: StateFlow<String?> = _activeNarrationBlockId.asStateFlow()
+
+    private val _activeNarrationWordRange = MutableStateFlow<IntRange?>(null)
+    val activeNarrationWordRange: StateFlow<IntRange?> = _activeNarrationWordRange.asStateFlow()
+
+    fun updateNarrationHighlight(blockId: String?, wordRange: IntRange?) {
+        _activeNarrationBlockId.value = blockId
+        _activeNarrationWordRange.value = wordRange
+        _viewState.update {
+            it.copy(
+                activeNarrationBlockId = blockId,
+                activeNarrationWordRange = wordRange
+            )
+        }
+    }
     // Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     init {
@@ -1208,6 +1225,8 @@ data class ReaderViewState(
     val lineSpacing: Float = 1.5f,
     val isBookmarked: Boolean = false,
     val globalProgress: Float = 0f,
-    val chapterProgress: Float = 0f
+    val chapterProgress: Float = 0f,
+    val activeNarrationBlockId: String? = null,
+    val activeNarrationWordRange: IntRange? = null
 )
 

@@ -26,3 +26,9 @@ sealed class ReaderUiState {
     ) : ReaderUiState()
     data class Error(val message: String) : ReaderUiState()
 }
+
+// ── Narration Synchronization ─────────────────────────────────────────
+data class NarrationHighlight(
+    val blockId: String? = null,
+    val wordRange: IntRange? = null
+)
