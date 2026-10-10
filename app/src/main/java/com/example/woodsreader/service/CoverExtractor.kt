@@ -147,17 +147,8 @@ class CoverExtractor @Inject constructor(
                     }
                 }
 
-                BookFormat.CBZ -> {
-                    bitmap = extractCoverFromZipArchive(source, isEpub = false)
-                }
-
-                BookFormat.CBR -> {
-                    bitmap = extractCbrCover(source)
-                }
-
-                else -> {
-                    // For MOBI/FB2/TXT/MD, try zip first (some might be compressed), then null
-                    bitmap = extractCoverFromZipArchive(source, isEpub = false)
+                BookFormat.UNKNOWN -> {
+                    bitmap = null
                 }
             }
 
@@ -383,35 +374,7 @@ class CoverExtractor @Inject constructor(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // CBR Archive Extraction (junrar)
-    // ─────────────────────────────────────────────────────────────────────────
 
-    private fun extractCbrCover(source: Any): Bitmap? {
-        val file = resolveAsFile(source) ?: return null
-        if (!file.exists()) return null
-
-        return try {
-            val archive = com.github.junrar.Archive(file)
-            val imageExtensions = listOf(".jpg", ".jpeg", ".png", ".webp")
-            val imageHeader = archive.fileHeaders
-                .filter { header ->
-                    !header.isDirectory && imageExtensions.any { ext -> header.fileName.lowercase().endsWith(ext) }
-                }
-                .minByOrNull { it.fileName.lowercase() }
-
-            if (imageHeader != null) {
-                archive.getInputStream(imageHeader).use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "extractCbrCover failed for ${file.name}", e)
-            null
-        }
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Procedural Cover Generation

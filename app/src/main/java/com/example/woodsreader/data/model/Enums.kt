@@ -7,8 +7,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class BookFormat {
-    EPUB, PDF, MOBI, AZW, AZW3, CBZ, CBR, CBT,
-    DOCX, ODT, RTF, MD, TXT, FB2, LIT, UNKNOWN
+    EPUB, PDF, UNKNOWN
 }
 
 @Serializable

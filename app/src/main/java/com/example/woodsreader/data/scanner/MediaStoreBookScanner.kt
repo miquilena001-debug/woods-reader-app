@@ -27,8 +27,8 @@ class MediaStoreBookScanner @Inject constructor(
 ) : MediaStoreScanner {
 
     private companion object {
-        val SUPPORTED_EXTENSIONS = setOf("pdf", "epub", "cbz", "cbr", "cbt", "txt", "md", "mobi", "azw", "azw3", "fb2")
-        val SUPPORTED_MIMES = setOf("application/pdf", "application/epub+zip", "application/x-mobipocket-ebook")
+        val SUPPORTED_EXTENSIONS = setOf("pdf", "epub")
+        val SUPPORTED_MIMES = setOf("application/pdf", "application/epub+zip")
         
         const val MIN_FILE_SIZE_BYTES = 1024L
         
@@ -44,16 +44,7 @@ class MediaStoreBookScanner @Inject constructor(
         val SELECTION = """
             (${MediaStore.Files.FileColumns.SIZE} > ?) AND
             (
-                ${MediaStore.Files.FileColumns.MIME_TYPE} IN (?, ?, ?)
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
-                OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
+                ${MediaStore.Files.FileColumns.MIME_TYPE} IN (?, ?)
                 OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
                 OR ${MediaStore.Files.FileColumns.DATA} LIKE ?
             )
@@ -63,18 +54,8 @@ class MediaStoreBookScanner @Inject constructor(
             MIN_FILE_SIZE_BYTES.toString(),
             "application/pdf",
             "application/epub+zip",
-            "application/octet-stream",
             "%.pdf",
-            "%.epub",
-            "%.cbz",
-            "%.cbr",
-            "%.cbt",
-            "%.txt",
-            "%.md",
-            "%.mobi",
-            "%.azw",
-            "%.azw3",
-            "%.fb2"
+            "%.epub"
         )
     }
 

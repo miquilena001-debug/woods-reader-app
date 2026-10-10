@@ -112,7 +112,7 @@ class BookScannerService @Inject constructor(
         /** File size bounds: 1KB minimum, 800MB maximum. */
         private val SIZE_RANGE = 1_024L..(800L * 1_024L * 1_024L)
 
-        val SUPPORTED_EXTENSIONS = setOf("epub", "pdf", "cbz", "cbr", "cbt", "txt", "md", "mobi", "azw", "azw3", "fb2")
+        val SUPPORTED_EXTENSIONS = setOf("epub", "pdf")
 
         /** Default paths to scan if no custom paths are configured. */
         val DEFAULT_SCAN_PATHS by lazy {
@@ -691,15 +691,6 @@ class BookScannerService @Inject constructor(
             format = when (name.substringAfterLast('.', "").lowercase()) {
                 "epub" -> BookFormat.EPUB
                 "pdf"  -> BookFormat.PDF
-                "cbz"  -> BookFormat.CBZ
-                "cbr"  -> BookFormat.CBR
-                "cbt"  -> BookFormat.CBT
-                "txt"  -> BookFormat.TXT
-                "md"   -> BookFormat.MD
-                "mobi" -> BookFormat.MOBI
-                "azw"  -> BookFormat.AZW
-                "azw3" -> BookFormat.AZW3
-                "fb2"  -> BookFormat.FB2
                 else   -> BookFormat.UNKNOWN
             },
             fileSizeBytes = size,

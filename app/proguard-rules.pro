@@ -2,17 +2,9 @@
 -keep class org.readium.** { *; }
 -dontwarn org.readium.**
 
-# ── junrar (CBR RAR4) ─────────────────────────────────────────────────────────
--keep class com.github.junrar.** { *; }
--dontwarn com.github.junrar.**
-
 # ── sherpa-onnx (Piper TTS + espeak-ng + ONNX Runtime) ───────────────────────
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn com.k2fsa.sherpa.onnx.**
-
-# ── kotlinllamacpp (llama.cpp para Gemma 3n) ──────────────────────────────────
--keep class com.ljcamargo.kotlinllamacpp.** { *; }
--dontwarn com.ljcamargo.kotlinllamacpp.**
 
 # ── Media3 ────────────────────────────────────────────────────────────────────
 -keep class androidx.media3.** { *; }

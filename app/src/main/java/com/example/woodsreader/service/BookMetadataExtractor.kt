@@ -238,18 +238,6 @@ class BookMetadataExtractor @Inject constructor(
         when (fileName.substringAfterLast('.', "").lowercase()) {
             "epub" -> BookFormat.EPUB
             "pdf" -> BookFormat.PDF
-            "mobi" -> BookFormat.MOBI
-            "azw" -> BookFormat.AZW
-            "azw3" -> BookFormat.AZW3
-            "cbz" -> BookFormat.CBZ
-            "cbr" -> BookFormat.CBR
-            "cbt" -> BookFormat.CBT
-            "docx" -> BookFormat.DOCX
-            "odt" -> BookFormat.ODT
-            "rtf" -> BookFormat.RTF
-            "md" -> BookFormat.MD
-            "txt" -> BookFormat.TXT
-            "fb2" -> BookFormat.FB2
             else -> BookFormat.UNKNOWN
         }
 }

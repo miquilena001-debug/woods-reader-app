@@ -162,19 +162,13 @@ dependencies {
 
     // ── Parsing ───────────────────────────────────────────────────────────────
     implementation(libs.pdfbox.android)   // Apache PDFBox for extraction
-    implementation(libs.junrar)           // CBR RAR4 (fallback ZIP para RAR5)
     implementation(libs.jsoup)            // HTML/XML de EPUBs en metadatos
-    implementation(libs.commonmark)       // Renderizado de .md
-    implementation(libs.commonmark.gfm.tables)
 
     // ── Charts — Estadísticas de lectura ─────────────────────────────────────
     implementation(libs.vico.compose.m3)
 
     // ── Logging ──────────────────────────────────────────────────────────────────
     implementation(libs.timber)
-
-    // ── OkHttp — Descarga reanudable del modelo Gemma 3n ────────────────────
-    implementation(libs.okhttp)
 
     // ── Sherpa ONNX para TTS Neuronal Offline ───────────────────────────────
     implementation(files("libs/sherpa-onnx.aar"))

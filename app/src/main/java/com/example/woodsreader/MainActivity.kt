@@ -222,12 +222,10 @@ class MainActivity : FragmentActivity() {
                             title = name.substringBeforeLast('.'),
                             author = "Desconocido",
                             filePath = uri.toString(),
-                            format = when {
-                                name.endsWith(".pdf", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.PDF
-                                name.endsWith(".cbz", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.CBZ
-                                name.endsWith(".cbr", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.CBR
-                                name.endsWith(".fb2", ignoreCase = true) -> com.example.woodsreader.data.model.BookFormat.FB2
-                                else -> com.example.woodsreader.data.model.BookFormat.EPUB
+                            format = if (name.endsWith(".pdf", ignoreCase = true)) {
+                                com.example.woodsreader.data.model.BookFormat.PDF
+                            } else {
+                                com.example.woodsreader.data.model.BookFormat.EPUB
                             },
                             fileSizeBytes = size,
                             fileHash = hash,

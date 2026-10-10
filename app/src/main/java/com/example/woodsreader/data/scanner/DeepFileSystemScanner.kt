@@ -70,7 +70,7 @@ class DeepFileSystemScanner @Inject constructor(
             ".thumbnails", "android"
         )
 
-        private val SUPPORTED_EXTENSIONS = setOf("pdf", "epub", "cbz", "cbr", "cbt", "txt", "md", "mobi", "azw", "azw3", "fb2")
+        private val SUPPORTED_EXTENSIONS = setOf("pdf", "epub")
     }
 
     override fun scanAllDevice(): Flow<File> = flow {
