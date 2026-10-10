@@ -73,11 +73,26 @@ El estado del proyecto es funcional a nivel de interfaz visual y renderizado de 
 - [x] Eliminar llamadas I/O síncronas bloqueantes en el hilo de UI (`File.exists()` / `length()`) en componentes y listas de libros.
 - [x] Migrar 14 flows en `ReadingStatsScreen` a `collectAsStateWithLifecycle()` y corregir métricas acumuladas de tiempo ahorrado.
 
+### Fase 4: Especialización Radical (Solo EPUB y PDF)
+- [x] Poda de dependencias obsoletas: eliminados `junrar`, `commonmark` y `okhttp` de `build.gradle.kts` y reglas ProGuard.
+- [x] Restricción de `BookFormat` exclusivamente a `EPUB`, `PDF` y `UNKNOWN`.
+- [x] Optimización de escáneres (`MediaStoreBookScanner`, `DeepFileSystemScanner`, `BookScannerService`): consultas SQL directas y filtros limitados estrictamente a `.epub` y `.pdf`.
+- [x] Limpieza en `CoverExtractor` y `BookMetadataExtractor` eliminando ramas de extracción de cómics y formatos secundarios.
+
+### Fase 5: Pipeline Semántico Unificado y Experiencia Premium
+- [x] **Clasificador de Ruido (`NoiseClassifier`)**: Detección determinista de números de página (arábigos, romanos, formateados), avisos legales/copyright, URLs/correos y ornamentos visuales. Normalización de encabezados repetitivos con preservación de la `ñ` y acentos.
+- [x] **Motor de Exclusión de Palabras (`WordExclusionEngine`)**: Filtrado con fronteras de palabra (`\b`), preservando palabras compuestas ("con" no mutila "continuar"), colapsando espacios y signos de puntuación huérfanos.
+- [x] **Locutor de Figuras (`ImageAnnouncer`)**: Integración visual de imágenes y generación de anuncios verbales contextuales para TTS ("*Imagen: [descripción]*"), silenciables a voluntad.
+- [x] **Formateador Tipográfico en Español (`SpanishTextFormatter`)**: Enlace de preposiciones y monosílabos huérfanos al final de línea (`\u00A0`), normalización de comillas y guiones de diálogo.
+- [x] **Pipeline Orquestador (`ReadingPipeline`)**: Desacopla la extracción del renderizado; garantiza que el ruido nunca contamine las unidades de narración TTS.
+- [x] **Sincronizador Bidireccional PDF (`PdfBookViewSynchronizer`)**: Mapeo exacto entre Vista Original (por página) y Vista Libro (por bloques semánticos y progreso continuo).
+
 ---
 
 ## 5. Resultados de Validación y Benchmarks
 
-- **Pruebas unitarias (`:app:testDebugUnitTest`)**: 33/33 tests superados exitosamente.
-- **Compilación de empaquetado (`:app:assembleDebug`)**: Exitosa (código 0, 23s).
-- **Tamaño de APK Debug**: Reducido de **~318 MB a 226.9 MB** (~91 MB de reducción neta en debug, con compresión AAPT2 reestablecida para DEX, librerías nativas `.so` y recursos).
-- **Historial de control de versiones**: 4 commits estructurados y documentados en rama `master`.
+- **Pruebas unitarias y BDD (`:app:testDebugUnitTest`)**: **69/69 tests SUPERADOS exitosamente (100% de éxito)**.
+  - Incluye escenarios BDD (`ReadingPipelineBddTest`) con especificaciones de comportamiento Given-When-Then.
+  - Pruebas de estrés de 10,000 palabras en menos de 200 ms.
+- **Compilación de empaquetado (`:app:assembleDebug`)**: Exitosa (código 0, 24s).
+- **Control de versiones**: 7 commits estructurados en rama `master`.
