@@ -433,4 +433,15 @@ class ReaderTtsService : MediaSessionService() {
 
     fun goNext()     { _ttsNavigator.value?.skipToNextUtterance() }
     fun goPrevious() { _ttsNavigator.value?.skipToPreviousUtterance() }
+
+    fun speakNarrationUnits(
+        units: List<com.example.woodsreader.core.pipeline.TtsNarrationUnit>,
+        startIndex: Int = 0,
+        onUnitStarted: ((com.example.woodsreader.core.pipeline.TtsNarrationUnit) -> Unit)? = null,
+        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null
+    ) {
+        serviceScope.launch {
+            ttsManager.speakNarrationUnits(units, startIndex, onUnitStarted, onRangeUpdate)
+        }
+    }
 }

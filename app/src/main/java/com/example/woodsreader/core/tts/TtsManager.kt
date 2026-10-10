@@ -984,6 +984,38 @@ class TtsManager @Inject constructor(
             abandonAudioFocus()
         }
     }
+
+    /**
+     * Narra una secuencia ordenada de unidades semánticas limpias provenientes del ReadingPipeline.
+     * Las unidades de anuncio de imagen se preceden y suceden de pausas naturales.
+     */
+    suspend fun speakNarrationUnits(
+        units: List<com.example.woodsreader.core.pipeline.TtsNarrationUnit>,
+        startIndex: Int = 0,
+        onUnitStarted: ((com.example.woodsreader.core.pipeline.TtsNarrationUnit) -> Unit)? = null,
+        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null
+    ) {
+        if (units.isEmpty() || startIndex !in units.indices) return
+
+        for (i in startIndex until units.size) {
+            if (!ttsScope.isActive) break
+
+            val unit = units[i]
+            onUnitStarted?.invoke(unit)
+
+            if (unit.isAnnouncement) {
+                delay(200L)
+            }
+
+            speak(unit.textToSpeak) { range ->
+                onRangeUpdate?.invoke(unit.blockId, range)
+            }
+
+            if (unit.isAnnouncement) {
+                delay(300L)
+            }
+        }
+    }
 }
 
 
