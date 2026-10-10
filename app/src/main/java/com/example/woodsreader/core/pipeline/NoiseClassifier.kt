@@ -1,12 +1,15 @@
 package com.example.woodsreader.core.pipeline
 
 import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Clasificador determinista y de alto rendimiento de ruido textual en libros electrónicos (EPUB y PDF).
  * Detecta números de página, encabezados/pies recurrentes, URLs, fórmulas legales y ornamentos.
  */
-class NoiseClassifier {
+@Singleton
+class NoiseClassifier @Inject constructor() {
 
     companion object {
         private val PAGE_NUMBER_REGEX = Regex(

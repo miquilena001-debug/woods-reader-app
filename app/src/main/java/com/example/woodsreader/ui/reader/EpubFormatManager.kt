@@ -17,6 +17,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import com.example.woodsreader.core.pipeline.EpubContentExtractor
+import com.example.woodsreader.core.pipeline.ProcessedDocument
+import com.example.woodsreader.core.pipeline.ReadingPipeline
+import com.example.woodsreader.core.pipeline.WordExclusionRule
+import kotlinx.coroutines.withContext
 import org.readium.navigator.media.common.MediaNavigator
 import org.readium.r2.navigator.Navigator
 import org.readium.r2.navigator.VisualNavigator
@@ -25,7 +30,21 @@ import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import javax.inject.Inject
 
-class EpubFormatManager @Inject constructor() {
+class EpubFormatManager @Inject constructor(
+    private val readingPipeline: ReadingPipeline,
+    private val epubContentExtractor: EpubContentExtractor
+) {
+
+    // Constructor secundario sin anotación para tests unitarios
+    constructor() : this(
+        readingPipeline = ReadingPipeline(
+            noiseClassifier = com.example.woodsreader.core.pipeline.NoiseClassifier(),
+            imageAnnouncer = com.example.woodsreader.core.pipeline.ImageAnnouncer(),
+            wordExclusionEngine = com.example.woodsreader.core.pipeline.WordExclusionEngine(),
+            spanishTextFormatter = com.example.woodsreader.core.pipeline.SpanishTextFormatter()
+        ),
+        epubContentExtractor = EpubContentExtractor()
+    )
     
     companion object {
         private const val TAG = "EpubFormatManager"
@@ -55,6 +74,10 @@ class EpubFormatManager @Inject constructor() {
     val ttsState = _ttsState.asStateFlow()
 
     var ttsUserStopped = false
+
+    private var lastProcessedHref: String? = null
+    private val _currentProcessedDocument = MutableStateFlow<ProcessedDocument?>(null)
+    val currentProcessedDocument = _currentProcessedDocument.asStateFlow()
     
     private var onTtsStateChanged: ((ReadingMode, String) -> Unit)? = null
     private var onLocatorChanged: ((Locator) -> Unit)? = null
@@ -107,6 +130,9 @@ class EpubFormatManager @Inject constructor() {
         this.currentPublication = pub
         this.currentScope = scope
         this.navigator = navigator ?: this.navigator
+        if (initialLocator != null) {
+            processResource(initialLocator.href.toString())
+        }
         if (ttsService == null) {
             Log.w(TAG, "initNavigator: service not bound yet, awaiting...")
             if (!awaitServiceBinding()) {
@@ -116,6 +142,33 @@ class EpubFormatManager @Inject constructor() {
         }
         ttsService?.initNavigator(pub, initialLocator)
         observeServiceFlows(scope)
+    }
+
+    suspend fun processResource(
+        href: String,
+        rules: List<WordExclusionRule> = emptyList()
+    ): ProcessedDocument? = withContext(Dispatchers.Default) {
+        if (href.isBlank()) return@withContext null
+        if (href == lastProcessedHref && _currentProcessedDocument.value != null) {
+            return@withContext _currentProcessedDocument.value
+        }
+        val pub = currentPublication ?: return@withContext null
+        val link = pub.readingOrder.find { it.href.toString() == href }
+            ?: pub.manifest.resources.find { it.href.toString() == href }
+            ?: return@withContext null
+
+        val html = try {
+            pub.get(link)?.read()?.getOrNull()?.let { String(it, Charsets.UTF_8) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to read resource $href: ${e.message}")
+            null
+        } ?: return@withContext null
+
+        val rawBlocks = epubContentExtractor.extractBlocks(html, href)
+        val processed = readingPipeline.process(rawBlocks, rules = rules, announceImages = true)
+        lastProcessedHref = href
+        _currentProcessedDocument.value = processed
+        processed
     }
 
     @OptIn(ExperimentalReadiumApi::class)
@@ -151,6 +204,7 @@ class EpubFormatManager @Inject constructor() {
                     if (!ttsUserStopped) {
                         (navigator as? VisualNavigator)?.go(locator, animated = true)
                     }
+                    processResource(locator.href.toString())
                 }
             }
         }

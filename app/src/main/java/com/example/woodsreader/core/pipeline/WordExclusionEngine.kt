@@ -1,6 +1,8 @@
 package com.example.woodsreader.core.pipeline
 
 import java.util.regex.Pattern
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Regla de exclusión o reemplazo de palabras y frases.
@@ -18,7 +20,8 @@ data class WordExclusionRule(
  * Motor de alto rendimiento para exclusión y sustitución de palabras en tiempo real.
  * Diseñado para procesar miles de palabras por segundo sin impacto en el hilo de UI.
  */
-class WordExclusionEngine {
+@Singleton
+class WordExclusionEngine @Inject constructor() {
 
     /**
      * Aplica la lista de reglas sobre el texto recibido.

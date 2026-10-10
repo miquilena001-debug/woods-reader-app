@@ -1,10 +1,14 @@
 package com.example.woodsreader.core.pipeline
 
+import javax.inject.Inject
+import javax.inject.Singleton
+
 /**
  * Formateador tipográfico avanzado especializado en idioma español.
  * Evita preposiciones huérfanas al final de línea y prepara el texto para justificación editorial.
  */
-class SpanishTextFormatter {
+@Singleton
+class SpanishTextFormatter @Inject constructor() {
 
     companion object {
         private const val NON_BREAKING_SPACE = '\u00A0'

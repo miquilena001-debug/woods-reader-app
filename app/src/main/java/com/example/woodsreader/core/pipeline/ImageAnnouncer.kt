@@ -1,10 +1,14 @@
 package com.example.woodsreader.core.pipeline
 
+import javax.inject.Inject
+import javax.inject.Singleton
+
 /**
  * Gestor de anuncios y presentación de imágenes/figuras en libros (EPUB y PDF).
  * Permite tanto la integración visual como la verbalización inteligente en TTS.
  */
-class ImageAnnouncer {
+@Singleton
+class ImageAnnouncer @Inject constructor() {
 
     /**
      * Construye el texto exacto a narrar por el motor de TTS para una imagen.
