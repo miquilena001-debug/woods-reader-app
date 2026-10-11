@@ -101,7 +101,9 @@ fun ReaderTtsBar(
             .navigationBarsPadding(),
         shadowElevation = 0.dp
     ) {
-        Column {
+        Column(
+            modifier = Modifier.padding(bottom = 36.dp)
+        ) {
             // ── Progress bar (thin accent line at the very top) ──────────
             LinearProgressIndicator(
                 progress = { chapterProgress },
