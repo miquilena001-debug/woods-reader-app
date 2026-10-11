@@ -485,14 +485,8 @@ fun ReaderScreen(
                         true
                     }
                     else -> {
-                        if (ttsState == TtsState.PLAYING) {
-                            viewModel.pauseTts()
-                        } else if (ttsState == TtsState.PAUSED) {
-                            viewModel.resumeTts()
-                        } else {
-                            viewModel.toggleControls()
-                            showHighlightMenu = null
-                        }
+                        viewModel.toggleControls()
+                        showHighlightMenu = null
                         true
                     }
                 }
@@ -689,6 +683,17 @@ fun ReaderScreen(
                     showHighlightMenu = null
                     showDictionarySheet = true
                 },
+                onIgnoreTts = {
+                    if (highlightedText.isNotBlank()) {
+                        viewModel.addWordExclusionRule(
+                            pattern = highlightedText.trim(),
+                            isExactMatch = true,
+                            applyToAllBooks = false
+                        )
+                    }
+                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
+                    showHighlightMenu = null
+                },
                 onDismiss = { showHighlightMenu = null }
             )
         }
@@ -715,8 +720,14 @@ fun ReaderScreen(
                         }
                     },
                     onTtsToggle = { 
-                        viewModel.hideControls()
-                        showTtsMacroWindow = true 
+                        if (ttsState == TtsState.PLAYING) {
+                            viewModel.pauseTts()
+                        } else if (ttsState == TtsState.PAUSED) {
+                            viewModel.resumeTts()
+                        } else {
+                            val loc = currentLocator ?: viewModel.getFallbackLocator()
+                            if (loc != null) viewModel.playTts(loc) else viewModel.onPlay()
+                        }
                     },
                     onMenuClick = { showMasterMenu = true }
                 )

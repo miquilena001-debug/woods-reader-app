@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Book
@@ -177,6 +178,7 @@ fun HighlightColorMenu(
     onSearch: (() -> Unit)? = null,
     onTranslate: (() -> Unit)? = null,
     onDictionary: (() -> Unit)? = null,
+    onIgnoreTts: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     Box(
@@ -237,7 +239,7 @@ fun HighlightColorMenu(
                     }
                 }
                 
-                if (onPlayTts != null || onSearch != null || onTranslate != null || onDictionary != null) {
+                if (onPlayTts != null || onSearch != null || onTranslate != null || onDictionary != null || onIgnoreTts != null) {
                     Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider(color = HiddenForest.OutlineHi.copy(0.4f))
                     Spacer(modifier = Modifier.height(8.dp))
@@ -337,6 +339,30 @@ fun HighlightColorMenu(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Definición",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = HiddenForest.Text
+                                )
+                            }
+                        }
+
+                        if (onIgnoreTts != null) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onIgnoreTts() }
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.VolumeOff,
+                                    contentDescription = "Ignorar en TTS",
+                                    tint = HiddenForest.Accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Ignorar",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                                     color = HiddenForest.Text
                                 )
