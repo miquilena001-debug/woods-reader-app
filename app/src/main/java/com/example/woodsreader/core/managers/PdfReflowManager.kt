@@ -11,6 +11,9 @@ import android.net.Uri
 import android.util.Log
 import com.example.woodsreader.core.tts.TtsManager
 import com.example.woodsreader.core.managers.pdf.analysis.TextAnalyzer
+import com.example.woodsreader.core.pipeline.ReadingPipeline
+import com.example.woodsreader.core.pipeline.TtsNarrationUnit
+import com.example.woodsreader.core.pipeline.ReadingBlock
 import com.example.woodsreader.data.model.ReflowItem
 import com.example.woodsreader.data.model.ReflowState
 import com.example.woodsreader.ui.reader.TtsState
@@ -35,7 +38,8 @@ import javax.inject.Singleton
 @Singleton
 class PdfReflowManager @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val ttsManager: TtsManager
+    private val ttsManager: TtsManager,
+    private val readingPipeline: ReadingPipeline
 ) {
     companion object {
         private const val TAG = "PdfReflowManager"
@@ -83,6 +87,10 @@ class PdfReflowManager @Inject constructor(
     private val _currentTtsSentence = MutableStateFlow("")
     val currentTtsSentence = _currentTtsSentence.asStateFlow()
 
+    // Unidades de narración producidas por ReadingPipeline (para TTS limpio)
+    private val _ttsNarrationUnits = MutableStateFlow<List<TtsNarrationUnit>>(emptyList())
+    val ttsNarrationUnits = _ttsNarrationUnits.asStateFlow()
+
     private var isReflowTtsRunning = false
     private var reflowTtsJob: Job? = null
     var ttsUserStopped = false
@@ -103,6 +111,7 @@ class PdfReflowManager @Inject constructor(
             firstLoadedPage = -1
             _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) } // -1 = Abriendo archivo
             _reflowElements.value = emptyList()
+            _ttsNarrationUnits.value = emptyList()
             scope.launch {
                 loadReflowPages(fromPage = initialPosition, isInitial = true)
             }
@@ -144,6 +153,7 @@ class PdfReflowManager @Inject constructor(
         closeDocument() // Close previous document to prevent leak on re-open
         _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) }
         _reflowElements.value = emptyList()
+        _ttsNarrationUnits.value = emptyList()
         scope.launch {
             loadReflowPages(fromPage = page, isInitial = true)
         }
@@ -282,21 +292,36 @@ class PdfReflowManager @Inject constructor(
             val dummyWriter = java.io.StringWriter()
             stripper.writeText(document, dummyWriter)
 
-            val semanticElements = textAnalyzer.analyzeLines(lineInfos, pageIndex)
-            semanticElements.forEach { element ->
-                when (element) {
-                    is TextAnalyzer.SemanticElement.Header -> targetList.add(ReflowItem.Header(element.rawText, element.level, element.pageNumber))
-                    is TextAnalyzer.SemanticElement.Paragraph -> targetList.add(ReflowItem.Paragraph(element.rawText, element.pageNumber))
-                    else -> {}
+            // 2. Convertir lineas a RawDocumentBlock (tuberia unificada)
+            val rawBlocks = textAnalyzer.convertPageToRawBlocks(lineInfos, pageIndex)
+
+            // 3. Pasar por ReadingPipeline: filtro de ruido, formato tipografico, TTS units
+            val processed = readingPipeline.process(rawBlocks, stripNoiseFromDisplay = true)
+
+            // 4. Acumular unidades de narracion limpias para TTS
+            _ttsNarrationUnits.value = _ttsNarrationUnits.value + processed.ttsNarrationUnits
+
+            // 5. Mapear ReadingBlock a ReflowItem para la UI
+            for (block in processed.displayBlocks) {
+                when (block) {
+                    is ReadingBlock.Heading -> targetList.add(
+                        ReflowItem.Header(block.text, block.level, block.pageIndex)
+                    )
+                    is ReadingBlock.Paragraph -> targetList.add(
+                        ReflowItem.Paragraph(block.text, block.pageIndex)
+                    )
+                    is ReadingBlock.Image, is ReadingBlock.Noise -> {
+                        // Imagenes se extraen por separado; ruido no llega aqui
+                    }
                 }
             }
 
-            // 2. ImÃ¡genes (Solo si el texto es poco o siempre?)
+            // 6. Imagenes extraidas directamente del documento PDF
             extractImagesFromPage(document, pageIndex - 1, targetList)
-            
-            // 3. Palabra count estimado
-            val estimatedWords = targetList.filterIsInstance<ReflowItem.Paragraph>().sumOf { it.content.split("\\s+".toRegex()).size }
-            if (estimatedWords > 0) onWordsProcessed?.invoke(estimatedWords.toLong())
+
+            // 7. Contabilizar palabras procesadas
+            val wordCount = processed.metrics.wordsProcessed
+            if (wordCount > 0) onWordsProcessed?.invoke(wordCount)
 
         } catch (e: Exception) {
             Timber.e(e, "Error procesando pÃ¡gina $pageIndex")
@@ -392,8 +417,15 @@ class PdfReflowManager @Inject constructor(
         val locale = languageCode?.let { java.util.Locale.forLanguageTag(it) } ?: java.util.Locale.getDefault()
         if (!ttsManager.initialize(locale, voiceName)) return
         registerNoisyReceiver()
+        // Prioridad: usar unidades de narracion del pipeline (texto limpio, sin ruido)
+        // Fallback: leer directamente de los elementos de pantalla si el pipeline aun no las tiene
+        val narrationUnits = _ttsNarrationUnits.value
         val elements = _reflowElements.value
-        if (elements.isEmpty() || startIndex >= elements.size) {
+
+        val useNarrationUnits = narrationUnits.isNotEmpty()
+        val totalItems = if (useNarrationUnits) narrationUnits.size else elements.size
+
+        if (totalItems == 0 || startIndex >= totalItems) {
             _ttsState.value = TtsState.STOPPED
             return
         }
@@ -412,20 +444,31 @@ class PdfReflowManager @Inject constructor(
 
         reflowTtsJob?.cancel()
         reflowTtsJob = scope.launch {
-            for (i in startIndex until elements.size) {
+            for (i in startIndex until totalItems) {
                 if (!isActive || !isReflowTtsRunning || ttsUserStopped) break
-                
+
                 _ttsActiveBlockIndex.value = i
-                val text = when (val item = elements[i]) {
-                    is ReflowItem.Header -> item.content
-                    is ReflowItem.Paragraph -> item.content
-                    else -> ""
+
+                val text: String
+                val pageNum: Int
+                if (useNarrationUnits) {
+                    val unit = narrationUnits[i]
+                    text = unit.textToSpeak
+                    pageNum = unit.pageIndex
+                } else {
+                    val item = elements[i]
+                    text = when (item) {
+                        is ReflowItem.Header -> item.content
+                        is ReflowItem.Paragraph -> item.content
+                        else -> ""
+                    }
+                    pageNum = item.pageNumber
                 }
-                
+
                 if (text.isBlank()) continue
-                _currentTtsPage.value = elements[i].pageNumber
+                _currentTtsPage.value = pageNum
                 _currentTtsSentence.value = text
-                
+
                 try {
                     ttsManager.speak(text)
                 } catch (_: Exception) { break }
