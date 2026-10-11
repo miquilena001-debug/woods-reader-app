@@ -140,11 +140,11 @@ class BookScannerServiceExtremeTest {
     }
 
     private fun mockFile(path: String, name: String): File {
-        val file = mockk<File>(relaxed = true)
-        every { file.absolutePath } returns path
-        every { file.name } returns name
-        every { file.length() } returns 1024L
-        every { file.lastModified() } returns 0L
-        return file
+        return object : File(path) {
+            override fun getName(): String = name
+            override fun getAbsolutePath(): String = path
+            override fun length(): Long = 1024L
+            override fun lastModified(): Long = 0L
+        }
     }
 }

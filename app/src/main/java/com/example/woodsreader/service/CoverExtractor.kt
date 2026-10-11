@@ -110,18 +110,32 @@ class CoverExtractor @Inject constructor(
         author: String = "",
         publication: Publication? = null
     ): String? = withContext(Dispatchers.IO) {
-        if (fileHash.isBlank()) return@withContext null
+        val effectiveHash = when {
+            fileHash.isNotBlank() && !fileHash.startsWith("pending-") -> fileHash
+            source is File -> "file_${source.name.hashCode()}_${source.length()}"
+            source is Uri -> "uri_${kotlin.math.abs(source.toString().hashCode())}"
+            else -> "cover_${kotlin.math.abs(title.hashCode())}_${kotlin.math.abs(author.hashCode())}"
+        }
 
         // 1. Check existing cover on disk
-        getExistingCoverPath(fileHash)?.let { return@withContext it }
+        getExistingCoverPath(effectiveHash)?.let { return@withContext it }
 
-        val targetFile = File(permanentCoversDir, "cover_$fileHash.jpg")
+        val targetFile = File(permanentCoversDir, "cover_$effectiveHash.jpg")
 
         // 2. Extract bitmap based on format
         var bitmap: Bitmap? = null
 
+        val resolvedFormat = if (format != BookFormat.UNKNOWN) format else {
+            val srcStr = source.toString().lowercase()
+            when {
+                srcStr.endsWith(".epub") -> BookFormat.EPUB
+                srcStr.endsWith(".pdf")  -> BookFormat.PDF
+                else -> BookFormat.UNKNOWN
+            }
+        }
+
         try {
-            when (format) {
+            when (resolvedFormat) {
                 BookFormat.PDF -> {
                     bitmap = extractPdfCover(source)
                 }
@@ -153,8 +167,15 @@ class CoverExtractor @Inject constructor(
             }
 
             // 3. Fallback: If no image could be extracted, generate a procedural cover
-            if (bitmap == null && title.isNotBlank()) {
-                bitmap = generateProceduralCover(title, author)
+            if (bitmap == null) {
+                val coverTitle = title.ifBlank {
+                    when (source) {
+                        is File -> source.nameWithoutExtension
+                        is Uri -> source.lastPathSegment?.substringBeforeLast('.') ?: "Libro"
+                        else -> "Libro"
+                    }
+                }
+                bitmap = generateProceduralCover(coverTitle, author)
             }
 
             if (bitmap == null) return@withContext null

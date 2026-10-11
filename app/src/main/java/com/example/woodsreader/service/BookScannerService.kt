@@ -376,13 +376,16 @@ class BookScannerService @Inject constructor(
                     val hash = if (book.fileHash.isNotBlank() && !book.fileHash.startsWith("pending-")) {
                         book.fileHash
                     } else {
-                        try { computePartialHash(uri) } catch (_: Exception) { "" }
+                        try { computePartialHash(uri) } catch (_: Exception) { "book_${book.id}" }
                     }
+
+                    val bookFormatExt = if (book.format == BookFormat.EPUB) ".epub" else if (book.format == BookFormat.PDF) ".pdf" else ""
+                    val resolvedName = file?.name?.ifBlank { book.title + bookFormatExt } ?: (book.title + bookFormatExt)
 
                     val enriched = enrichSemaphore.withPermit {
                         metadataExtractor.get().extractMetadata(
                             uri,
-                            file?.name?.ifBlank { book.title } ?: book.title,
+                            resolvedName,
                             book.fileSizeBytes,
                             hash
                         )
@@ -759,17 +762,28 @@ class BookScannerService @Inject constructor(
      * external intent handling without duplicating the implementation.
      */
     fun computePartialHash(uri: Uri): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val buffer = ByteArray(8_192)
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val stream = when {
+                uri.scheme == "file" && uri.path != null -> File(uri.path!!).inputStream()
+                uri.path?.startsWith("/") == true && File(uri.path!!).exists() -> File(uri.path!!).inputStream()
+                else -> context.contentResolver.openInputStream(uri)
+            } ?: return "uri_${kotlin.math.abs(uri.toString().hashCode())}"
+
             var totalRead = 0L
-            var bytesRead: Int
-            while (stream.read(buffer).also { bytesRead = it } != -1 && totalRead < 1_048_576L) {
-                digest.update(buffer, 0, bytesRead)
-                totalRead += bytesRead
+            stream.use { s ->
+                val buffer = ByteArray(8_192)
+                var bytesRead: Int
+                while (s.read(buffer).also { bytesRead = it } != -1 && totalRead < 1_048_576L) {
+                    digest.update(buffer, 0, bytesRead)
+                    totalRead += bytesRead
+                }
             }
+            if (totalRead == 0L) return "uri_${kotlin.math.abs(uri.toString().hashCode())}"
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            "uri_${kotlin.math.abs(uri.toString().hashCode())}"
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     // â”€â”€ File validation extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
