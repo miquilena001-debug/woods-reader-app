@@ -813,7 +813,7 @@ class BookScannerService @Inject constructor(
             val header = buffer.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
             when (ext) {
                 "pdf"        -> header.startsWith("25504446") // %PDF
-                "epub", "cbz" -> header.startsWith("504B0304") // PK.. (ZIP)
+                "epub"        -> header.startsWith("504B0304") // PK.. (ZIP)
                 else         -> true
             }
         } catch (_: Exception) { false }

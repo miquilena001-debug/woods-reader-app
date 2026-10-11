@@ -35,9 +35,7 @@ paging                 = "3.3.0"
 workmanager            = "2.9.1"
 # ── Parsing ─────────────────────────────────────────────────────────────────
 pdfbox                 = "2.0.27.0"
-junrar                 = "7.5.5"
 jsoup                  = "1.18.1"
-commonmark             = "0.22.0"
 # ── Charts ──────────────────────────────────────────────────────────────────
 vico                   = "2.0.0-alpha.20"
 # ── Desugaring ──────────────────────────────────────────────────────────────
@@ -122,10 +120,7 @@ androidx-paging-compose              = { group = "androidx.paging",             
 androidx-work-runtime-ktx            = { group = "androidx.work",                name = "work-runtime-ktx",             version.ref = "workmanager" }
 # ── Parsing ──────────────────────────────────────────────────────────────────
 pdfbox-android                       = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfbox" }
-junrar                               = { group = "com.github.junrar",            name = "junrar",                       version.ref = "junrar" }
 jsoup                                = { group = "org.jsoup",                    name = "jsoup",                        version.ref = "jsoup" }
-commonmark                           = { group = "org.commonmark",               name = "commonmark",                   version.ref = "commonmark" }
-commonmark-gfm-tables                = { group = "org.commonmark",               name = "commonmark-ext-gfm-tables",    version.ref = "commonmark" }
 # ── Charts ───────────────────────────────────────────────────────────────────
 vico-compose-m3                      = { group = "com.patrykandpatrick.vico",    name = "compose-m3",                   version.ref = "vico" }
 # ── Desugaring ───────────────────────────────────────────────────────────────
@@ -133,8 +128,6 @@ desugar-jdk-libs                     = { group = "com.android.tools",           
 # ── Logging ──────────────────────────────────────────────────────────────────
 timber                               = { group = "com.jakewharton.timber",       name = "timber",                       version.ref = "timber" }
 haze                                 = { group = "dev.chrisbanes.haze",          name = "haze",                         version.ref = "haze" }
-# ── OkHttp (para ModelDownloadManager) ───────────────────────────────────────
-okhttp                               = { group = "com.squareup.okhttp3",         name = "okhttp",                       version = "4.12.0" }
 # ── Test ─────────────────────────────────────────────────────────────────────
 junit                                = { group = "junit",                        name = "junit",                        version.ref = "junit" }
 androidx-junit                       = { group = "androidx.test.ext",            name = "junit",                        version.ref = "junitVersion" }
