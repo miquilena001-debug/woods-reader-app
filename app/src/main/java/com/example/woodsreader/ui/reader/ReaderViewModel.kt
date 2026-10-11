@@ -301,6 +301,8 @@ class ReaderViewModel @Inject constructor(
                     pdfReflowManager.initialize(physicalPath) { words ->
                         recordActivity()
                     }
+                    val initialPage = book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
+                    pdfReflowManager.setReflowMode(enabled = true, scope = viewModelScope, initialPosition = initialPage)
                 } else {
                     val initialLocator = validateAndRestoreLocator(
                         publication = pub,

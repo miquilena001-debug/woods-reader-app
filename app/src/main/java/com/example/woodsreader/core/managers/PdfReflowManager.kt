@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.core.managers
+package com.example.woodsreader.core.managers
 
 import android.content.Context
 import android.content.BroadcastReceiver
@@ -95,10 +95,10 @@ class PdfReflowManager @Inject constructor(
         onWordsProcessed = onWordsProcessedCallback
     }
 
-    fun toggleReflowMode(scope: CoroutineScope, initialPosition: Int = 1) {
-        val nextMode = !_isReflowMode.value
-        _isReflowMode.value = nextMode
-        if (nextMode) {
+    fun setReflowMode(enabled: Boolean, scope: CoroutineScope, initialPosition: Int = 1) {
+        if (_isReflowMode.value == enabled) return
+        _isReflowMode.value = enabled
+        if (enabled) {
             lastLoadedPage = -1
             firstLoadedPage = -1
             _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) } // -1 = Abriendo archivo
@@ -111,6 +111,10 @@ class PdfReflowManager @Inject constructor(
             closeDocument()
             _reflowState.update { it.copy(isLoading = false) }
         }
+    }
+
+    fun toggleReflowMode(scope: CoroutineScope, initialPosition: Int = 1) {
+        setReflowMode(!_isReflowMode.value, scope, initialPosition)
     }
 
     fun setTtsActiveBlockIndex(index: Int) { _ttsActiveBlockIndex.value = index }
