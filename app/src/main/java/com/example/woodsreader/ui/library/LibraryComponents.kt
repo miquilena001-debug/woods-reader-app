@@ -812,7 +812,8 @@ fun WoodsBottomNavigation(
                             if (isCenter) {
                                 Modifier.combinedClickable(
                                     onClick = {
-                                        lastBookId?.let { onNavigate("reader/$it") }
+                                        val targetId = lastBookId ?: recentBooks.firstOrNull()?.id
+                                        targetId?.let { onNavigate("reader/$it") }
                                     },
                                     onLongClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)

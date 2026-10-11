@@ -337,9 +337,10 @@ fun MainLayout(
         }
     }
 
-    val showBottomBar = currentRoute != Screen.Reader.route &&
-            currentRoute != Screen.Onboarding.route &&
-            !(currentRoute?.startsWith("book_detail/") == true)
+    val showBottomBar = currentRoute != null &&
+            !currentRoute.startsWith("reader") &&
+            !currentRoute.startsWith("onboarding") &&
+            !currentRoute.startsWith("book_detail")
 
     androidx.compose.material3.Scaffold(
         containerColor = com.example.woodsreader.ui.theme.HiddenForest.Background,
