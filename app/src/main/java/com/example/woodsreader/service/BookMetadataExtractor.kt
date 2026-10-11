@@ -55,7 +55,7 @@ class BookMetadataExtractor @Inject constructor(
         fileHash: String
     ): BookEntity? = withContext(Dispatchers.IO) {
         val filePath = extractPathFromSource(source)
-        val format = determineFormat(fileName)
+        val format = determineFormat(fileName, filePath)
 
         try {
             withTimeout(EXTRACT_TIMEOUT_MS) {
@@ -234,10 +234,14 @@ class BookMetadataExtractor @Inject constructor(
             }
         }
 
-    private fun determineFormat(fileName: String): BookFormat =
-        when (fileName.substringAfterLast('.', "").lowercase()) {
+    private fun determineFormat(fileName: String, filePath: String = ""): BookFormat {
+        val ext = fileName.substringAfterLast('.', "").lowercase().ifBlank {
+            filePath.substringAfterLast('.', "").lowercase()
+        }
+        return when (ext) {
             "epub" -> BookFormat.EPUB
             "pdf" -> BookFormat.PDF
             else -> BookFormat.UNKNOWN
         }
+    }
 }
