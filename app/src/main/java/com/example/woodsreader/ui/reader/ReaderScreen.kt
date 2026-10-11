@@ -273,6 +273,13 @@ fun ReaderScreen(
 
     DisposableEffect(fragmentManager) {
         if (fragmentManager == null) return@DisposableEffect onDispose {}
+
+        val existing = fragmentManager.fragments.firstOrNull { it is Navigator } as? Navigator
+        if (existing != null && navigatorState.value != existing) {
+            navigatorState.value = existing
+            viewModel.navigator = existing
+        }
+
         val callback = object : FragmentManager.FragmentLifecycleCallbacks() {
             override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
                 if (f is Navigator && navigatorState.value != f) {

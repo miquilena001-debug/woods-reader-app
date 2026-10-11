@@ -74,6 +74,7 @@ class EpubFormatManager @Inject constructor(
     val ttsState = _ttsState.asStateFlow()
 
     var ttsUserStopped = false
+    private var hasEverStartedTts = false
 
     private var lastProcessedHref: String? = null
     private val _currentProcessedDocument = MutableStateFlow<ProcessedDocument?>(null)
@@ -186,12 +187,23 @@ class EpubFormatManager @Inject constructor(
                         is MediaNavigator.State.Ready -> {
                             if (ttsUserStopped) TtsState.STOPPED
                             else if (pbr.playWhenReady) {
+                                hasEverStartedTts = true
                                 onTtsStateChanged?.invoke(ReadingMode.TTS, pbr.utterance)
                                 TtsState.PLAYING
-                            } else TtsState.PAUSED
+                            } else if (hasEverStartedTts) {
+                                TtsState.PAUSED
+                            } else {
+                                TtsState.IDLE
+                            }
                         }
-                        is MediaNavigator.State.Ended -> TtsState.STOPPED
-                        is MediaNavigator.State.Failure -> TtsState.STOPPED
+                        is MediaNavigator.State.Ended -> {
+                            hasEverStartedTts = false
+                            TtsState.STOPPED
+                        }
+                        is MediaNavigator.State.Failure -> {
+                            hasEverStartedTts = false
+                            TtsState.STOPPED
+                        }
                         else -> TtsState.IDLE
                     }
                 }
@@ -253,6 +265,8 @@ class EpubFormatManager @Inject constructor(
     }
 
     private fun executePlay(locator: Locator) {
+        ttsUserStopped = false
+        hasEverStartedTts = true
         val service = ttsService ?: return
         val pub = currentPublication
         if (pub != null && !service.isNavigatorInitialized()) {
@@ -271,12 +285,14 @@ class EpubFormatManager @Inject constructor(
 
     fun stopTts() {
         ttsUserStopped = true
+        hasEverStartedTts = false
         ttsService?.stop()
         _ttsState.value = TtsState.STOPPED
     }
 
     fun resumeTts() {
         ttsUserStopped = false
+        hasEverStartedTts = true
         val service = ttsService
         if (service != null && !service.isNavigatorInitialized()) {
             _currentTtsLocator.value?.let { executePlay(it) } ?: service.play()
