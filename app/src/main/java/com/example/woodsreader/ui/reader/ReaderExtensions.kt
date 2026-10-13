@@ -12,11 +12,30 @@ import org.readium.r2.navigator.preferences.TextAlign
 import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.navigator.Navigator
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
-import org.readium.r2.navigator.pdf.PdfNavigatorFragment
+import android.view.View
+import androidx.fragment.app.Fragment
+import org.readium.r2.navigator.VisualNavigator
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 
 // ── Extension functions ──────────────────────────────────────────────
+
+/**
+ * Acceso seguro a la vista de publicación de Readium.
+ * Si el fragmento aún no ha completado onCreateView() o ya fue destruido,
+ * requireView() en Readium lanzaría IllegalStateException. Esta propiedad
+ * previene cierres inesperados durante navegación rápida o pruebas de estrés.
+ */
+val VisualNavigator.safePublicationView: View?
+    get() = try {
+        if (this is Fragment && this.view == null) null
+        else this.publicationView
+    } catch (_: Exception) {
+        null
+    }
+
+val Navigator.safePublicationView: View?
+    get() = (this as? VisualNavigator)?.safePublicationView
 
 fun Navigator.goForwardCompat(animated: Boolean = false): Boolean {
     return when (this) {
