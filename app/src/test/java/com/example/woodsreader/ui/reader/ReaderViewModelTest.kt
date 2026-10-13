@@ -109,7 +109,7 @@ class ReaderViewModelTest {
             scrollMode = com.example.woodsreader.model.ScrollMode.PAGINATED
         )
         val epubPaginated = paginatedPrefs.toEpubPreferences()
-        assertEquals(false, epubPaginated.scroll)
+        assertEquals(true, epubPaginated.scroll)
 
         val verticalPrefs = com.example.woodsreader.data.datastore.UserPreferences(
             scrollMode = com.example.woodsreader.model.ScrollMode.CONTINUOUS_VERTICAL

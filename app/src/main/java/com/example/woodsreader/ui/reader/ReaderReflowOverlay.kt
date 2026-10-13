@@ -3,89 +3,87 @@ package com.example.woodsreader.ui.reader
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.clickable
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.em
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
-import com.example.woodsreader.ui.theme.HiddenForest
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeChild
-import org.readium.r2.shared.publication.Locator
-import org.readium.r2.shared.ExperimentalReadiumApi
-import com.example.woodsreader.data.model.ReflowItem
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.ui.graphics.graphicsLayer
-import coil3.request.crossfade
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextIndent
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
+import coil3.request.crossfade
+import com.example.woodsreader.data.datastore.UserPreferences
+import com.example.woodsreader.data.model.ReflowItem
+import com.example.woodsreader.data.model.ReflowState
+import com.example.woodsreader.model.TtsHighlightStyle
+import com.example.woodsreader.ui.theme.HiddenForest
+import com.example.woodsreader.ui.theme.LiterataFamily
+import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.launch
-import androidx.activity.compose.BackHandler
+import org.readium.r2.shared.ExperimentalReadiumApi
+import org.readium.r2.shared.publication.Locator
 
 /**
- * Premium Reflow View for PDFs.
- * Transforms static pages into fluid "Liquid Glass" reading sanctuary.
+ * Vista Libro para PDFs.
+ * Renderiza el texto extraído y limpiado por ReadingPipeline como un libro fluido,
+ * con la misma estética tipográfica, temas y navegación que un EPUB.
  */
 @OptIn(ExperimentalReadiumApi::class)
 @Composable
 fun ReaderReflowOverlay(
     modifier: Modifier = Modifier,
     isVisible: Boolean,
-    reflowState: com.example.woodsreader.data.model.ReflowState,
+    reflowState: ReflowState,
     ttsActiveBlockIndex: Int = -1,
-    fontScale: Float,
+    fontScale: Float = 1.0f,
     hazeState: HazeState,
     isLoadingMore: Boolean = false,
     ttsLocator: Locator? = null,
     isTtsPlaying: Boolean = false,
     currentTtsSentence: String = "",
-    preferences: com.example.woodsreader.data.datastore.UserPreferences,
+    preferences: UserPreferences,
     onLoadMore: () -> Unit = {},
     onLoadPrevious: () -> Unit = {},
     onScroll: (Int, Boolean) -> Unit = { _, _ -> },
-
+    onToggleControls: () -> Unit = {},
     onPlayPause: () -> Unit = {},
     onSkipNext: () -> Unit = {},
     onSkipPrev: () -> Unit = {},
     currentSpeed: Float = 1.0f,
     onSpeedChange: (Float) -> Unit = {},
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     val items = reflowState.items
-    var isControlsVisible by remember { mutableStateOf(true) }
-    
-    // Precalculate readable items and element indices to keep rendering at O(1) complexity
+    val coroutineScope = rememberCoroutineScope()
+
+    // Precalcular items legibles para O(1)
     val readableItems = remember(items) {
         items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
     }
@@ -98,76 +96,65 @@ fun ReaderReflowOverlay(
     val elementToTextIndex = remember(textElements) {
         textElements.mapIndexed { index, elem -> elem to index }.toMap()
     }
-    
-    // M-3.2 / 4.1: Auto-scroll al TTS
+
+    // Auto-scroll al bloque TTS activo
     LaunchedEffect(ttsActiveBlockIndex, preferences.ttsAutoScroll) {
-        if (preferences.ttsAutoScroll && ttsActiveBlockIndex >= 0) {
+        if (preferences.ttsAutoScroll && ttsActiveBlockIndex >= 0 && items.isNotEmpty()) {
             val targetItem = readableItems.getOrNull(ttsActiveBlockIndex)
             if (targetItem != null) {
                 val indexInAllItems = items.indexOf(targetItem)
-                if (indexInAllItems != -1 && !listState.isScrollInProgress) {
+                if (indexInAllItems in items.indices && !listState.isScrollInProgress) {
                     listState.animateScrollToItem(indexInAllItems)
                 }
             }
         }
     }
-    
-    // M-2.2: Sincronización de scroll (Reflow -> PDF) + Pausa de TTS
+
+    // Sincronización de scroll
     val firstVisibleIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
     val isScrolling by remember { derivedStateOf { listState.isScrollInProgress } }
-    
+
     LaunchedEffect(firstVisibleIndex, isScrolling) {
         if (isVisible && items.isNotEmpty()) {
             onScroll(firstVisibleIndex, isScrolling)
         }
     }
-    
-    // DETECCIÓN DE SCROLL (Infinite Scroll con Prefetch)
+
+    // Detección de carga incremental hacia adelante (evita auto-desplazamiento infinito hacia atrás)
     LaunchedEffect(listState, isLoadingMore) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo }
             .collect { visibleItems ->
                 if (visibleItems.isNotEmpty() && !isLoadingMore && items.isNotEmpty()) {
                     val lastVisibleIndex = visibleItems.last().index
-                    val firstVisibleIndexLocal = visibleItems.first().index
-                    
                     if (lastVisibleIndex >= items.size - 3) {
                         onLoadMore()
                     }
-                    if (firstVisibleIndexLocal <= 2) {
-                        onLoadPrevious()
-                    }
                 }
-
             }
-    }
-
-    // Capture the Android back button when the overlay is open so we don't exit the whole reader
-    BackHandler(enabled = isVisible) {
-        onDismiss()
     }
 
     var zoomedImageBytes by remember { mutableStateOf<ByteArray?>(null) }
 
+    // Colores del tema del libro idénticos al EPUB
     val theme = preferences.theme
     val (bgColor, textColor) = remember(theme) {
         when (theme) {
             com.example.woodsreader.model.ReaderTheme.HIDDEN_FOREST -> Color(0xFF0A0D0A) to Color(0xFFD4E8D4)
-            com.example.woodsreader.model.ReaderTheme.DAY -> Color(0xFFFAFAFA) to Color(0xFF1A1A1A)
-            com.example.woodsreader.model.ReaderTheme.SEPIA -> Color(0xFFFBF0D9) to Color(0xFF5B4636)
+            com.example.woodsreader.model.ReaderTheme.DAY -> Color(0xFFFAF9F6) to Color(0xFF242424)
+            com.example.woodsreader.model.ReaderTheme.SEPIA -> Color(0xFFF7EED8) to Color(0xFF4A3728)
             com.example.woodsreader.model.ReaderTheme.AMOLED -> Color(0xFF000000) to Color(0xFFE0E0E0)
             com.example.woodsreader.model.ReaderTheme.SUNSET -> Color(0xFF1A0D08) to Color(0xFFEDD5C0)
         }
     }
-    
+
     val composeFontFamily = remember(preferences.fontFamily) {
-        when (preferences.fontFamily) {
-            "serif", "lora" -> FontFamily.Serif
+        when (preferences.fontFamily.lowercase()) {
             "sans-serif", "inter" -> FontFamily.SansSerif
             "monospace", "jetbrains mono" -> FontFamily.Monospace
-            else -> FontFamily.Serif
+            else -> LiterataFamily
         }
     }
-    
+
     val composeTextAlign = remember(preferences.textAlign) {
         when (preferences.textAlign) {
             "justify" -> TextAlign.Justify
@@ -181,256 +168,184 @@ fun ReaderReflowOverlay(
     AnimatedVisibility(
         visible = isVisible,
         modifier = modifier,
-        enter = scaleIn(
-            initialScale = 0.96f,
-            animationSpec = tween(380, easing = FastOutSlowInEasing)
-        ) + fadeIn(animationSpec = tween(280)),
-        exit = scaleOut(
-            targetScale = 0.96f,
-            animationSpec = tween(240, easing = FastOutSlowInEasing)
-        ) + fadeOut(animationSpec = tween(180))
+        enter = fadeIn(animationSpec = tween(250)),
+        exit = fadeOut(animationSpec = tween(200))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(bgColor)
-                .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Barra superior de estado móvil
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp)
-                        .padding(top = 24.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "MODO MÓVIL",
-                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp),
-                            color = HiddenForest.Accent
-                        )
-                        Text(
-                            text = "Lectura Fluida Optimizada",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = HiddenForest.TextLow
-                        )
-                    }
-                    
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(0.1f))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Cerrar",
-                            tint = Color.White
-                        )
-                    }
-                }
-
-                if (items.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = HiddenForest.Accent)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text(
-                                text = when {
-                                    reflowState.currentLoadingPage == -1 -> "Abriendo archivo PDF..."
-                                    reflowState.currentLoadingPage > 0 -> "Analizando página ${reflowState.currentLoadingPage}..."
-                                    else -> "Preparando lectura fluida..."
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = HiddenForest.TextLow
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp),
-                        contentPadding = PaddingValues(bottom = 120.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        items(
-                            items = items,
-                            key = { item -> getItemKey(item) }
-                        ) { item ->
-                            when (item) {
-                                is ReflowItem.Header -> {
-                                    val itemIndex = readableItemToIndex[item] ?: -1
-                                    val isHighlighted = itemIndex == ttsActiveBlockIndex
-                                    
-                                    HeaderItem(
-                                        text = item.content,
-                                        level = item.level,
-                                        fontFamily = composeFontFamily,
-                                        textColor = textColor,
-                                        isHighlighted = isHighlighted,
-                                        currentTtsSentence = currentTtsSentence,
-                                        modifier = Modifier.fillParentMaxWidth().background(if (isHighlighted) com.example.woodsreader.ui.theme.HiddenForest.AccentGlow.copy(alpha = 0.1f) else Color.Transparent, RoundedCornerShape(4.dp))
-                                    )
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { offset ->
+                            val width = size.width
+                            val x = offset.x
+                            // 50% central: alternar barras de control (como en EPUB)
+                            if (x in (width * 0.25f)..(width * 0.75f)) {
+                                onToggleControls()
+                            } else if (x < width * 0.25f) {
+                                // Tap lateral izquierdo: avanzar hacia arriba
+                                if (items.isNotEmpty()) {
+                                    coroutineScope.launch {
+                                        val current = listState.firstVisibleItemIndex
+                                        listState.animateScrollToItem((current - 3).coerceAtLeast(0))
+                                    }
                                 }
-                                is ReflowItem.Paragraph -> {
-                                    val itemIndex = readableItemToIndex[item] ?: -1
-                                    val isHighlighted = itemIndex == ttsActiveBlockIndex
-                                    
-                                    ParagraphItem(
-                                        text = item.content,
-                                        fontFamily = composeFontFamily,
-                                        textAlign = composeTextAlign,
-                                        lineSpacing = preferences.lineSpacingMultiplier,
-                                        textColor = textColor,
-                                        isHighlighted = isHighlighted,
-                                        currentTtsSentence = currentTtsSentence,
-                                        modifier = Modifier.fillParentMaxWidth().background(if (isHighlighted) com.example.woodsreader.ui.theme.HiddenForest.AccentGlow.copy(alpha = 0.1f) else Color.Transparent, RoundedCornerShape(4.dp))
-                                    )
-                                }
-                                is ReflowItem.PageNumber -> {
-                                }
-                                is ReflowItem.Image -> {
-                                    ReflowImageItem(
-                                        item = item,
-                                        onZoom = { zoomedImageBytes = it }
-                                    )
-                                }
-                                is ReflowItem.Ignored -> {
-                                }
-                                is ReflowItem.Text -> {
-                                    val element = item.element
-                                    val textContent = element.locator.text.highlight
-                                    if (!textContent.isNullOrBlank()) {
-                                        val itemIndex = elementToTextIndex[element] ?: -1
-                                        val isHighlighted = itemIndex == ttsActiveBlockIndex
-
-                                        var itemVisible by remember { mutableStateOf(false) }
-                                        LaunchedEffect(Unit) {
-                                            kotlinx.coroutines.delay((itemIndex * 30L).coerceAtMost(450L))
-                                            itemVisible = true
-                                        }
-
-                                        AnimatedVisibility(
-                                            visible = itemVisible,
-                                            enter = fadeIn(tween(300)) + slideInVertically(
-                                                animationSpec = tween(300, easing = FastOutSlowInEasing)
-                                            ) { 20 }
-                                        ) {
-                                            Text(
-                                                text = textContent,
-                                                fontSize = (18 * fontScale).sp,
-                                                lineHeight = (28 * fontScale * preferences.lineSpacingMultiplier).sp,
-                                                color = if (isHighlighted) HiddenForest.Accent else textColor,
-                                                fontFamily = composeFontFamily,
-                                                textAlign = composeTextAlign,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .background(
-                                                        if (isHighlighted) HiddenForest.AccentGlow.copy(alpha = 0.1f)
-                                                        else Color.Transparent,
-                                                        RoundedCornerShape(4.dp)
-                                                    )
-                                                    .padding(horizontal = 4.dp)
-                                            )
-                                        }
+                            } else {
+                                // Tap lateral derecho: avanzar hacia abajo
+                                if (items.isNotEmpty()) {
+                                    coroutineScope.launch {
+                                        val current = listState.firstVisibleItemIndex
+                                        val maxIdx = (items.size - 1).coerceAtLeast(0)
+                                        listState.animateScrollToItem((current + 3).coerceIn(0, maxIdx))
                                     }
                                 }
                             }
                         }
+                    )
+                }
+        ) {
+            if (items.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = HiddenForest.Accent)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = when {
+                                reflowState.currentLoadingPage == -1 -> "Abriendo libro..."
+                                reflowState.currentLoadingPage > 0 -> "Preparando página ${reflowState.currentLoadingPage}..."
+                                else -> "Cargando libro..."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textColor.copy(alpha = 0.7f),
+                            fontFamily = composeFontFamily
+                        )
+                    }
+                }
+            } else {
+                val horizontalMargin = (preferences.horizontalMargin.takeIf { it > 0 } ?: 20f).dp
 
-                        if (isLoadingMore) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 32.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp),
-                                        color = HiddenForest.Accent,
-                                        strokeWidth = 2.dp
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = horizontalMargin),
+                    contentPadding = PaddingValues(
+                        top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 20.dp,
+                        bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 72.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    itemsIndexed(
+                        items = items,
+                        key = { index, item -> getItemKey(item, index) }
+                    ) { index, item ->
+                        when (item) {
+                            is ReflowItem.Header -> {
+                                val itemIndex = readableItemToIndex[item] ?: -1
+                                val isHighlighted = itemIndex == ttsActiveBlockIndex
+
+                                HeaderItem(
+                                    text = item.content,
+                                    level = item.level,
+                                    fontFamily = composeFontFamily,
+                                    fontSizeSp = preferences.fontSizeSp,
+                                    textColor = textColor,
+                                    isHighlighted = isHighlighted,
+                                    currentTtsSentence = currentTtsSentence,
+                                    ttsHighlightStyle = preferences.ttsHighlightStyle,
+                                    theme = preferences.theme
+                                )
+                            }
+                            is ReflowItem.Paragraph -> {
+                                val itemIndex = readableItemToIndex[item] ?: -1
+                                val isHighlighted = itemIndex == ttsActiveBlockIndex
+
+                                ParagraphItem(
+                                    text = item.content,
+                                    fontFamily = composeFontFamily,
+                                    textAlign = composeTextAlign,
+                                    lineSpacing = preferences.lineSpacingMultiplier,
+                                    fontSizeSp = preferences.fontSizeSp,
+                                    textColor = textColor,
+                                    isHighlighted = isHighlighted,
+                                    currentTtsSentence = currentTtsSentence,
+                                    hyphenation = preferences.hyphenation,
+                                    ttsHighlightStyle = preferences.ttsHighlightStyle,
+                                    theme = preferences.theme
+                                )
+                            }
+                            is ReflowItem.PageNumber -> { /* Filtrado para flujo editorial limpio */ }
+                            is ReflowItem.Image -> {
+                                ReflowImageItem(
+                                    item = item,
+                                    onZoom = { zoomedImageBytes = it }
+                                )
+                            }
+                            is ReflowItem.Ignored -> { /* Filtrado */ }
+                            is ReflowItem.Text -> {
+                                val element = item.element
+                                val textContent = element.locator.text.highlight
+                                if (!textContent.isNullOrBlank()) {
+                                    val itemIndex = elementToTextIndex[element] ?: -1
+                                    val isHighlighted = itemIndex == ttsActiveBlockIndex
+                                    ParagraphItem(
+                                        text = textContent,
+                                        fontFamily = composeFontFamily,
+                                        textAlign = composeTextAlign,
+                                        lineSpacing = preferences.lineSpacingMultiplier,
+                                        fontSizeSp = preferences.fontSizeSp,
+                                        textColor = textColor,
+                                        isHighlighted = isHighlighted,
+                                        currentTtsSentence = currentTtsSentence,
+                                        hyphenation = preferences.hyphenation,
+                                        ttsHighlightStyle = preferences.ttsHighlightStyle,
+                                        theme = preferences.theme
                                     )
                                 }
                             }
                         }
                     }
+
+                    if (isLoadingMore) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 20.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = HiddenForest.Accent,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+                    }
                 }
-            }
-            
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(100.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, bgColor)
-                        )
-                    )
-            )
 
-            AnimatedVisibility(
-                visible = isVisible,
-                enter = slideInVertically { it } + fadeIn(),
-                exit = slideOutVertically { it } + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp)
-            ) {
-                Surface(
-                    color = Color.White.copy(alpha = 0.05f),
-                    shape = RoundedCornerShape(32.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                    modifier = Modifier
-                        .height(80.dp)
-                        .padding(horizontal = 24.dp)
-                        .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(24.dp)
+                // Pie de página sutil de libro (Running Folio)
+                if (reflowState.totalPages > 0 && items.isNotEmpty()) {
+                    val currentViewingPage = remember(firstVisibleIndex, items) {
+                        val currentItem = items.getOrNull(firstVisibleIndex)
+                        currentItem?.pageNumber ?: reflowState.currentPage
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 6.dp)
+                            .background(bgColor.copy(alpha = 0.90f), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 16.dp, vertical = 3.dp)
                     ) {
-                        TextButton(onClick = { onSpeedChange(if (currentSpeed >= 2.0f) 0.5f else currentSpeed + 0.25f) }) {
-                            Text(
-                                text = "${currentSpeed}x",
-                                color = HiddenForest.Accent,
-                                style = MaterialTheme.typography.labelLarge
+                        Text(
+                            text = "Pág. $currentViewingPage de ${reflowState.totalPages}",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = composeFontFamily,
+                                fontSize = 11.sp,
+                                color = textColor.copy(alpha = 0.50f)
                             )
-                        }
-
-                        IconButton(onClick = onSkipPrev) {
-                            Icon(Icons.Default.SkipPrevious, null, tint = Color.White)
-                        }
-
-                        FloatingActionButton(
-                            onClick = onPlayPause,
-                            containerColor = HiddenForest.Accent,
-                            contentColor = Color.Black,
-                            shape = CircleShape,
-                            modifier = Modifier.size(56.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isTtsPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = null
-                            )
-                        }
-
-                        IconButton(onClick = onSkipNext) {
-                            Icon(Icons.Default.SkipNext, null, tint = Color.White)
-                        }
-
-                        if (isTtsPlaying) {
-                            androidx.compose.material3.LinearProgressIndicator(
-                                modifier = Modifier.width(40.dp).clip(CircleShape),
-                                color = HiddenForest.Accent,
-                                trackColor = Color.White.copy(alpha = 0.1f)
-                            )
-                        }
+                        )
                     }
                 }
             }
@@ -447,29 +362,240 @@ fun ReaderReflowOverlay(
 }
 
 @Composable
+fun HeaderItem(
+    text: String,
+    level: Int,
+    fontFamily: FontFamily,
+    fontSizeSp: Float,
+    textColor: Color,
+    isHighlighted: Boolean,
+    currentTtsSentence: String,
+    ttsHighlightStyle: TtsHighlightStyle = TtsHighlightStyle.BACKGROUND_YELLOW,
+    theme: com.example.woodsreader.model.ReaderTheme = com.example.woodsreader.model.ReaderTheme.HIDDEN_FOREST,
+    modifier: Modifier = Modifier
+) {
+    val isChapterTitle = remember(text) {
+        val trimmed = text.trim()
+        trimmed.length <= 60 && (
+            trimmed.contains(Regex("""(?i)^(cap[íi]tulo|chapter|parte|secci[óo]n|pr[óo]logo|ep[íi]logo|\b[0-9IVXLCDM]+\b)""")) ||
+            trimmed.startsWith("#")
+        )
+    }
+
+    val scale = when {
+        isChapterTitle -> 1.6f
+        level == 1 -> 1.45f
+        level == 2 -> 1.25f
+        level == 3 -> 1.15f
+        else -> 1.05f
+    }
+    val headerSize = (fontSizeSp * scale).sp
+    val headerWeight = if (level <= 2 || isChapterTitle) FontWeight.Bold else FontWeight.SemiBold
+    val topPad = if (isChapterTitle) 38.dp else when (level) {
+        1 -> 28.dp
+        2 -> 20.dp
+        else -> 14.dp
+    }
+    val bottomPad = if (isChapterTitle) 16.dp else when (level) {
+        1 -> 12.dp
+        2 -> 8.dp
+        else -> 4.dp
+    }
+
+    val isDarkTheme = theme != com.example.woodsreader.model.ReaderTheme.DAY && theme != com.example.woodsreader.model.ReaderTheme.SEPIA
+    val headerHighlightColor = when (ttsHighlightStyle) {
+        TtsHighlightStyle.BACKGROUND_YELLOW -> if (isDarkTheme) Color(0xFFFFD600) else Color(0xFF9E6500)
+        TtsHighlightStyle.BACKGROUND_ACCENT -> if (isDarkTheme) Color(0xFF2ECC71) else Color(0xFF1B663E)
+        TtsHighlightStyle.BACKGROUND_BLUE -> if (isDarkTheme) Color(0xFF2196F3) else Color(0xFF0D47A1)
+        TtsHighlightStyle.BACKGROUND_ORANGE -> if (isDarkTheme) Color(0xFFFF7A45) else Color(0xFFB03A00)
+        TtsHighlightStyle.UNDERLINE -> textColor
+        TtsHighlightStyle.NONE -> textColor
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = topPad, bottom = bottomPad),
+        horizontalAlignment = if (isChapterTitle) Alignment.CenterHorizontally else Alignment.Start
+    ) {
+        Text(
+            text = text,
+            fontSize = headerSize,
+            fontWeight = headerWeight,
+            fontFamily = fontFamily,
+            color = if (isHighlighted) headerHighlightColor else textColor,
+            textDecoration = if (isHighlighted && ttsHighlightStyle == TtsHighlightStyle.UNDERLINE) TextDecoration.Underline else TextDecoration.None,
+            textAlign = if (isChapterTitle) TextAlign.Center else TextAlign.Start,
+            letterSpacing = if (isChapterTitle) 1.5.sp else 0.sp,
+            lineHeight = (fontSizeSp * scale * 1.3f).sp,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (isChapterTitle) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth(0.55f)
+            ) {
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = textColor.copy(alpha = 0.22f),
+                    thickness = 0.5.dp
+                )
+                Text(
+                    text = "  ✦   ✦   ✦  ",
+                    fontSize = 10.sp,
+                    color = HiddenForest.Accent.copy(alpha = 0.70f),
+                    modifier = Modifier.padding(horizontal = 6.dp)
+                )
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = textColor.copy(alpha = 0.22f),
+                    thickness = 0.5.dp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ParagraphItem(
+    text: String,
+    fontFamily: FontFamily,
+    textAlign: TextAlign,
+    lineSpacing: Float,
+    fontSizeSp: Float,
+    textColor: Color,
+    isHighlighted: Boolean,
+    currentTtsSentence: String,
+    hyphenation: Boolean = true,
+    ttsHighlightStyle: TtsHighlightStyle = TtsHighlightStyle.BACKGROUND_YELLOW,
+    theme: com.example.woodsreader.model.ReaderTheme = com.example.woodsreader.model.ReaderTheme.HIDDEN_FOREST,
+    modifier: Modifier = Modifier
+) {
+    val isDarkTheme = theme != com.example.woodsreader.model.ReaderTheme.DAY && theme != com.example.woodsreader.model.ReaderTheme.SEPIA
+    val highlightSpanStyle = remember(ttsHighlightStyle, textColor, isDarkTheme) {
+        when (ttsHighlightStyle) {
+            TtsHighlightStyle.BACKGROUND_YELLOW -> SpanStyle(
+                color = if (isDarkTheme) Color(0xFFFFD600) else Color(0xFF9E6500),
+                fontWeight = FontWeight.SemiBold
+            )
+            TtsHighlightStyle.BACKGROUND_ACCENT -> SpanStyle(
+                color = if (isDarkTheme) Color(0xFF2ECC71) else Color(0xFF1B663E),
+                fontWeight = FontWeight.SemiBold
+            )
+            TtsHighlightStyle.BACKGROUND_BLUE -> SpanStyle(
+                color = if (isDarkTheme) Color(0xFF2196F3) else Color(0xFF0D47A1),
+                fontWeight = FontWeight.SemiBold
+            )
+            TtsHighlightStyle.BACKGROUND_ORANGE -> SpanStyle(
+                color = if (isDarkTheme) Color(0xFFFF7A45) else Color(0xFFB03A00),
+                fontWeight = FontWeight.SemiBold
+            )
+            TtsHighlightStyle.UNDERLINE -> SpanStyle(
+                textDecoration = TextDecoration.Underline
+            )
+            TtsHighlightStyle.NONE -> SpanStyle()
+        }
+    }
+
+    val annotatedText = remember(text, isHighlighted, currentTtsSentence, highlightSpanStyle, ttsHighlightStyle) {
+        if (isHighlighted && currentTtsSentence.isNotEmpty() && ttsHighlightStyle != TtsHighlightStyle.NONE) {
+            val idx = text.indexOf(currentTtsSentence, ignoreCase = true)
+            if (idx != -1) {
+                buildAnnotatedString {
+                    if (idx > 0) append(text.substring(0, idx))
+                    withStyle(highlightSpanStyle) {
+                        append(text.substring(idx, idx + currentTtsSentence.length))
+                    }
+                    if (idx + currentTtsSentence.length < text.length) {
+                        append(text.substring(idx + currentTtsSentence.length))
+                    }
+                }
+            } else {
+                buildAnnotatedString {
+                    withStyle(highlightSpanStyle) {
+                        append(text)
+                    }
+                }
+            }
+        } else {
+            buildAnnotatedString { append(text) }
+        }
+    }
+
+    val isDialogueOrQuote = remember(text) {
+        val trimmed = text.trim()
+        trimmed.startsWith("—") || trimmed.startsWith("–") || trimmed.startsWith("-") ||
+        trimmed.startsWith("\"") || trimmed.startsWith("“") || trimmed.startsWith("«")
+    }
+
+    val textIndent = remember(textAlign, fontSizeSp, isDialogueOrQuote) {
+        if (textAlign == TextAlign.Justify && !isDialogueOrQuote) {
+            TextIndent(firstLine = (fontSizeSp * 1.1f).sp)
+        } else {
+            TextIndent.None
+        }
+    }
+
+    val textStyle = remember(textIndent, hyphenation) {
+        TextStyle(
+            textIndent = textIndent,
+            hyphens = if (hyphenation) Hyphens.Auto else Hyphens.None
+        )
+    }
+
+    Text(
+        text = annotatedText,
+        fontSize = fontSizeSp.sp,
+        lineHeight = (fontSizeSp * 1.35f * lineSpacing).sp,
+        textAlign = textAlign,
+        fontFamily = fontFamily,
+        color = if (isHighlighted && ttsHighlightStyle != TtsHighlightStyle.NONE && ttsHighlightStyle != TtsHighlightStyle.UNDERLINE) {
+            when (ttsHighlightStyle) {
+                TtsHighlightStyle.BACKGROUND_YELLOW -> if (isDarkTheme) Color(0xFFFFD600) else Color(0xFF9E6500)
+                TtsHighlightStyle.BACKGROUND_ACCENT -> if (isDarkTheme) Color(0xFF2ECC71) else Color(0xFF1B663E)
+                TtsHighlightStyle.BACKGROUND_BLUE -> if (isDarkTheme) Color(0xFF2196F3) else Color(0xFF0D47A1)
+                TtsHighlightStyle.BACKGROUND_ORANGE -> if (isDarkTheme) Color(0xFFFF7A45) else Color(0xFFB03A00)
+                else -> textColor
+            }
+        } else textColor,
+        style = textStyle,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+    )
+}
+
+@Composable
 fun ReflowImageItem(item: ReflowItem.Image, onZoom: (ByteArray) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val imageHash = remember(item.imageBytes) { item.imageBytes.hashCode() }
-    coil3.compose.AsyncImage(
-        model = coil3.request.ImageRequest.Builder(context)
-            .data(item.imageBytes)
-            .memoryCacheKey("reflow-img-${item.pageNumber}-$imageHash")
-            .diskCacheKey("reflow-img-${item.pageNumber}-$imageHash")
-            .size(480, 640)
-            .crossfade(true)
-            .build(),
-        placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
-        error = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
-        contentDescription = "Imagen PDF",
-        contentScale = ContentScale.FillWidth,
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 320.dp)
-            .padding(vertical = 10.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .clickable { onZoom(item.imageBytes) }
-            .background(Color.White.copy(alpha = 0.05f))
-    )
+            .padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        coil3.compose.AsyncImage(
+            model = coil3.request.ImageRequest.Builder(context)
+                .data(item.imageBytes)
+                .memoryCacheKey("reflow-img-${item.pageNumber}-$imageHash")
+                .diskCacheKey("reflow-img-${item.pageNumber}-$imageHash")
+                .size(720, 960)
+                .crossfade(true)
+                .build(),
+            placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
+            error = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
+            contentDescription = "Ilustración de la página ${item.pageNumber}",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 280.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onZoom(item.imageBytes) }
+        )
+    }
 }
 
 @Composable
@@ -552,7 +678,7 @@ fun ZoomableImageDialog(
                             )
                         }
                 )
-                
+
                 IconButton(
                     onClick = onDismiss,
                     modifier = Modifier
@@ -569,138 +695,18 @@ fun ZoomableImageDialog(
 }
 
 @OptIn(ExperimentalReadiumApi::class)
-private fun getItemKey(item: ReflowItem): Any {
-    return when (item) {
-        is ReflowItem.Header -> "header_${item.pageNumber}_${item.content.hashCode()}"
-        is ReflowItem.Paragraph -> "para_${item.pageNumber}_${item.content.hashCode()}"
-        is ReflowItem.PageNumber -> "page_${item.pageNumber}"
-        is ReflowItem.Image -> "img_${item.pageNumber}_${item.imageBytes.size}"
-        is ReflowItem.Ignored -> "ignore_${item.pageNumber}"
-        is ReflowItem.Text -> "text_${item.element.locator.href}_${item.element.locator.locations.progression ?: 0.0}_${item.element.hashCode()}"
-    }
-}
-
-@Composable
-fun HeaderItem(
-    text: String,
-    level: Int,
-    fontFamily: FontFamily,
-    textColor: Color,
-    isHighlighted: Boolean,
-    currentTtsSentence: String,
-    modifier: Modifier = Modifier
-) {
-    val typography = MaterialTheme.typography
-    val headerStyle = when (level) {
-        1 -> typography.headlineMedium.copy(fontWeight = FontWeight.Bold, fontFamily = fontFamily)
-        2 -> typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold, fontFamily = fontFamily)
-        3 -> typography.titleMedium.copy(fontWeight = FontWeight.Medium, fontFamily = fontFamily)
-        else -> typography.titleSmall.copy(fontWeight = FontWeight.Normal, fontFamily = fontFamily)
-    }
-
-    val annotatedText = remember(text, isHighlighted, currentTtsSentence, textColor) {
-        if (isHighlighted && currentTtsSentence.isNotEmpty()) {
-            val idx = text.indexOf(currentTtsSentence, ignoreCase = true)
-            if (idx != -1) {
-                buildAnnotatedString {
-                    if (idx > 0) append(text.substring(0, idx))
-                    withStyle(
-                        SpanStyle(
-                            color = HiddenForest.Accent,
-                            fontWeight = FontWeight.Bold,
-                            background = HiddenForest.AccentGlow.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        append(text.substring(idx, idx + currentTtsSentence.length))
-                    }
-                    if (idx + currentTtsSentence.length < text.length) {
-                        append(text.substring(idx + currentTtsSentence.length))
-                    }
-                }
-            } else {
-                buildAnnotatedString {
-                    withStyle(
-                        SpanStyle(
-                            color = HiddenForest.Accent,
-                            fontWeight = FontWeight.Bold,
-                            background = HiddenForest.AccentGlow.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        append(text)
-                    }
-                }
-            }
-        } else {
-            buildAnnotatedString { append(text) }
+private fun getItemKey(item: ReflowItem, index: Int): String {
+    val base = if (item.id.isNotEmpty()) {
+        item.id
+    } else {
+        when (item) {
+            is ReflowItem.Header -> "hdr_${item.pageNumber}_${item.content.hashCode()}"
+            is ReflowItem.Paragraph -> "par_${item.pageNumber}_${item.content.hashCode()}"
+            is ReflowItem.PageNumber -> "pg_${item.pageNumber}_${item.number.hashCode()}"
+            is ReflowItem.Image -> "img_${item.pageNumber}_${item.imageBytes.size}"
+            is ReflowItem.Ignored -> "ign_${item.pageNumber}_${item.content.hashCode()}"
+            is ReflowItem.Text -> "txt_${item.element.hashCode()}"
         }
     }
-
-    Text(
-        text = annotatedText,
-        style = headerStyle,
-        color = if (isHighlighted && currentTtsSentence.isEmpty()) HiddenForest.Accent else textColor,
-        modifier = modifier
-            .padding(top = if (level == 1) 24.dp else 16.dp, bottom = 8.dp)
-    )
-}
-
-@Composable
-fun ParagraphItem(
-    text: String,
-    fontFamily: FontFamily,
-    textAlign: TextAlign,
-    lineSpacing: Float,
-    textColor: Color,
-    isHighlighted: Boolean,
-    currentTtsSentence: String,
-    modifier: Modifier = Modifier
-) {
-    val annotatedText = remember(text, isHighlighted, currentTtsSentence, textColor) {
-        if (isHighlighted && currentTtsSentence.isNotEmpty()) {
-            val idx = text.indexOf(currentTtsSentence, ignoreCase = true)
-            if (idx != -1) {
-                buildAnnotatedString {
-                    if (idx > 0) append(text.substring(0, idx))
-                    withStyle(
-                        SpanStyle(
-                            color = HiddenForest.Accent,
-                            fontWeight = FontWeight.Bold,
-                            background = HiddenForest.AccentGlow.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        append(text.substring(idx, idx + currentTtsSentence.length))
-                    }
-                    if (idx + currentTtsSentence.length < text.length) {
-                        append(text.substring(idx + currentTtsSentence.length))
-                    }
-                }
-            } else {
-                buildAnnotatedString {
-                    withStyle(
-                        SpanStyle(
-                            color = HiddenForest.Accent,
-                            fontWeight = FontWeight.Bold,
-                            background = HiddenForest.AccentGlow.copy(alpha = 0.15f)
-                        )
-                    ) {
-                        append(text)
-                    }
-                }
-            }
-        } else {
-            buildAnnotatedString { append(text) }
-        }
-    }
-
-    Text(
-        text = annotatedText,
-        style = MaterialTheme.typography.bodyLarge.copy(
-            lineHeight = (1.6 * lineSpacing).em,
-            textAlign = textAlign,
-            fontFamily = fontFamily
-        ),
-        color = if (isHighlighted && currentTtsSentence.isEmpty()) HiddenForest.Accent else textColor,
-        modifier = modifier
-            .padding(vertical = 4.dp)
-    )
+    return "${base}_$index"
 }

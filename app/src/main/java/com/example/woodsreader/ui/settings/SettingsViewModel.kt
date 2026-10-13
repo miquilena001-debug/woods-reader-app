@@ -26,6 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import com.example.woodsreader.core.tts.SherpaModelManager
+import com.example.woodsreader.core.tts.SherpaDownloadState
+import com.example.woodsreader.core.tts.TtsManager
 import java.io.File
 import javax.inject.Inject
 
@@ -40,9 +43,10 @@ data class LibraryBackup(
 data class StorageSizes(
     val databaseBytes: Long = 0L,
     val coversBytes: Long = 0L,
-    val espeakBytes: Long = 0L
+    val espeakBytes: Long = 0L,
+    val sherpaBytes: Long = 0L
 ) {
-    val totalBytes: Long get() = databaseBytes + coversBytes + espeakBytes
+    val totalBytes: Long get() = databaseBytes + coversBytes + espeakBytes + sherpaBytes
 }
 
 @HiltViewModel
@@ -52,7 +56,9 @@ class SettingsViewModel @Inject constructor(
     private val bookDao: BookDao,
     private val highlightDao: HighlightDao,
     private val bookmarkDao: BookmarkDao,
-    private val readingSessionDao: ReadingSessionDao
+    private val readingSessionDao: ReadingSessionDao,
+    private val sherpaModelManager: SherpaModelManager,
+    private val ttsManager: TtsManager
 ) : ViewModel() {
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow
@@ -87,8 +93,47 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { preferencesRepository.updateTtsPitch(pitch) }
     }
 
+    val sherpaDownloadState = sherpaModelManager.downloadState
+    private val _showSherpaDownloadDialog = MutableStateFlow(false)
+    val showSherpaDownloadDialog = _showSherpaDownloadDialog.asStateFlow()
+
+    fun dismissSherpaDownloadDialog() {
+        _showSherpaDownloadDialog.value = false
+    }
+
     fun setUseSherpaTts(use: Boolean) {
-        viewModelScope.launch { preferencesRepository.updateUseSherpaTts(use) }
+        if (!use) {
+            viewModelScope.launch { preferencesRepository.updateUseSherpaTts(false) }
+        } else {
+            if (sherpaModelManager.isModelReady()) {
+                viewModelScope.launch {
+                    preferencesRepository.updateUseSherpaTts(true)
+                    ttsManager.initSherpaIfNeeded()
+                }
+            } else {
+                _showSherpaDownloadDialog.value = true
+            }
+        }
+    }
+
+    fun downloadSherpaModel() {
+        _showSherpaDownloadDialog.value = false
+        viewModelScope.launch {
+            val result = sherpaModelManager.downloadAndExtractModel()
+            if (result.isSuccess) {
+                preferencesRepository.updateUseSherpaTts(true)
+                ttsManager.initSherpaIfNeeded()
+            }
+        }
+    }
+
+    fun deleteSherpaModel(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ttsManager.resetSherpa()
+            sherpaModelManager.deleteModel()
+            preferencesRepository.updateUseSherpaTts(false)
+            calculateStorageSizes(context)
+        }
     }
 
     fun resetOnboarding() {
@@ -120,7 +165,9 @@ class SettingsViewModel @Inject constructor(
             val espeakDir = File(context.filesDir, "espeak-ng-data")
             val espeakSize = getFolderSize(espeakDir)
 
-            _storageSizes.value = StorageSizes(dbSize, coversSize, espeakSize)
+            val sherpaSize = sherpaModelManager.getModelSizeBytes()
+
+            _storageSizes.value = StorageSizes(dbSize, coversSize, espeakSize, sherpaSize)
         }
     }
 

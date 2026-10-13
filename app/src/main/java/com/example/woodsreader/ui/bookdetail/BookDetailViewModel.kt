@@ -259,6 +259,14 @@ class BookDetailViewModel @Inject constructor(
         }
     }
 
+    fun updateDescription(newDescription: String) {
+        val currentBook = _uiState.value.book ?: return
+        viewModelScope.launch {
+            val updatedBook = currentBook.copy(description = newDescription.trim())
+            bookRepository.upsertBook(updatedBook)
+        }
+    }
+
     fun deleteHighlight(highlight: HighlightEntity) {
         viewModelScope.launch {
             bookRepository.deleteHighlight(highlight)

@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -98,6 +99,15 @@ fun LibraryScreen(
     // Detectar si la biblioteca estÃƒÂ¡ cargando su primera pÃƒÂ¡gina
     val isInitialLoading = books.loadState.refresh is LoadState.Loading && books.itemCount == 0
     val hapticFeedback = LocalHapticFeedback.current
+    val configuration = LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp
+    val columnsCount = when {
+        screenWidthDp >= 1000 -> 6
+        screenWidthDp >= 840  -> 5
+        screenWidthDp >= 600  -> 4
+        screenWidthDp < 360   -> 2
+        else                  -> 3
+    }
 
     Box(
         modifier = Modifier
@@ -247,7 +257,7 @@ fun LibraryScreen(
                             .padding(horizontal = 16.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        repeat(3) {
+                        repeat(columnsCount) {
                             ShimmerBookCard(
                                 modifier = Modifier.weight(1f)
                             )
@@ -260,14 +270,11 @@ fun LibraryScreen(
             // Patron Paging3 correcto: indice directo sobre LazyPagingItems.
             // books[index] == books.get(index): descarga bajo demanda respetando cache.
             // books.peek(index): lectura no destructiva para claves estables.
-            val rowCount = (books.itemCount + 2) / 3
+            val rowCount = (books.itemCount + columnsCount - 1) / columnsCount
             items(
                 count = rowCount,
-                key = { rowIndex -> books.peek(rowIndex * 3)?.id ?: "row_$rowIndex" }
+                key = { rowIndex -> books.peek(rowIndex * columnsCount)?.id ?: "row_$rowIndex" }
             ) { rowIndex ->
-                val col0: BookEntity? = books[rowIndex * 3]
-                val col1: BookEntity? = if (rowIndex * 3 + 1 < books.itemCount) books[rowIndex * 3 + 1] else null
-                val col2: BookEntity? = if (rowIndex * 3 + 2 < books.itemCount) books[rowIndex * 3 + 2] else null
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -275,7 +282,9 @@ fun LibraryScreen(
                         .padding(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    for (book in listOf(col0, col1, col2)) {
+                    for (colIndex in 0 until columnsCount) {
+                        val itemIndex = rowIndex * columnsCount + colIndex
+                        val book: BookEntity? = if (itemIndex < books.itemCount) books[itemIndex] else null
                         Box(modifier = Modifier.weight(1f)) {
                             if (book != null) {
                                 WoodsBookCard(
@@ -305,7 +314,7 @@ fun LibraryScreen(
                             .padding(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        repeat(3) { Box(modifier = Modifier.weight(1f)) { WoodsBookSkeleton() } }
+                        repeat(columnsCount) { Box(modifier = Modifier.weight(1f)) { WoodsBookSkeleton() } }
                     }
                 }
             }
@@ -590,7 +599,8 @@ private fun ShimmerBookCard(modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
-            .height(180.dp)
+            .fillMaxWidth()
+            .aspectRatio(0.62f)
             .graphicsLayer { alpha = shimmerAlpha }
             .clip(RoundedCornerShape(12.dp))
             .background(HiddenForest.SurfaceVariant)

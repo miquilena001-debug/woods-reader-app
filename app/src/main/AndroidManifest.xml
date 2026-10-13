@@ -24,6 +24,15 @@
     <!-- BLUETOOTH_CONNECT: permite que los auriculares A40 reciban comandos AVRCP -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- ── Soporte Multi-pantalla responsivo (Smartphones, Tablets, Plegables) ── -->
+    <supports-screens
+        android:smallScreens="true"
+        android:normalScreens="true"
+        android:largeScreens="true"
+        android:xlargeScreens="true"
+        android:anyDensity="true"
+        android:resizeable="true" />
+
     <application
         android:name=".LectorApplication"
         android:allowBackup="false"
@@ -44,6 +53,8 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.App.Starting"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -99,6 +110,18 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- Deshabilitar el inicializador por defecto de WorkManager ya que usamos Hilt / on-demand Initialization -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
 
     </application>
 

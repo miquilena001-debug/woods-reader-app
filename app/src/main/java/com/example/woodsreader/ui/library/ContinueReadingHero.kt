@@ -99,8 +99,8 @@ fun ContinueReadingHero(
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(coverFile)
-                                .memoryCacheKey("cover-list-$bookId")
-                                .diskCacheKey("cover-list-$bookId")
+                                .memoryCacheKey("cover-grid-$bookId")
+                                .diskCacheKey("cover-grid-$bookId")
                                 .crossfade(true)
                                 .build(),
                             placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
@@ -110,7 +110,7 @@ fun ContinueReadingHero(
                                 .fillMaxSize()
                                 .then(with(sharedTransitionScope) {
                                     Modifier.sharedElement(
-                                        state = rememberSharedContentState(key = "cover-$bookId"),
+                                        state = rememberSharedContentState(key = "cover-hero-$bookId"),
                                         animatedVisibilityScope = animatedVisibilityScope
                                     )
                                 }),

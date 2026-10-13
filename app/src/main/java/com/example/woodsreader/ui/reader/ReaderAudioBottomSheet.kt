@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.woodsreader.ui.theme.HiddenForest
+import com.example.woodsreader.ui.theme.LiterataFamily
 import com.example.woodsreader.ui.theme.Day
 import com.example.woodsreader.ui.theme.Sepia
 import com.example.woodsreader.ui.theme.Sunset
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import com.example.woodsreader.model.ScrollMode
 import com.example.woodsreader.model.PageTurnStyle
+import androidx.compose.ui.text.style.TextDecoration
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +72,7 @@ fun ReaderControlBottomSheet(
     onPageTurnAnimationChange: (Boolean) -> Unit = {},
     onPageTurnStyleChange: (PageTurnStyle) -> Unit = {},
     onInvertedTapZonesChange: (Boolean) -> Unit = {},
+    onTtsHighlightStyleChange: (com.example.woodsreader.model.TtsHighlightStyle) -> Unit = {},
     hazeState: HazeState,
     onDismiss: () -> Unit
 ) {
@@ -179,7 +182,8 @@ fun ReaderControlBottomSheet(
                                 onScrollModeChange = onScrollModeChange,
                                 onPageTurnAnimationChange = onPageTurnAnimationChange,
                                 onPageTurnStyleChange = onPageTurnStyleChange,
-                                onInvertedTapZonesChange = onInvertedTapZonesChange
+                                onInvertedTapZonesChange = onInvertedTapZonesChange,
+                                onTtsHighlightStyleChange = onTtsHighlightStyleChange
                             )
                         }
                     }
@@ -204,7 +208,8 @@ private fun TextDetailedSettings(
     onScrollModeChange: (ScrollMode) -> Unit,
     onPageTurnAnimationChange: (Boolean) -> Unit,
     onPageTurnStyleChange: (PageTurnStyle) -> Unit,
-    onInvertedTapZonesChange: (Boolean) -> Unit
+    onInvertedTapZonesChange: (Boolean) -> Unit,
+    onTtsHighlightStyleChange: (com.example.woodsreader.model.TtsHighlightStyle) -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
     Column(
@@ -256,13 +261,18 @@ private fun TextDetailedSettings(
             Text("Fuente", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
             Spacer(Modifier.height(10.dp))
             val fontOptions = listOf(
-                "serif" to "Serif", "sans-serif" to "Sans", "monospace" to "Mono",
-                "lora" to "Lora", "inter" to "Inter", "jetbrains mono" to "JB Mono"
+                "literata" to "Literata",
+                "serif" to "Serif",
+                "sans-serif" to "Sans",
+                "monospace" to "Mono",
+                "cursive" to "Cursiva"
             )
             val fontFamilyMap = mapOf(
+                "literata" to LiterataFamily,
                 "serif" to androidx.compose.ui.text.font.FontFamily.Serif,
                 "sans-serif" to androidx.compose.ui.text.font.FontFamily.SansSerif,
                 "monospace" to androidx.compose.ui.text.font.FontFamily.Monospace,
+                "cursive" to androidx.compose.ui.text.font.FontFamily.Cursive,
                 "lora" to androidx.compose.ui.text.font.FontFamily.Serif,
                 "inter" to androidx.compose.ui.text.font.FontFamily.SansSerif,
                 "jetbrains mono" to androidx.compose.ui.text.font.FontFamily.Monospace
@@ -310,82 +320,91 @@ private fun TextDetailedSettings(
                 range = 0f..40f, displayFormat = { "${it.toInt()}" }, onValueChange = onMarginChange)
         }
 
-        // ═══ SECCIÓN 3: MODO DE DESPLAZAMIENTO ═══
-        DesignSectionCard(title = "Desplazamiento") {
+        // ═══ SECCIÓN 3: MODO DE NAVEGACIÓN UNIFICADO ═══
+        DesignSectionCard(title = "Navegación Unificada") {
+            // Tarjeta destacada de Modo Unificado
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(HiddenForest.Accent.copy(alpha = 0.12f))
+                    .border(1.dp, HiddenForest.Accent.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                    .padding(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(HiddenForest.Accent.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AllInclusive,
+                            contentDescription = null,
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            "Modo Unificado Activo",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = HiddenForest.Text
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Scroll vertical continuo y paso de página por swipe/tap (con animación 3D) activos simultáneamente.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HiddenForest.TextLow
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                "EFECTO DE PÁGINA",
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp, fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                color = HiddenForest.TextLow,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 ScrollModeCard(
-                    title = "Paginado",
-                    subtitle = "Libro clásico",
+                    title = "Libro 3D",
+                    subtitle = "Físico / Curva",
                     icon = Icons.AutoMirrored.Filled.MenuBook,
-                    isSelected = preferences.scrollMode == ScrollMode.PAGINATED,
-                    onClick = { onScrollModeChange(ScrollMode.PAGINATED) },
+                    isSelected = preferences.pageTurnStyle == PageTurnStyle.BOOK_FLIP,
+                    onClick = { onPageTurnStyleChange(PageTurnStyle.BOOK_FLIP) },
                     modifier = Modifier.weight(1f)
                 )
                 ScrollModeCard(
-                    title = "Vertical",
-                    subtitle = "Continuo / Feed",
-                    icon = Icons.Default.SwapVert,
-                    isSelected = preferences.scrollMode == ScrollMode.CONTINUOUS_VERTICAL,
-                    onClick = { onScrollModeChange(ScrollMode.CONTINUOUS_VERTICAL) },
-                    modifier = Modifier.weight(1f)
-                )
-                ScrollModeCard(
-                    title = "Horizontal",
-                    subtitle = "Flujo lateral",
+                    title = "Deslizar",
+                    subtitle = "Slide suave",
                     icon = Icons.Default.SwapHoriz,
-                    isSelected = preferences.scrollMode == ScrollMode.CONTINUOUS_HORIZONTAL,
-                    onClick = { onScrollModeChange(ScrollMode.CONTINUOUS_HORIZONTAL) },
+                    isSelected = preferences.pageTurnStyle == PageTurnStyle.SLIDE,
+                    onClick = { onPageTurnStyleChange(PageTurnStyle.SLIDE) },
+                    modifier = Modifier.weight(1f)
+                )
+                ScrollModeCard(
+                    title = "Rápido",
+                    subtitle = "Sin animación",
+                    icon = Icons.Default.Bolt,
+                    isSelected = preferences.pageTurnStyle == PageTurnStyle.NONE,
+                    onClick = { onPageTurnStyleChange(PageTurnStyle.NONE) },
                     modifier = Modifier.weight(1f)
                 )
             }
-
             Spacer(Modifier.height(14.dp))
             HorizontalDivider(color = HiddenForest.Outline.copy(alpha = 0.2f))
             Spacer(Modifier.height(14.dp))
-
-            if (preferences.scrollMode == ScrollMode.PAGINATED) {
-                Text(
-                    "EFECTO DE PÁGINA",
-                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp, fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                    color = HiddenForest.TextLow,
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ScrollModeCard(
-                        title = "Libro 3D",
-                        subtitle = "Físico / Curva",
-                        icon = Icons.AutoMirrored.Filled.MenuBook,
-                        isSelected = preferences.pageTurnStyle == PageTurnStyle.BOOK_FLIP,
-                        onClick = { onPageTurnStyleChange(PageTurnStyle.BOOK_FLIP) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    ScrollModeCard(
-                        title = "Deslizar",
-                        subtitle = "Slide suave",
-                        icon = Icons.Default.SwapHoriz,
-                        isSelected = preferences.pageTurnStyle == PageTurnStyle.SLIDE,
-                        onClick = { onPageTurnStyleChange(PageTurnStyle.SLIDE) },
-                        modifier = Modifier.weight(1f)
-                    )
-                    ScrollModeCard(
-                        title = "Rápido",
-                        subtitle = "Sin animación",
-                        icon = Icons.Default.Bolt,
-                        isSelected = preferences.pageTurnStyle == PageTurnStyle.NONE,
-                        onClick = { onPageTurnStyleChange(PageTurnStyle.NONE) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                HorizontalDivider(color = HiddenForest.Outline.copy(alpha = 0.2f))
-                Spacer(Modifier.height(14.dp))
-            }
 
             PremiumToggleRow(
                 label = "Modo zurdos",
@@ -403,6 +422,110 @@ private fun TextDetailedSettings(
             HorizontalDivider(modifier = Modifier.padding(vertical = 14.dp), color = HiddenForest.Outline.copy(alpha = 0.2f))
             PremiumToggleRow(label = "Guiones automáticos", subtitle = "Separa sílabas al final de línea",
                 icon = Icons.Default.TextFields, checked = preferences.hyphenation, onCheckedChange = onHyphenationChange)
+        }
+
+        // ═══ SECCIÓN: RESALTADO DE LECTURA (TTS) ═══
+        DesignSectionCard(title = "Resaltado de voz (TTS)") {
+            Text(
+                "Color con el que se resalta el texto al escuchar la lectura por voz (EPUB y PDF)",
+                style = MaterialTheme.typography.labelSmall,
+                color = HiddenForest.TextLow
+            )
+            Spacer(Modifier.height(12.dp))
+
+            val highlightOptions = listOf(
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.BACKGROUND_YELLOW, "Amarillo", Color(0xFFFFD600)),
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.BACKGROUND_ACCENT, "Verde Bosque", Color(0xFF2ECC71)),
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.BACKGROUND_BLUE, "Azul Zafiro", Color(0xFF2196F3)),
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.BACKGROUND_ORANGE, "Naranja Coral", Color(0xFFFF7A45)),
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.UNDERLINE, "Subrayado", HiddenForest.Accent),
+                Triple(com.example.woodsreader.model.TtsHighlightStyle.NONE, "Ninguno", Color.Transparent)
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (row in 0 until 2) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        for (col in 0 until 3) {
+                            val optIndex = row * 3 + col
+                            if (optIndex < highlightOptions.size) {
+                                val opt = highlightOptions[optIndex]
+                                val isSelected = preferences.ttsHighlightStyle == opt.first
+                                
+                                val borderColor by animateColorAsState(
+                                    targetValue = if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(0.3f),
+                                    animationSpec = tween(250),
+                                    label = "hlBorder"
+                                )
+                                val bgColor by animateColorAsState(
+                                    targetValue = if (isSelected) HiddenForest.Accent.copy(0.12f) else HiddenForest.Background,
+                                    animationSpec = tween(250),
+                                    label = "hlBg"
+                                )
+
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(bgColor)
+                                        .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+                                        .clickable { onTtsHighlightStyleChange(opt.first) }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(HiddenForest.Surface)
+                                            .border(0.5.dp, HiddenForest.Outline.copy(0.4f), RoundedCornerShape(4.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        when (opt.first) {
+                                            com.example.woodsreader.model.TtsHighlightStyle.UNDERLINE -> {
+                                                Text(
+                                                    text = "Aa",
+                                                    fontSize = 12.sp,
+                                                    color = HiddenForest.Text,
+                                                    textDecoration = TextDecoration.Underline,
+                                                    fontWeight = FontWeight.Normal
+                                                )
+                                            }
+                                            com.example.woodsreader.model.TtsHighlightStyle.NONE -> {
+                                                Icon(
+                                                    Icons.Default.Block,
+                                                    contentDescription = null,
+                                                    tint = HiddenForest.TextLow,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                            else -> {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(16.dp)
+                                                        .clip(CircleShape)
+                                                        .background(opt.third)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Text(
+                                        text = opt.second,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        ),
+                                        color = if (isSelected) HiddenForest.Accent else HiddenForest.TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // ═══ SECCIÓN 4: TEMAS ═══

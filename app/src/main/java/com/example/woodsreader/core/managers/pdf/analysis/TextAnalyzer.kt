@@ -28,6 +28,9 @@ class TextAnalyzer(
         if (lines.isEmpty()) return emptyList()
 
         val maxLineWidth = lines.maxOfOrNull { it.xEnd - it.xStart } ?: 0f
+        val pageBodyFontSize = lines.filter { it.text.isNotBlank() }
+            .groupBy { Math.round(it.fontSize * 10) / 10f }
+            .maxByOrNull { it.value.size }?.key ?: baseFontSize
         val mergedElements = mutableListOf<SemanticElement>()
         val processedLines = mutableSetOf<String>()
 
@@ -78,7 +81,7 @@ class TextAnalyzer(
             }
 
             // 3. Detectar encabezados
-            if (isLikelyHeader(fontSize, text)) {
+            if (isLikelyHeader(fontSize, text, pageBodyFontSize)) {
                 flushCurrentParagraph()
                 val level = calculateHeaderLevel(fontSize)
                 if (processedLines.contains(text)) {
@@ -140,8 +143,25 @@ class TextAnalyzer(
         return mergedElements
     }
 
-    private fun isLikelyHeader(fontSize: Float, text: String): Boolean {
-        return fontSize > baseFontSize * headerThreshold
+    private fun isLikelyHeader(fontSize: Float, text: String, pageBodyFontSize: Float = baseFontSize): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.startsWith("“") || trimmed.startsWith("\"") || trimmed.startsWith("«") ||
+            trimmed.startsWith("—") || trimmed.startsWith("–") || trimmed.startsWith("- ")
+        ) {
+            return false
+        }
+        if (trimmed.endsWith(".") || trimmed.endsWith(".”") || trimmed.endsWith("…”") || trimmed.endsWith("!»") || trimmed.endsWith("?»")) {
+            return false
+        }
+        if (trimmed.length <= 80 && (
+            trimmed.contains(Regex("""(?i)^(cap[íi]tulo|chapter|parte|secci[óo]n|pr[óo]logo|ep[íi]logo|\b[0-9IVXLCDM]+\b)""")) ||
+            trimmed.startsWith("#")
+        )) return true
+
+        val threshold = (pageBodyFontSize * headerThreshold).coerceAtLeast(pageBodyFontSize + 2.5f)
+        if (fontSize > threshold && trimmed.length <= 60) return true
+
+        return false
     }
 
     private fun calculateHeaderLevel(fontSize: Float): Int {
@@ -169,7 +189,8 @@ class TextAnalyzer(
 
     /**
      * Convierte líneas e imágenes de una página PDF a una lista de [RawDocumentBlock]
-     * compatible directamente con [ReadingPipeline].
+     * agrupando líneas en párrafos reales continuos (estilo EPUB/editorial),
+     * resolviendo guiones al final de línea y detectando inicios de diálogo y encabezados.
      */
     fun convertPageToRawBlocks(
         lines: List<LineInfo>,
@@ -181,18 +202,68 @@ class TextAnalyzer(
         val rawBlocks = mutableListOf<RawDocumentBlock>()
         var orderIndex = 0
 
-        data class PageItem(val line: LineInfo?, val image: PageImage?, val y: Float)
+        // Filtrar líneas no vacías
+        val validLines = lines.filter { it.text.isNotBlank() }
+        val maxLineWidth = validLines.maxOfOrNull { it.xEnd - it.xStart } ?: 0f
+        val minXStart = validLines.minOfOrNull { it.xStart } ?: 0f
 
-        val items = mutableListOf<PageItem>()
-        lines.forEach { items.add(PageItem(line = it, image = null, y = it.y)) }
-        images.forEach { items.add(PageItem(line = null, image = it, y = it.y)) }
-        items.sortBy { it.y }
+        // Calcular tamaño de fuente modal (cuerpo principal del texto en esta página)
+        val pageBodyFontSize = validLines
+            .groupBy { Math.round(it.fontSize * 10) / 10f }
+            .maxByOrNull { it.value.size }?.key ?: baseFontSize
 
-        val firstLineIndex = items.indexOfFirst { it.line != null }
-        val lastLineIndex = items.indexOfLast { it.line != null }
+        // Calcular espaciado vertical típico entre líneas
+        val yDiffs = validLines.zipWithNext { a, b -> b.y - a.y }.filter { it > 0 }
+        val typicalLineSpacing = if (yDiffs.isNotEmpty()) {
+            yDiffs.sorted()[yDiffs.size / 2]
+        } else {
+            pageBodyFontSize * 1.25f
+        }
 
-        for ((idx, item) in items.withIndex()) {
+        // Combinar líneas e imágenes ordenadas por posición vertical Y
+        data class PageItem(val line: LineInfo? = null, val image: PageImage? = null, val y: Float)
+
+        val allItems = mutableListOf<PageItem>()
+        validLines.forEach { allItems.add(PageItem(line = it, y = it.y)) }
+        images.forEach { allItems.add(PageItem(image = it, y = it.y)) }
+        allItems.sortBy { it.y }
+
+        val currentParagraph = StringBuilder()
+        var lastLineInfo: LineInfo? = null
+
+        var paragraphFirstLine = false
+        var paragraphLastLine = false
+
+        fun flushCurrentParagraph() {
+            if (currentParagraph.isNotEmpty()) {
+                val raw = currentParagraph.toString().trim()
+                if (raw.isNotEmpty()) {
+                    rawBlocks.add(
+                        RawDocumentBlock(
+                            id = "pdf-p$pageIndex-blk-$orderIndex",
+                            text = raw,
+                            isImage = false,
+                            pageIndex = pageIndex,
+                            orderIndex = orderIndex++,
+                            isFirstLineOfPage = paragraphFirstLine,
+                            isLastLineOfPage = paragraphLastLine,
+                            fontSize = baseFontSize
+                        )
+                    )
+                }
+                currentParagraph.setLength(0)
+                paragraphFirstLine = false
+                paragraphLastLine = false
+            }
+        }
+
+        val firstLineIndex = allItems.indexOfFirst { it.line != null }
+        val lastLineIndex = allItems.indexOfLast { it.line != null }
+
+        for ((idx, item) in allItems.withIndex()) {
             if (item.image != null) {
+                flushCurrentParagraph()
+                lastLineInfo = null
                 rawBlocks.add(
                     RawDocumentBlock(
                         id = "pdf-p$pageIndex-img-$orderIndex",
@@ -207,23 +278,113 @@ class TextAnalyzer(
                 )
             } else if (item.line != null) {
                 val line = item.line
-                val trimmed = line.text.trim()
-                if (trimmed.isNotEmpty()) {
-                    rawBlocks.add(
-                        RawDocumentBlock(
-                            id = "pdf-p$pageIndex-blk-$orderIndex",
-                            text = trimmed,
-                            isImage = false,
-                            pageIndex = pageIndex,
-                            orderIndex = orderIndex++,
-                            isFirstLineOfPage = (idx == firstLineIndex),
-                            isLastLineOfPage = (idx == lastLineIndex),
-                            fontSize = line.fontSize
-                        )
+                val text = line.text.trim()
+                if (text.isEmpty()) continue
+
+                    val fontSize = line.fontSize
+                    val isFirstLineOfPage = (idx == firstLineIndex)
+                    val isLastLineOfPage = (idx == lastLineIndex)
+
+                    // 1. Filtrar números de página aislados
+                    if (noiseClassifier.isPageNumber(text)) {
+                        flushCurrentParagraph()
+                        lastLineInfo = null
+                        continue
+                    }
+
+                    // 2. Filtrar encabezados y pies repetitivos o ruidosos
+                    val noiseReason = noiseClassifier.classify(
+                        text = text,
+                        isFirstLineOfPage = isFirstLineOfPage,
+                        isLastLineOfPage = isLastLineOfPage
                     )
+                    if (noiseReason != null) {
+                        flushCurrentParagraph()
+                        lastLineInfo = null
+                        continue
+                    }
+
+                    // 3. Encabezados y títulos de capítulo
+                    if (isLikelyHeader(fontSize, text, pageBodyFontSize)) {
+                        flushCurrentParagraph()
+                        lastLineInfo = null
+                        rawBlocks.add(
+                            RawDocumentBlock(
+                                id = "pdf-p$pageIndex-blk-$orderIndex",
+                                text = text,
+                                isImage = false,
+                                pageIndex = pageIndex,
+                                orderIndex = orderIndex++,
+                                isFirstLineOfPage = isFirstLineOfPage,
+                                isLastLineOfPage = isLastLineOfPage,
+                                fontSize = maxOf(fontSize, 20f)
+                            )
+                        )
+                        continue
+                    }
+
+                    // 4. Detección de límite de párrafo
+                    val lastLine = lastLineInfo
+                    var isNewParagraph = false
+
+                    if (lastLine != null) {
+                        val yDiff = line.y - lastLine.y
+                        val lastLineWidth = lastLine.xEnd - lastLine.xStart
+                        val lastTextTrimmed = lastLine.text.trim()
+
+                        // A. Salto vertical grande (espacio entre párrafos o cambio de bloque)
+                        val verticalBreak = yDiff > typicalLineSpacing * 1.55f || yDiff > line.fontSize * 1.8f || yDiff < -line.fontSize
+
+                        // B. Inicio de diálogo en español (raya em-dash, guión o comillas)
+                        val isDialogueStart = text.startsWith("—") || text.startsWith("–") || text.startsWith("- ") ||
+                                text.startsWith("«") || text.startsWith("\"")
+
+                        // C. La línea anterior terminó con puntuación de cierre
+                        val lastEndedWithPunctuation = lastTextTrimmed.endsWith(".") || lastTextTrimmed.endsWith("!") ||
+                                lastTextTrimmed.endsWith("?") || lastTextTrimmed.endsWith("…") ||
+                                lastTextTrimmed.endsWith("»") || lastTextTrimmed.endsWith("\"") ||
+                                lastTextTrimmed.endsWith("—")
+
+                        // D. Línea anterior terminó corto (< 82% del ancho máximo de línea)
+                        val lastLineEndedEarly = lastLineWidth < maxLineWidth * 0.82f
+
+                        // E. Sangría de primera línea en libro impreso
+                        val isIndented = line.xStart > minXStart + 12f
+
+                        if (verticalBreak || isDialogueStart || (lastLineEndedEarly && lastEndedWithPunctuation) || (isIndented && lastEndedWithPunctuation)) {
+                            isNewParagraph = true
+                        }
+                    }
+
+                    if (isNewParagraph) {
+                        flushCurrentParagraph()
+                    }
+
+                    // 5. Unir líneas del párrafo resolviendo cortes de palabra (guiones)
+                    if (currentParagraph.isNotEmpty()) {
+                        val currentTextStr = currentParagraph.toString()
+                        val endsWithHyphen = currentTextStr.endsWith('-') ||
+                                currentTextStr.endsWith('\u00ad') ||
+                                currentTextStr.endsWith('\u2010')
+                        val startsWithLetter = text.firstOrNull()?.isLetter() ?: false
+
+                        if (endsWithHyphen && startsWithLetter) {
+                            currentParagraph.setLength(currentParagraph.length - 1)
+                            currentParagraph.append(text)
+                        } else {
+                            currentParagraph.append(" ").append(text)
+                        }
+                    } else {
+                        paragraphFirstLine = isFirstLineOfPage
+                        currentParagraph.append(text)
+                    }
+                    paragraphLastLine = isLastLineOfPage
+
+                    lastLineInfo = line
                 }
             }
-        }
+
+        flushCurrentParagraph()
 
         return rawBlocks
     }

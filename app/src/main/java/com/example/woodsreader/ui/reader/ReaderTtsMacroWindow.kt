@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.rounded.Bedtime
 import com.example.woodsreader.model.TtsUiStyle
 import com.example.woodsreader.model.TtsHighlightStyle
+import com.example.woodsreader.core.tts.SherpaDownloadState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -69,6 +70,7 @@ fun ReaderTtsMacroWindow(
     onTtsAutoScrollChange: (Boolean) -> Unit,
     useSherpaTts: Boolean,
     onUseSherpaTtsChange: (Boolean) -> Unit,
+    sherpaDownloadState: SherpaDownloadState = SherpaDownloadState.Idle,
     currentPitch: Float,
     onPitchChange: (Float) -> Unit,
     onSkipSentenceForward: () -> Unit,
@@ -375,10 +377,10 @@ fun ReaderTtsMacroWindow(
 
                     // 3x2 Grid for the 6 highlight styles
                     val highlightOptions = listOf(
-                        Triple(TtsHighlightStyle.BACKGROUND_YELLOW, "Amarillo", Color(0xFFFFF176)),
-                        Triple(TtsHighlightStyle.BACKGROUND_ACCENT, "Verde Bosque", HiddenForest.Accent),
-                        Triple(TtsHighlightStyle.BACKGROUND_BLUE, "Azul", Color(0xFF64B5F6)),
-                        Triple(TtsHighlightStyle.BACKGROUND_ORANGE, "Naranja", Color(0xFFFFB74D)),
+                        Triple(TtsHighlightStyle.BACKGROUND_YELLOW, "Amarillo", Color(0xFFFFD600)),
+                        Triple(TtsHighlightStyle.BACKGROUND_ACCENT, "Verde Bosque", Color(0xFF2ECC71)),
+                        Triple(TtsHighlightStyle.BACKGROUND_BLUE, "Azul Zafiro", Color(0xFF2196F3)),
+                        Triple(TtsHighlightStyle.BACKGROUND_ORANGE, "Naranja Coral", Color(0xFFFF7A45)),
                         Triple(TtsHighlightStyle.UNDERLINE, "Subrayado", HiddenForest.Accent),
                         Triple(TtsHighlightStyle.NONE, "Ninguno", Color.Transparent)
                     )
@@ -430,10 +432,11 @@ fun ReaderTtsMacroWindow(
                                                     TtsHighlightStyle.UNDERLINE -> {
                                                         Text(
                                                             text = "Aa",
-                                                            fontSize = 11.sp,
+                                                            fontSize = 12.sp,
                                                             color = HiddenForest.Text,
                                                             style = MaterialTheme.typography.labelSmall.copy(
-                                                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                                                                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                                                                fontWeight = FontWeight.Normal
                                                             )
                                                         )
                                                     }
@@ -448,10 +451,9 @@ fun ReaderTtsMacroWindow(
                                                     else -> {
                                                         Box(
                                                             modifier = Modifier
-                                                                .fillMaxSize()
-                                                                .padding(2.dp)
-                                                                .clip(RoundedCornerShape(2.dp))
-                                                                .background(opt.third.copy(alpha = 0.45f))
+                                                                .size(16.dp)
+                                                                .clip(CircleShape)
+                                                                .background(opt.third)
                                                         )
                                                     }
                                                 }
@@ -647,50 +649,116 @@ fun ReaderTtsMacroWindow(
                         )
                         .padding(16.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (useSherpaTts) HiddenForest.Accent.copy(0.2f)
-                                    else HiddenForest.Background
-                                ),
-                            contentAlignment = Alignment.Center
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "🧠",
-                                fontSize = 20.sp
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (useSherpaTts) HiddenForest.Accent.copy(0.2f)
+                                        else HiddenForest.Background
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "🧠",
+                                    fontSize = 20.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Voz Neuronal IA",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = HiddenForest.Text
+                                )
+                                Text(
+                                    when (sherpaDownloadState) {
+                                        is SherpaDownloadState.Downloading -> "Descargando voz: ${(sherpaDownloadState.progress * 100).toInt()}%"
+                                        is SherpaDownloadState.Extracting -> "Instalando modelo de voz..."
+                                        is SherpaDownloadState.Error -> "Error: ${sherpaDownloadState.message}"
+                                        else -> if (useSherpaTts) "Sherpa ONNX · Español MX · Offline" else "Motor del sistema activo"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (useSherpaTts || sherpaDownloadState is SherpaDownloadState.Downloading) HiddenForest.Accent else HiddenForest.TextLow,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            val isBusy = sherpaDownloadState is SherpaDownloadState.Downloading || sherpaDownloadState is SherpaDownloadState.Extracting
+                            Switch(
+                                checked = useSherpaTts,
+                                onCheckedChange = onUseSherpaTtsChange,
+                                enabled = !isBusy,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = HiddenForest.Background,
+                                    checkedTrackColor = HiddenForest.Accent,
+                                    uncheckedThumbColor = HiddenForest.TextLow,
+                                    uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                                )
                             )
                         }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Voz Neuronal IA",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                color = HiddenForest.Text
+
+                        if (sherpaDownloadState is SherpaDownloadState.Downloading) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            LinearProgressIndicator(
+                                progress = { sherpaDownloadState.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = HiddenForest.Accent,
+                                trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
                             )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Descargando paquete oficial... ${(sherpaDownloadState.progress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = HiddenForest.Accent
+                                )
+                                if (sherpaDownloadState.totalBytes > 0) {
+                                    val dlMb = sherpaDownloadState.downloadedBytes / (1024 * 1024)
+                                    val totalMb = sherpaDownloadState.totalBytes / (1024 * 1024)
+                                    Text(
+                                        "$dlMb MB / $totalMb MB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HiddenForest.TextLow
+                                    )
+                                }
+                            }
+                        } else if (sherpaDownloadState is SherpaDownloadState.Extracting) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = HiddenForest.Accent,
+                                trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                if (useSherpaTts) "Sherpa ONNX · Español MX · Offline"
-                                else "Motor del sistema activo",
+                                "Instalando y verificando modelo en disco...",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (useSherpaTts) HiddenForest.Accent else HiddenForest.TextLow
+                                color = HiddenForest.Accent
+                            )
+                        } else if (sherpaDownloadState is SherpaDownloadState.Error) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                "Error: ${sherpaDownloadState.message}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Switch(
-                            checked = useSherpaTts,
-                            onCheckedChange = onUseSherpaTtsChange,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = HiddenForest.Background,
-                                checkedTrackColor = HiddenForest.Accent,
-                                uncheckedThumbColor = HiddenForest.TextLow,
-                                uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
-                            )
-                        )
                     }
                 }
 

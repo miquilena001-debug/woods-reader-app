@@ -83,6 +83,8 @@ class SherpaTtsEngine(
 
     override fun submitPreferences(preferences: AndroidTtsPreferences) {
         delegate.submitPreferences(preferences)
+        preferences.speed?.let { ttsManager.setRate(it.toFloat()) }
+        preferences.pitch?.let { ttsManager.setPitch(it.toFloat()) }
     }
 
     /** Readium llama aquí para inyectar su listener de eventos de síntesis. */
@@ -108,6 +110,7 @@ class SherpaTtsEngine(
 
     private fun speakWithSherpa(requestId: TtsEngine.RequestId, text: String) {
         activeJob?.cancel()
+        ttsManager.stop()
         activeJob = scope.launch(Dispatchers.Default) {
             engineListener?.onStart(requestId)
             try {

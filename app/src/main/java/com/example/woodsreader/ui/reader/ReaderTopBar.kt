@@ -36,13 +36,16 @@ fun ReaderTopBar(
     ttsState: TtsState,
     hasSelection: Boolean,
     hazeState: HazeState,
+    isPdf: Boolean = false,
+    isReflowMode: Boolean = false,
+    onToggleReflow: () -> Unit = {},
     onBack: () -> Unit,
     onHighlight: () -> Unit,
     onTtsToggle: () -> Unit,
     onMenuClick: () -> Unit
 ) {
     Surface(
-        color = Color.Transparent, // Fondo transparente ya que usaremos el desenfoque
+        color = HiddenForest.Surface.copy(alpha = 0.88f),
         modifier = Modifier
             .fillMaxWidth()
             .hazeChild(
@@ -105,6 +108,40 @@ fun ReaderTopBar(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isPdf) {
+                    Surface(
+                        onClick = onToggleReflow,
+                        color = if (isReflowMode) HiddenForest.Accent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.08f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            0.5.dp,
+                            if (isReflowMode) HiddenForest.Accent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.15f)
+                        ),
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isReflowMode) Icons.Default.MenuBook else Icons.Default.PictureAsPdf,
+                                contentDescription = null,
+                                tint = if (isReflowMode) HiddenForest.Accent else HiddenForest.TextSecondary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isReflowMode) "Libro" else "Original",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = if (isReflowMode) HiddenForest.Accent else HiddenForest.TextSecondary
+                            )
+                        }
+                    }
+                }
+
                 if (hasSelection) {
                     ReaderIconButton(
                     icon = Icons.Default.Brush,

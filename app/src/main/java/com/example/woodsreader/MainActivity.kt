@@ -1,5 +1,22 @@
 package com.example.woodsreader
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.woodsreader.ui.theme.HiddenForest
+
 import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
@@ -117,11 +134,17 @@ class MainActivity : FragmentActivity() {
             // Esperar a que cargue DataStore
             if (prefs == null) return@setContent
 
+            val isExpired = remember { isBetaExpired() }
+
             WoodsReaderTheme(readerTheme = prefs!!.theme) {
                 val hasPermissions = hasRequiredPermissions()
 
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    if (!hasPermissions && !prefs!!.hasGrantedPermissions) {
+                    if (isExpired) {
+                        BetaExpiredScreen(
+                            onCloseApp = { finishAffinity() }
+                        )
+                    } else if (!hasPermissions && !prefs!!.hasGrantedPermissions) {
                         PermissionsScreen(
                             onPermissionsGranted = { checkPermissionsAndSave() },
                             onRequestPermission = { launchPermissionRequest() }
@@ -182,7 +205,16 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun isRunningInTestLab(): Boolean {
+        return try {
+            Settings.System.getString(contentResolver, "firebase.test.lab") == "true"
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun hasRequiredPermissions(): Boolean {
+        if (isRunningInTestLab()) return true
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -308,6 +340,14 @@ class MainActivity : FragmentActivity() {
             syncRequest
         )
     }
+
+    private fun isBetaExpired(): Boolean {
+        if (BuildConfig.DEBUG || BuildConfig.BETA_EXPIRATION_DAYS <= 0L) return false
+        val maxDurationMillis = BuildConfig.BETA_EXPIRATION_DAYS * 24L * 60L * 60L * 1000L
+        val now = System.currentTimeMillis()
+        val buildTime = BuildConfig.BUILD_TIME_MILLIS
+        return (now - buildTime) > maxDurationMillis
+    }
 }
 
 // ── Destinos de navegación ──────────────────────────────────────
@@ -374,5 +414,84 @@ fun MainLayout(
             navController = navController,
             modifier = Modifier.padding(padding)
         )
+    }
+}
+
+
+@Composable
+fun BetaExpiredScreen(
+    onCloseApp: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(HiddenForest.Background)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(HiddenForest.SurfaceVariant)
+                    .border(1.dp, HiddenForest.Outline, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = null,
+                    tint = HiddenForest.Accent,
+                    modifier = Modifier.size(36.dp)
+                )
+            }
+
+            Text(
+                text = "VERSIÓN DE PRUEBA FINALIZADA",
+                style = MaterialTheme.typography.labelSmall,
+                color = HiddenForest.TextLow,
+                letterSpacing = 1.5.sp
+            )
+
+            Text(
+                text = "Periodo Beta Concluido",
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold
+                ),
+                color = HiddenForest.Text,
+                textAlign = TextAlign.Center
+            )
+
+            Text(
+                text = "El periodo de prueba beta para esta versión anticipada de Woods Reader ha concluido.\n\nPara continuar disfrutando de la lectura y acceder a la versión más reciente, por favor solicita una actualización al desarrollador.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = HiddenForest.TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onCloseApp,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HiddenForest.Accent,
+                    contentColor = Color.Black
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth(0.7f)
+                    .height(48.dp)
+            ) {
+                Text(
+                    text = "Cerrar Aplicación",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }

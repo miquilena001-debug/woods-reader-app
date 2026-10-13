@@ -11,13 +11,15 @@ import org.readium.r2.shared.publication.Locator
 @Immutable
 sealed class ReflowItem {
     abstract val pageNumber: Int
+    open val id: String = ""
 
     /**
      * Texto simple (compatibilidad con extracción básica)
      */
     data class Text(
         val element: Content.Element,
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 
     /**
@@ -26,7 +28,8 @@ sealed class ReflowItem {
     data class Header(
         val content: String,
         val level: Int, // 1 = H1, 2 = H2, etc.
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 
     /**
@@ -34,7 +37,8 @@ sealed class ReflowItem {
      */
     data class Paragraph(
         val content: String,
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 
     /**
@@ -42,7 +46,8 @@ sealed class ReflowItem {
      */
     data class PageNumber(
         val number: String,
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 
     /**
@@ -50,7 +55,8 @@ sealed class ReflowItem {
      */
     data class Image(
         val imageBytes: ByteArray,
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 
     /**
@@ -59,7 +65,8 @@ sealed class ReflowItem {
     data class Ignored(
         val content: String,
         val reason: String,
-        override val pageNumber: Int
+        override val pageNumber: Int,
+        override val id: String = ""
     ) : ReflowItem()
 }
 

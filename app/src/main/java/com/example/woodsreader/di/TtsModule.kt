@@ -16,7 +16,8 @@ object TtsModule {
     fun provideTtsManager(
         @ApplicationContext context: android.content.Context,
         ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
-        userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository
-    ): TtsManager = TtsManager(context, ttsRuleDao, userPreferencesRepository)
+        userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
+        sherpaModelManager: com.example.woodsreader.core.tts.SherpaModelManager
+    ): TtsManager = TtsManager(context, ttsRuleDao, userPreferencesRepository, sherpaModelManager)
 
 }

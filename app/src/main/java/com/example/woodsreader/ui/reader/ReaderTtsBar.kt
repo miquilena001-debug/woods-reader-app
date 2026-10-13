@@ -56,6 +56,8 @@ fun ReaderTtsBar(
     onSkipBackward: () -> Unit,
     onSkipWordForward: () -> Unit,
     onSkipWordBackward: () -> Unit,
+    onSkipChapterForward: (() -> Unit)? = null,
+    onSkipChapterBackward: (() -> Unit)? = null,
     onLock: () -> Unit,
     onExpandSettings: () -> Unit,
     onSpeedUp: (() -> Unit)? = null,
@@ -131,13 +133,13 @@ fun ReaderTtsBar(
                 ) {
                     IconButton(
                         onClick = onStop,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             Icons.Default.Stop,
                             contentDescription = "Detener",
-                            tint = HiddenForest.TextSecondary,
-                            modifier = Modifier.size(18.dp)
+                            tint = HiddenForest.Text,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                     IconButton(
@@ -158,27 +160,27 @@ fun ReaderTtsBar(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Skip word backward (⏪)
+                    // Skip chapter backward (⏮)
                     IconButton(
-                        onClick = onSkipWordBackward,
+                        onClick = { onSkipChapterBackward?.invoke() ?: onSkipWordBackward() },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Default.FastRewind,
-                            contentDescription = "Retroceder Palabra",
+                            Icons.Default.SkipPrevious,
+                            contentDescription = "Capítulo Anterior",
                             tint = HiddenForest.TextSecondary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
-                    // Skip sentence backward (◀◀)
+                    // Skip sentence/text backward (⏪)
                     IconButton(
                         onClick = onSkipBackward,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Default.SkipPrevious,
-                            contentDescription = "Retroceder Oración",
+                            Icons.Default.FastRewind,
+                            contentDescription = "Texto Anterior",
                             tint = HiddenForest.Text,
                             modifier = Modifier.size(20.dp)
                         )
@@ -237,29 +239,29 @@ fun ReaderTtsBar(
                         }
                     }
 
-                    // Skip sentence forward (▶▶)
+                    // Skip sentence/text forward (⏩)
                     IconButton(
                         onClick = onSkipForward,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Default.SkipNext,
-                            contentDescription = "Avanzar Oración",
+                            Icons.Default.FastForward,
+                            contentDescription = "Texto Siguiente",
                             tint = HiddenForest.Text,
                             modifier = Modifier.size(20.dp)
                         )
                     }
 
-                    // Skip word forward (⏩)
+                    // Skip chapter forward (⏭)
                     IconButton(
-                        onClick = onSkipWordForward,
+                        onClick = { onSkipChapterForward?.invoke() ?: onSkipWordForward() },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Default.FastForward,
-                            contentDescription = "Avanzar Palabra",
+                            Icons.Default.SkipNext,
+                            contentDescription = "Capítulo Siguiente",
                             tint = HiddenForest.TextSecondary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

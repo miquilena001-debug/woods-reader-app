@@ -39,6 +39,7 @@ import dev.chrisbanes.haze.hazeChild
 fun ReaderSideMenu(
     hazeState: HazeState,
     isReflowAvailable: Boolean,
+    isReflowMode: Boolean = false,
     currentScrollMode: ScrollMode = ScrollMode.PAGINATED,
     onOptionClick: (MasterMenuOption) -> Unit,
     onDismiss: () -> Unit
@@ -87,16 +88,15 @@ fun ReaderSideMenu(
                 modifier = Modifier.padding(bottom = 20.dp)
             )
 
-            val options = remember(isReflowAvailable, currentScrollMode) {
+            val options = remember(isReflowAvailable, currentScrollMode, isReflowMode) {
                 buildList {
                     add(MasterMenuOption("Narrar", Icons.AutoMirrored.Filled.VolumeUp, MasterMenuOptionType.TTS))
                     add(MasterMenuOption("Índice", Icons.Default.Menu, MasterMenuOptionType.TOC))
                     add(MasterMenuOption("Buscar", Icons.Default.Search, MasterMenuOptionType.SEARCH))
-                    val scrollLabel = if (currentScrollMode == ScrollMode.PAGINATED) "Continuo" else "Paginado"
-                    val scrollIcon = if (currentScrollMode == ScrollMode.PAGINATED) Icons.Default.SwapVert else Icons.AutoMirrored.Filled.MenuBook
-                    add(MasterMenuOption(scrollLabel, scrollIcon, MasterMenuOptionType.SCROLL_MODE))
                     if (isReflowAvailable) {
-                        add(MasterMenuOption("Modo Móvil", Icons.Default.Smartphone, MasterMenuOptionType.REFLOW))
+                        val reflowLabel = if (isReflowMode) "Vista Original" else "Vista Libro"
+                        val reflowIcon = if (isReflowMode) Icons.Default.PictureAsPdf else Icons.AutoMirrored.Filled.MenuBook
+                        add(MasterMenuOption(reflowLabel, reflowIcon, MasterMenuOptionType.REFLOW))
                     }
                     add(MasterMenuOption("Ajustes", Icons.Default.Settings, MasterMenuOptionType.SETTINGS))
                     add(MasterMenuOption("Marcador", Icons.Default.BookmarkBorder, MasterMenuOptionType.BOOKMARK))

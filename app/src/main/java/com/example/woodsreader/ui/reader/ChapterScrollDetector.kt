@@ -5,14 +5,18 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import androidx.viewpager.widget.ViewPager
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 
 /**
- * Detects scroll-to-edge gestures on the WebView inside [rootView] and invokes
- * [onGoForward] / [onGoBackward] when the user drags past a threshold at the boundary.
+ * Detecta y gestiona los gestos de lectura unificados para una experiencia fluida e integral:
  *
- * M-10: Soporte para "Pull-to-next-chapter" con progreso visual.
+ * - NAVEGACIÓN HORIZONTAL (Swipe izq/der): Avanza o retrocede de página dentro del capítulo actual.
+ *   El ViewPager de Readium se neutraliza para evitar que secuestre los gestos y salte capítulos enteros.
+ * - NAVEGACIÓN VERTICAL (Scroll continuo): Desplazamiento fluido. Al llegar al extremo inferior o superior,
+ *   un arrastre suave supera el umbral (45dp) y pasa fluidamente al siguiente o anterior capítulo.
+ *   En modo paginado fijo, un arrastre vertical arriba/abajo también permite avanzar o retroceder de página,
+ *   reservando el salto de capítulo por pull exclusivamente para cuando se llega al final del capítulo.
  */
 class ChapterScrollDetector(
     private val rootView: View,
@@ -20,52 +24,91 @@ class ChapterScrollDetector(
     private val onGoForward: () -> Unit,
     private val onGoBackward: () -> Unit,
     private val onPullProgress: (Float) -> Unit = {},
-    private val onPageForward: (() -> Unit)? = null,
-    private val onPageBackward: (() -> Unit)? = null,
-    private val isPaginatedMode: () -> Boolean = { false },
-    private val thresholdDp: Float = 120f
+    private val onPageForward: ((WebView?) -> Unit)? = null,
+    private val onPageBackward: ((WebView?) -> Unit)? = null,
+    private val thresholdDp: Float = 45f
 ) {
-    // Convertir dp a píxeles en tiempo de ejecución para densidad correcta en todos los dispositivos
     private val thresholdPx: Float get() = thresholdDp * rootView.context.resources.displayMetrics.density
-    // Conjunto de WebViews a los que ya les agregamos el listener (Weak para evitar leaks en destrucción)
     private val attachedWebViews = java.util.Collections.newSetFromMap(java.util.WeakHashMap<WebView, Boolean>())
+
     private var touchStartX = 0f
     private var touchStartY = 0f
+    private var touchStartTime = 0L
     private var triggered = false
+    private var isHorizontalSwipe = false
+    private var isVerticalDrag = false
+    private var canAdvancePage = true
+    private var canRetreatPage = true
+
+    private fun disallowParentIntercept(view: View) {
+        var p = view.parent
+        while (p != null) {
+            p.requestDisallowInterceptTouchEvent(true)
+            p = p.parent
+        }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private val touchListener = View.OnTouchListener { view, event ->
         val wv = view as? WebView ?: return@OnTouchListener false
-        
+
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 touchStartX = event.x
                 touchStartY = event.y
+                touchStartTime = System.currentTimeMillis()
                 triggered = false
+                isHorizontalSwipe = false
+                isVerticalDrag = false
                 onPullProgress(0f)
+                disallowParentIntercept(view)
+
+                // En modo paginado (sin scroll vertical interno), verificar si hay más páginas adelante o atrás
+                if (!wv.canScrollVertically(1) && !wv.canScrollVertically(-1)) {
+                    wv.canAdvancePageInChapter { canAdvancePage = it }
+                    wv.canRetreatPageInChapter { canRetreatPage = it }
+                } else {
+                    canAdvancePage = false
+                    canRetreatPage = false
+                }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!triggered) {
-                    val dx = touchStartX - event.x   // positive = dragging left (going forward)
-                    val dy = touchStartY - event.y   // positive = dragging up (read going down edge)
-                    
-                    // 1. Desplazamiento Vertical (Modo continuo vertical)
-                    if (kotlin.math.abs(dy) >= kotlin.math.abs(dx)) {
-                        // Arrastre hacia ARRIBA al final de la página -> Siguiente capítulo
+                val dx = touchStartX - event.x
+                val dy = touchStartY - event.y
+                val absDy = kotlin.math.abs(dy)
+                val absDx = kotlin.math.abs(dx)
+                val density = wv.context.resources.displayMetrics.density
+
+                // 1. Detección y bloqueo exclusivo de Swipe Horizontal
+                // Consumir el evento (return true) y mantener disallowParentIntercept para evitar
+                // que Chromium libere el bloqueo y ViewPager salte al siguiente capítulo.
+                if (!isVerticalDrag && (isHorizontalSwipe || (absDx > absDy && absDx > 8f * density))) {
+                    isHorizontalSwipe = true
+                    disallowParentIntercept(view)
+                    return@OnTouchListener true
+                }
+
+                // 2. Detección de arrastre vertical para cambio fluido de capítulo en los extremos
+                if (!triggered && !isHorizontalSwipe && (isVerticalDrag || (absDy >= absDx && absDy > 8f * density))) {
+                    isVerticalDrag = true
+                    val hasVerticalScroll = wv.canScrollVertically(1) || wv.canScrollVertically(-1)
+
+                    if (hasVerticalScroll) {
+                        // En contenido con scroll vertical continuo:
                         if (dy > 0 && !wv.canScrollVertically(1)) {
+                            // Arrastre hacia arriba al final del capítulo -> Avanzar al siguiente capítulo
                             val progress = (dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(progress)
-                            if (progress >= 1f) {
+                            if (dy >= thresholdPx) {
                                 triggered = true
                                 onPullProgress(0f)
                                 onGoForward()
                             }
-                        } 
-                        // Arrastre hacia ABAJO al inicio de la página -> Capítulo anterior
-                        else if (dy < 0 && !wv.canScrollVertically(-1)) {
+                        } else if (dy < 0 && !wv.canScrollVertically(-1)) {
+                            // Arrastre hacia abajo al inicio del capítulo -> Retroceder al capítulo anterior
                             val progress = (-dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(-progress)
-                            if (progress >= 1f) {
+                            if (-dy >= thresholdPx) {
                                 triggered = true
                                 onPullProgress(0f)
                                 onGoBackward()
@@ -73,24 +116,22 @@ class ChapterScrollDetector(
                         } else {
                             onPullProgress(0f)
                         }
-                    } 
-                    // 2. Desplazamiento Horizontal (Modo libro paginado)
-                    else {
-                        // Deslizar hacia la IZQUIERDA al final del capítulo -> Siguiente capítulo
-                        if (dx > 0 && !wv.canScrollHorizontally(1)) {
-                            val progress = (dx / thresholdPx).coerceIn(0f, 1f)
+                    } else {
+                        // En contenido paginado por columnas:
+                        if (dy > 0 && !canAdvancePage) {
+                            // Está en la última página del capítulo y arrastra hacia arriba -> Pull a siguiente capítulo
+                            val progress = (dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(progress)
-                            if (progress >= 1f) {
+                            if (dy >= thresholdPx) {
                                 triggered = true
                                 onPullProgress(0f)
                                 onGoForward()
                             }
-                        }
-                        // Deslizar hacia la DERECHA al inicio del capítulo -> Capítulo anterior
-                        else if (dx < 0 && !wv.canScrollHorizontally(-1)) {
-                            val progress = (-dx / thresholdPx).coerceIn(0f, 1f)
+                        } else if (dy < 0 && !canRetreatPage) {
+                            // Está en la primera página del capítulo y arrastra hacia abajo -> Pull a capítulo anterior
+                            val progress = (-dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(-progress)
-                            if (progress >= 1f) {
+                            if (-dy >= thresholdPx) {
                                 triggered = true
                                 onPullProgress(0f)
                                 onGoBackward()
@@ -102,36 +143,56 @@ class ChapterScrollDetector(
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (isPaginatedMode() && !triggered) {
-                    val dx = touchStartX - event.x
-                    val dy = touchStartY - event.y
-                    val swipeThreshold = 40f * rootView.context.resources.displayMetrics.density
-                    if (kotlin.math.abs(dx) >= swipeThreshold && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
+                val dx = touchStartX - event.x
+                val dy = touchStartY - event.y
+                val dt = System.currentTimeMillis() - touchStartTime
+                val density = wv.context.resources.displayMetrics.density
+                val absDx = kotlin.math.abs(dx)
+                val absDy = kotlin.math.abs(dy)
+                val minSwipeDistance = 22f * density
+                val isFlick = dt < 350 && (absDx > 15f * density || absDy > 15f * density)
+
+                val wasHorizontal = isHorizontalSwipe || (absDx > absDy && (absDx >= minSwipeDistance || isFlick))
+
+                if (!triggered) {
+                    val hasVerticalScroll = wv.canScrollVertically(1) || wv.canScrollVertically(-1)
+
+                    if (wasHorizontal) {
+                        // Swipe horizontal predominante -> Avanzar o retroceder página dentro del capítulo actual
                         triggered = true
-                        onPullProgress(0f)
                         if (dx > 0) {
-                            onPageForward?.invoke() ?: onGoForward()
+                            onPageForward?.invoke(wv)
                         } else {
-                            onPageBackward?.invoke() ?: onGoBackward()
+                            onPageBackward?.invoke(wv)
                         }
+                        onPullProgress(0f)
+                        isHorizontalSwipe = false
+                        isVerticalDrag = false
+                        triggered = false
                         return@OnTouchListener true
                     }
                 }
+
                 onPullProgress(0f)
+                isHorizontalSwipe = false
+                isVerticalDrag = false
                 triggered = false
             }
             MotionEvent.ACTION_CANCEL -> {
                 onPullProgress(0f)
+                isHorizontalSwipe = false
+                isVerticalDrag = false
                 triggered = false
             }
         }
-        false // Let WebView handle other interactions (like taps)
+
+        false // Permitir que WebView procese clicks, selección y scroll interno
     }
 
     private val globalLayoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
         val webViews = mutableListOf<WebView>()
         findAllWebViews(rootView, webViews)
-        
+
         for (wv in webViews) {
             if (attachedWebViews.add(wv)) {
                 wv.setOnTouchListener(touchListener)
@@ -155,13 +216,13 @@ class ChapterScrollDetector(
         attachedWebViews.clear()
     }
 
-    // Busca recursivamente TODOS los WebViews dentro de Readium
-    private fun findAllWebViews(v: View, out: MutableList<WebView>) {
+    private fun findAllWebViews(v: View, outWebViews: MutableList<WebView>) {
         if (v is WebView) {
-            out.add(v)
-        } else if (v is ViewGroup) {
+            outWebViews.add(v)
+        }
+        if (v is ViewGroup) {
             for (i in 0 until v.childCount) {
-                findAllWebViews(v.getChildAt(i), out)
+                findAllWebViews(v.getChildAt(i), outWebViews)
             }
         }
     }

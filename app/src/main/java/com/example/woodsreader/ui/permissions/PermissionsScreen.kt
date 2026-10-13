@@ -57,6 +57,15 @@ fun PermissionsScreen(
             ) {
                 Text(text = "Otorgar Permiso")
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TextButton(
+                onClick = onPermissionsGranted,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(text = "Explorar app sin escanear")
+            }
         }
     }
 }

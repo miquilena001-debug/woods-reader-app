@@ -44,7 +44,8 @@ private const val TAG = "TtsManager"
 class TtsManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
-    private val userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository
+    private val userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
+    private val sherpaModelManager: SherpaModelManager
 ) {
     private var tts: TextToSpeech? = null
     private var isReady = false
@@ -55,6 +56,8 @@ class TtsManager @Inject constructor(
     @Volatile
     private var activeAudioTrack: AudioTrack? = null
     private val totalFramesWritten = AtomicLong(0L)
+    @Volatile
+    private var isSpeakingCancelled = false
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _isLoadingModel = MutableStateFlow(false)
@@ -165,11 +168,12 @@ class TtsManager @Inject constructor(
         val items = parseTextToPlaybackItems(processedText)
         var dialogueCount = 0
         
+        isSpeakingCancelled = false
         requestAudioFocus()
         try {
             for (item in items) {
-                // Verificar cancelaciÃƒÂ³n de corrutinas en cada paso del bucle
-                if (!currentCoroutineContext().isActive || !isReady || tts == null) break
+                // Verificar cancelación de corrutinas en cada paso del bucle
+                if (isSpeakingCancelled || !currentCoroutineContext().isActive || !isReady || tts == null) break
                 
                 // Si es un item de pausa pura, aplicar delay y continuar
                 if (item.type == ChunkType.PAUSE || item.text.isBlank()) {
@@ -207,7 +211,13 @@ class TtsManager @Inject constructor(
                             if (cont.isActive) cont.resume(Unit) { }
                         }
                         override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                            if (cont.isActive) cont.resume(Unit) { }
+                            if (cont.isActive) {
+                                if (isSpeakingCancelled) {
+                                    cont.cancel()
+                                } else {
+                                    cont.resume(Unit) { }
+                                }
+                            }
                         }
                     })
                     
@@ -217,6 +227,8 @@ class TtsManager @Inject constructor(
                         stop()
                     }
                 }
+                
+                if (isSpeakingCancelled || !currentCoroutineContext().isActive) break
                 
                 // Restaurar los valores por defecto del lector
                 tts?.setPitch(basePitch)
@@ -481,6 +493,7 @@ class TtsManager @Inject constructor(
     }
 
     fun stop() {
+        isSpeakingCancelled = true
         tts?.stop()
         val track = activeAudioTrack
         if (track != null && track.state == AudioTrack.STATE_INITIALIZED) {
@@ -592,7 +605,16 @@ class TtsManager @Inject constructor(
         }
     }
 
-    private suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun resetSherpa() = sherpaMutex.withLock {
+        try {
+            offlineTts?.release()
+        } catch (e: Exception) {
+            Timber.w(e, "Error releasing OfflineTts")
+        }
+        offlineTts = null
+    }
+
+    suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
         if (offlineTts != null) return@withContext true
         sherpaMutex.withLock {
             if (offlineTts != null) return@withLock true
@@ -601,35 +623,62 @@ class TtsManager @Inject constructor(
                 _isLoadingModel.value = true
                 ensureNativeLibLoaded()
 
-                val espeakDir = File(context.filesDir, "espeak-ng-data")
-                if (!espeakDir.exists() || espeakDir.list()?.isEmpty() == true) {
-                    Timber.d("Copying espeak-ng-data from assets to ${espeakDir.absolutePath}...")
-                    copyAssetsFolder(
-                        context.assets,
-                        "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
-                        espeakDir.absolutePath
+                if (sherpaModelManager.isModelReady()) {
+                    Timber.d("Loading Sherpa ONNX from disk: ${sherpaModelManager.modelDir.absolutePath}")
+                    val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
+                        model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
+                            vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
+                                model = sherpaModelManager.onnxFile.absolutePath,
+                                lexicon = "",
+                                tokens = sherpaModelManager.tokensFile.absolutePath,
+                                dataDir = sherpaModelManager.espeakDir.absolutePath,
+                                noiseScale = 0.667f,
+                                noiseScaleW = 0.8f,
+                                lengthScale = 1.0f
+                            ),
+                            numThreads = 4,
+                            debug = false
+                        )
                     )
-                    Timber.d("espeak-ng-data copied successfully")
+                    offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(null, config)
+                    Timber.i("Sherpa ONNX initialized successfully from disk")
+                    return@withLock true
                 }
 
-                val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
-                    model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
-                        vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
-                            model = "tts/vits-piper-es_ES-davefx-medium/es_ES-davefx-medium.onnx",
-                            lexicon = "",
-                            tokens = "tts/vits-piper-es_ES-davefx-medium/tokens.txt",
-                            dataDir = espeakDir.absolutePath,
-                            noiseScale = 0.667f,
-                            noiseScaleW = 0.8f,
-                            lengthScale = 1.0f
-                        ),
-                        numThreads = 4,
-                        debug = false
+                // Fallback a assets si el modelo todavía estuviera en el APK
+                try {
+                    val espeakDir = File(context.filesDir, "espeak-ng-data")
+                    if (!espeakDir.exists() || espeakDir.list()?.isEmpty() == true) {
+                        Timber.d("Copying espeak-ng-data from assets to ${espeakDir.absolutePath}...")
+                        copyAssetsFolder(
+                            context.assets,
+                            "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
+                            espeakDir.absolutePath
+                        )
+                    }
+
+                    val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
+                        model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
+                            vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
+                                model = "tts/vits-piper-es_ES-davefx-medium/es_ES-davefx-medium.onnx",
+                                lexicon = "",
+                                tokens = "tts/vits-piper-es_ES-davefx-medium/tokens.txt",
+                                dataDir = espeakDir.absolutePath,
+                                noiseScale = 0.667f,
+                                noiseScaleW = 0.8f,
+                                lengthScale = 1.0f
+                            ),
+                            numThreads = 4,
+                            debug = false
+                        )
                     )
-                )
-                offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(context.assets, config)
-                Timber.i("Sherpa ONNX initialized successfully")
-                true
+                    offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(context.assets, config)
+                    Timber.i("Sherpa ONNX initialized from assets fallback")
+                    true
+                } catch (assetErr: Exception) {
+                    Timber.w(assetErr, "Modelo no encontrado en assets ni en disco")
+                    false
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to initialize Sherpa ONNX")
                 false

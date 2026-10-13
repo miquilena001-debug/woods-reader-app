@@ -41,6 +41,25 @@
 # ── Logging (SLF4J) ───────────────────────────────────────────────────────────
 -dontwarn org.slf4j.**
 
+# ── Commons Compress (Sherpa ONNX archive extractor) ─────────────────────────
+-keep class org.apache.commons.compress.** { *; }
+-dontwarn org.apache.commons.compress.**
+
+# ── PDFBox Android ────────────────────────────────────────────────────────────
+-keep class com.tom_roush.pdfbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+
+# ── Jsoup ─────────────────────────────────────────────────────────────────────
+-dontwarn org.jsoup.**
+
+# ── Room Database ─────────────────────────────────────────────────────────────
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Entity class * { *; }
+-dontwarn androidx.room.paging.**
+
+# ── Vico Charts ───────────────────────────────────────────────────────────────
+-dontwarn com.patrykandpatrick.vico.**
+
 # ── Reglas generales de seguridad ─────────────────────────────────────────────
 -keepattributes SourceFile, LineNumberTable
 -renamesourcefileattribute SourceFile

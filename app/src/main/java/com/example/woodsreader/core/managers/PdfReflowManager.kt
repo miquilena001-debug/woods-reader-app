@@ -104,7 +104,6 @@ class PdfReflowManager @Inject constructor(
     }
 
     fun setReflowMode(enabled: Boolean, scope: CoroutineScope, initialPosition: Int = 1) {
-        if (_isReflowMode.value == enabled) return
         _isReflowMode.value = enabled
         if (enabled) {
             lastLoadedPage = -1
@@ -148,10 +147,10 @@ class PdfReflowManager @Inject constructor(
     }
 
     fun jumpToPage(scope: CoroutineScope, page: Int) {
+        pauseReflowTts()
         lastLoadedPage = -1
         firstLoadedPage = -1
-        closeDocument() // Close previous document to prevent leak on re-open
-        _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) }
+        _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = page) }
         _reflowElements.value = emptyList()
         _ttsNarrationUnits.value = emptyList()
         scope.launch {
@@ -159,7 +158,7 @@ class PdfReflowManager @Inject constructor(
         }
     }
     private fun evictFarPages(items: List<ReflowItem>, targetPage: Int): List<ReflowItem> {
-        val filtered = items.filter { kotlin.math.abs(it.pageNumber - targetPage) <= 12 }
+        val filtered = items.filter { kotlin.math.abs(it.pageNumber - targetPage) <= 5 }
         if (filtered.isNotEmpty()) {
             firstLoadedPage = filtered.minOf { it.pageNumber }
             lastLoadedPage = filtered.maxOf { it.pageNumber }
@@ -217,13 +216,10 @@ class PdfReflowManager @Inject constructor(
                     _reflowElements.value = _reflowState.value.items
                     _isLoadingMoreReflow.value = false
 
-                    // 2. CARGA DE FONDO: 2 adelante y 1 atrÃ¡s
+                    // 2. PRECARGA DE FONDO: solo hacia adelante para no desplazar la posición inicial
                     if (isInitial) {
                         managerScope.launch {
                             loadRangeInBackground(document, targetPage + 1, minOf(total, targetPage + 2), append = true)
-                            if (targetPage > 1) {
-                                loadRangeInBackground(document, targetPage - 1, targetPage - 1, append = false)
-                            }
                         }
                     }
 
@@ -301,14 +297,16 @@ class PdfReflowManager @Inject constructor(
             // 4. Acumular unidades de narracion limpias para TTS
             _ttsNarrationUnits.value = _ttsNarrationUnits.value + processed.ttsNarrationUnits
 
-            // 5. Mapear ReadingBlock a ReflowItem para la UI
+            // 5. Mapear ReadingBlock a ReflowItem para la UI con IDs estables
+            var blockIdx = 0
             for (block in processed.displayBlocks) {
+                val blockId = "p${pageIndex}_blk_${blockIdx++}"
                 when (block) {
                     is ReadingBlock.Heading -> targetList.add(
-                        ReflowItem.Header(block.text, block.level, block.pageIndex)
+                        ReflowItem.Header(block.text, block.level, block.pageIndex, blockId)
                     )
                     is ReadingBlock.Paragraph -> targetList.add(
-                        ReflowItem.Paragraph(block.text, block.pageIndex)
+                        ReflowItem.Paragraph(block.text, block.pageIndex, blockId)
                     )
                     is ReadingBlock.Image, is ReadingBlock.Noise -> {
                         // Imagenes se extraen por separado; ruido no llega aqui
@@ -330,23 +328,32 @@ class PdfReflowManager @Inject constructor(
 
     private fun extractImagesFromPage(document: PDDocument, pageIndex: Int, targetList: MutableList<ReflowItem>) {
         try {
-            val resources = document.getPage(pageIndex).resources ?: return
-            extractImagesFromResources(resources, pageIndex, targetList)
+            val page = document.getPage(pageIndex)
+            val resources = page.resources ?: return
+            extractImagesFromResources(resources, pageIndex, targetList, intArrayOf(0))
         } catch (_: Exception) {}
     }
 
-    private fun extractImagesFromResources(resources: com.tom_roush.pdfbox.pdmodel.PDResources, pageIndex: Int, targetList: MutableList<ReflowItem>) {
+    private fun extractImagesFromResources(
+        resources: com.tom_roush.pdfbox.pdmodel.PDResources,
+        pageIndex: Int,
+        targetList: MutableList<ReflowItem>,
+        imgCounter: IntArray
+    ) {
         try {
             resources.xObjectNames?.forEach { name ->
+                if (imgCounter[0] >= 4) return@forEach // Límite de 4 imágenes por página para proteger RAM
                 val xObject = resources.getXObject(name)
                 if (xObject is PDImageXObject) {
-                    extractAndCompressImage(xObject, 600)?.let {
-                        targetList.add(ReflowItem.Image(it, pageIndex + 1))
+                    extractAndCompressImage(xObject, 600)?.let { bytes ->
+                        val currentIdx = imgCounter[0]++
+                        val imageId = "p${pageIndex + 1}_img_${currentIdx}_${bytes.size}"
+                        targetList.add(ReflowItem.Image(imageBytes = bytes, pageNumber = pageIndex + 1, id = imageId))
                     }
                 } else if (xObject is com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject) {
                     val formResources = xObject.resources
                     if (formResources != null) {
-                        extractImagesFromResources(formResources, pageIndex, targetList)
+                        extractImagesFromResources(formResources, pageIndex, targetList, imgCounter)
                     }
                 }
             }
@@ -354,27 +361,44 @@ class PdfReflowManager @Inject constructor(
     }
 
     private fun extractAndCompressImage(xObject: PDImageXObject, reqWidth: Int): ByteArray? {
+        val sourceBitmap = try {
+            xObject.image
+        } catch (t: Throwable) {
+            null
+        } ?: return null
+
         return try {
-            val sourceBitmap = xObject.image ?: return null
             val width = sourceBitmap.width
             val height = sourceBitmap.height
-            
+
+            // Descartar iconos, separadores o imágenes diminutas (< 48x48) para no saturar memoria
+            if (width < 48 || height < 48) {
+                sourceBitmap.recycle()
+                return null
+            }
+
             val targetWidth = if (width > reqWidth) reqWidth else width
-            val targetHeight = (height * (targetWidth.toFloat() / width)).toInt()
-            
+            val targetHeight = (height * (targetWidth.toFloat() / width)).toInt().coerceAtLeast(1)
+
             val resized = if (width > reqWidth) {
                 Bitmap.createScaledBitmap(sourceBitmap, targetWidth, targetHeight, true)
             } else {
                 sourceBitmap
             }
-            
+
             val stream = ByteArrayOutputStream()
-            resized.compress(Bitmap.CompressFormat.WEBP, 50, stream) // Calidad 50 para mÃ¡xima velocidad
+            resized.compress(Bitmap.CompressFormat.WEBP, 50, stream) // Calidad 50 para máxima velocidad
             val result = stream.toByteArray()
-            
-            if (resized != sourceBitmap) resized.recycle()
+
+            // Liberación inmediata de memoria nativa GPU/Bitmap
+            if (resized != sourceBitmap) {
+                resized.recycle()
+            }
+            sourceBitmap.recycle()
+
             result
         } catch (e: Exception) {
+            try { sourceBitmap.recycle() } catch (_: Throwable) {}
             null
         }
     }
@@ -417,18 +441,17 @@ class PdfReflowManager @Inject constructor(
         val locale = languageCode?.let { java.util.Locale.forLanguageTag(it) } ?: java.util.Locale.getDefault()
         if (!ttsManager.initialize(locale, voiceName)) return
         registerNoisyReceiver()
-        // Prioridad: usar unidades de narracion del pipeline (texto limpio, sin ruido)
-        // Fallback: leer directamente de los elementos de pantalla si el pipeline aun no las tiene
-        val narrationUnits = _ttsNarrationUnits.value
-        val elements = _reflowElements.value
 
-        val useNarrationUnits = narrationUnits.isNotEmpty()
-        val totalItems = if (useNarrationUnits) narrationUnits.size else elements.size
+        // Iterar directamente sobre los elementos legibles de reflowState.items
+        // para que ttsActiveBlockIndex coincida exactamente 1:1 con readableItems de la UI
+        val currentItems = _reflowState.value.items
+        val readableItems = currentItems.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
 
-        if (totalItems == 0 || startIndex >= totalItems) {
+        if (readableItems.isEmpty()) {
             _ttsState.value = TtsState.STOPPED
             return
         }
+        val safeStartIndex = startIndex.coerceIn(0, readableItems.size - 1)
 
         ttsManager.setRate(speed)
         if (pitch != null) {
@@ -437,43 +460,64 @@ class PdfReflowManager @Inject constructor(
         if (voiceName != null) {
             ttsManager.setVoice(voiceName)
         }
-        _ttsActiveBlockIndex.value = startIndex
+        _ttsActiveBlockIndex.value = safeStartIndex
         _ttsState.value = TtsState.PLAYING
         isReflowTtsRunning = true
         ttsUserStopped = false
 
         reflowTtsJob?.cancel()
         reflowTtsJob = scope.launch {
-            for (i in startIndex until totalItems) {
-                if (!isActive || !isReflowTtsRunning || ttsUserStopped) break
+            var i = safeStartIndex
+            while (isActive && isReflowTtsRunning && !ttsUserStopped) {
+                val currentReadable = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+                if (i >= currentReadable.size) {
+                    val state = _reflowState.value
+                    if (state.totalPages > 0 && lastLoadedPage < state.totalPages && !isCurrentlyLoading) {
+                        loadNextPage(scope)
+                        delay(600)
+                        val updated = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+                        if (i < updated.size) continue
+                    }
+                    break
+                }
 
                 _ttsActiveBlockIndex.value = i
 
-                val text: String
-                val pageNum: Int
-                if (useNarrationUnits) {
-                    val unit = narrationUnits[i]
-                    text = unit.textToSpeak
-                    pageNum = unit.pageIndex
-                } else {
-                    val item = elements[i]
-                    text = when (item) {
-                        is ReflowItem.Header -> item.content
-                        is ReflowItem.Paragraph -> item.content
-                        else -> ""
+                val item = currentReadable[i]
+                val text = when (item) {
+                    is ReflowItem.Header -> item.content
+                    is ReflowItem.Paragraph -> item.content
+                    is ReflowItem.Text -> item.element.locator.text.highlight ?: ""
+                    else -> ""
+                }
+                val pageNum = item.pageNumber
+
+                // Si nos acercamos al final de los items cargados, precargar siguiente página con antelación
+                if (i >= currentReadable.size - 2) {
+                    val state = _reflowState.value
+                    if (state.totalPages > 0 && lastLoadedPage < state.totalPages && !isCurrentlyLoading) {
+                        loadNextPage(scope)
                     }
-                    pageNum = item.pageNumber
                 }
 
-                if (text.isBlank()) continue
-                _currentTtsPage.value = pageNum
-                _currentTtsSentence.value = text
+                if (text.isNotBlank()) {
+                    _currentTtsPage.value = pageNum
+                    val sentences = splitSentences(text)
+                    for (sentence in sentences) {
+                        if (!isActive || !isReflowTtsRunning || ttsUserStopped) break
+                        if (sentence.isNotBlank()) {
+                            _currentTtsSentence.value = sentence
+                            try {
+                                ttsManager.speak(sentence)
+                            } catch (_: Exception) { break }
+                        }
+                    }
+                }
 
-                try {
-                    ttsManager.speak(text)
-                } catch (_: Exception) { break }
+                i++
             }
             if (isActive && !ttsUserStopped) {
+                _currentTtsSentence.value = ""
                 _ttsState.value = TtsState.STOPPED
                 isReflowTtsRunning = false
                 unregisterNoisyReceiver()
@@ -481,21 +525,38 @@ class PdfReflowManager @Inject constructor(
         }
     }
 
+    private fun splitSentences(text: String): List<String> {
+        val trimmed = text.trim()
+        if (trimmed.length < 50) return listOf(trimmed)
+        val pattern = Regex("""(?<=[.!?…])\s+(?=[«"—\p{Lu}\p{Lt}])""")
+        val parts = trimmed.split(pattern).map { it.trim() }.filter { it.isNotEmpty() }
+        return if (parts.isNotEmpty()) parts else listOf(trimmed)
+    }
+
     fun pauseReflowTts() {
         ttsUserStopped = true
         isReflowTtsRunning = false
         reflowTtsJob?.cancel()
+        reflowTtsJob = null
         ttsManager.stop()
         _ttsState.value = TtsState.PAUSED
         unregisterNoisyReceiver()
     }
 
     fun stopReflowTts() {
-        pauseReflowTts()
+        ttsUserStopped = true
+        isReflowTtsRunning = false
+        reflowTtsJob?.cancel()
+        reflowTtsJob = null
+        ttsManager.stop()
+        _currentTtsSentence.value = ""
+        _ttsActiveBlockIndex.value = -1
         _ttsState.value = TtsState.STOPPED
+        unregisterNoisyReceiver()
     }
 
     fun onSpeedChange(speed: Float, scope: CoroutineScope) {
+        ttsManager.setRate(speed)
         if (isReflowTtsRunning) {
             val idx = _ttsActiveBlockIndex.value
             pauseReflowTts()
@@ -532,7 +593,8 @@ class PdfReflowManager @Inject constructor(
         reflowTtsJob?.cancel()
         closeDocument()
         unregisterNoisyReceiver()
-        managerScope.cancel()
+        _isReflowMode.value = false
+        isCurrentlyLoading = false
     }
 }
 

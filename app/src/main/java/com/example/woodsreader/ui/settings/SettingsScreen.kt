@@ -25,6 +25,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.woodsreader.ui.library.WoodsBadge
 import com.example.woodsreader.ui.theme.HiddenForest
+import com.example.woodsreader.core.tts.SherpaDownloadState
 import java.util.Locale
 
 @Composable
@@ -36,6 +37,8 @@ fun SettingsScreen(
     val isEnriching by viewModel.isEnriching.collectAsStateWithLifecycle(false)
     val progress    by viewModel.scanProgress.collectAsStateWithLifecycle("")
     val storageSizes by viewModel.storageSizes.collectAsStateWithLifecycle()
+    val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+    val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
     val isBusy = isScanning || isEnriching
     val context = LocalContext.current
 
@@ -113,13 +116,71 @@ fun SettingsScreen(
             item {
                 SettingsSection("🔊 Configuración de Voz (TTS)") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val downloadState = sherpaDownloadState
                         SettingsToggleRow(
                             icon = Icons.Default.RecordVoiceOver,
                             title = "Voz neural local (Sherpa ONNX)",
-                            subtitle = "Voz basada en IA que se ejecuta 100% offline",
+                            subtitle = when (downloadState) {
+                                is SherpaDownloadState.Downloading -> "Descargando voz: ${(downloadState.progress * 100).toInt()}%"
+                                is SherpaDownloadState.Extracting -> "Instalando modelo de voz..."
+                                is SherpaDownloadState.Error -> "Error: ${downloadState.message}"
+                                else -> if (prefs.useSherpaTts) "Voz basada en IA que se ejecuta 100% offline"
+                                        else "Voz de alta calidad (requiere descarga de ~64 MB)"
+                            },
                             checked = prefs.useSherpaTts,
                             onCheck = { viewModel.setUseSherpaTts(it) }
                         )
+
+                        if (downloadState is SherpaDownloadState.Downloading) {
+                            LinearProgressIndicator(
+                                progress = { downloadState.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = HiddenForest.Accent,
+                                trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Descargando paquete oficial... ${(downloadState.progress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = HiddenForest.Accent
+                                )
+                                if (downloadState.totalBytes > 0) {
+                                    val dlMb = downloadState.downloadedBytes / (1024 * 1024)
+                                    val totalMb = downloadState.totalBytes / (1024 * 1024)
+                                    Text(
+                                        "$dlMb MB / $totalMb MB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = HiddenForest.TextLow
+                                    )
+                                }
+                            }
+                        } else if (downloadState is SherpaDownloadState.Extracting) {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = HiddenForest.Accent,
+                                trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                            )
+                            Text(
+                                "Instalando y verificando modelo en disco...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = HiddenForest.Accent
+                            )
+                        } else if (downloadState is SherpaDownloadState.Error) {
+                            Text(
+                                "Error: ${downloadState.message}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
 
                         if (prefs.useSherpaTts) {
                             SettingsActionRow(
@@ -304,11 +365,32 @@ fun SettingsScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         StorageItemRow("Base de datos", formatBytes(storageSizes.databaseBytes))
                         StorageItemRow("Caché de portadas", formatBytes(storageSizes.coversBytes))
-                        if (prefs.useSherpaTts || storageSizes.espeakBytes > 0) {
+                        if (storageSizes.sherpaBytes > 0) {
+                            StorageItemRow("Modelo de Voz Neural (Sherpa)", formatBytes(storageSizes.sherpaBytes))
+                        } else if (prefs.useSherpaTts || storageSizes.espeakBytes > 0) {
                             StorageItemRow("Léxicos de Voz Neural", formatBytes(storageSizes.espeakBytes))
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
+
+                        if (storageSizes.sherpaBytes > 0) {
+                            Button(
+                                onClick = { viewModel.deleteSherpaModel(context) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.Transparent,
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f), RoundedCornerShape(10.dp)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Eliminar modelo de voz neural (~${formatBytes(storageSizes.sherpaBytes)})", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                        }
 
                         Button(
                             onClick = { viewModel.clearCoverCache(context) },
@@ -356,6 +438,44 @@ fun SettingsScreen(
             }
 
             item { Spacer(modifier = Modifier.height(32.dp)) }
+        }
+
+        if (showSherpaDownloadDialog) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissSherpaDownloadDialog() },
+                title = {
+                    Text(
+                        "Descargar Voz Neuronal (IA)",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = HiddenForest.Text
+                    )
+                },
+                text = {
+                    Text(
+                        "La voz neural de alta calidad (Sherpa ONNX) se ejecuta 100% offline en tu dispositivo.\n\nRequiere una descarga única de aproximadamente 64 MB. ¿Deseas descargarla ahora?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = HiddenForest.TextSecondary
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.downloadSherpaModel() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HiddenForest.Accent,
+                            contentColor = HiddenForest.Background
+                        )
+                    ) {
+                        Text("Descargar (~64 MB)", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissSherpaDownloadDialog() }) {
+                        Text("Cancelar", color = HiddenForest.TextLow)
+                    }
+                },
+                containerColor = HiddenForest.Surface,
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }

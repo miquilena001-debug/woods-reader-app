@@ -20,6 +20,8 @@ import java.io.File
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 
 @Singleton
 class BookMetadataExtractor @Inject constructor(
@@ -110,12 +112,15 @@ class BookMetadataExtractor @Inject constructor(
                     val metadata = publication.manifest.metadata
                     val title = metadata.title ?: fileName.substringBeforeLast('.')
                     val author = metadata.authors.firstOrNull()?.name ?: "Unknown Author"
-                    var description = metadata.description ?: ""
+                    var description = metadata.description?.trim().orEmpty()
 
-                    // Si no hay descripción en los metadatos, extraerla del contenido
-                    // usando TextRank (extractivo, local, sin internet)
-                    if (description.isBlank()) {
-                        description = extractSynopsisFromContent(publication)
+                    // Si no hay descripción en los metadatos o si es un PDF con metadatos no informativos/binarios
+                    if (description.isBlank() || (format == BookFormat.PDF && (description.contains("%PDF") || description.contains("t.me/") || description.length < 40))) {
+                        description = if (format == BookFormat.PDF) {
+                            extractPdfSynopsis(source)
+                        } else {
+                            extractSynopsisFromContent(publication)
+                        }
                     }
 
                     val language = metadata.languages.firstOrNull() ?: Locale.getDefault().language
@@ -188,12 +193,14 @@ class BookMetadataExtractor @Inject constructor(
             publication = null
         )
 
+        val description = if (format == BookFormat.PDF) extractPdfSynopsis(source) else ""
+
         return BookEntity(
             filePath = filePath,
             title = title,
             author = author,
             language = "es",
-            description = "",
+            description = description,
             format = format,
             fileSizeBytes = fileSize,
             fileHash = fileHash,
@@ -201,6 +208,106 @@ class BookMetadataExtractor @Inject constructor(
             coverCachePath = coverPath,
             importedAt = System.currentTimeMillis()
         )
+    }
+
+    /**
+     * Extrae texto real de las primeras páginas del PDF usando PDFBox,
+     * buscando encabezados explícitos de 'Sinopsis' o limpiando la narrativa inicial.
+     */
+    private suspend fun extractPdfSynopsis(source: Any): String = withContext(Dispatchers.IO) {
+        try {
+            val inputStream = when (source) {
+                is File -> source.inputStream()
+                is Uri -> context.contentResolver.openInputStream(source)
+                is String -> {
+                    val uri = Uri.parse(source)
+                    if (uri.scheme == "content") {
+                        context.contentResolver.openInputStream(uri)
+                    } else {
+                        File(source).inputStream()
+                    }
+                }
+                else -> null
+            } ?: return@withContext ""
+
+            var rawText = ""
+            inputStream.use { stream ->
+                PDDocument.load(stream).use { doc ->
+                    val totalPages = doc.numberOfPages
+                    val pagesToScan = minOf(totalPages, 8)
+                    val stripper = PDFTextStripper()
+                    stripper.sortByPosition = true
+                    stripper.startPage = 1
+                    stripper.endPage = pagesToScan
+                    rawText = stripper.getText(doc) ?: ""
+                }
+            }
+
+            if (rawText.isBlank()) return@withContext ""
+
+            // 1. Buscar si hay una sección explícita de "Sinopsis / Synopsis / Resumen / Argumento"
+            val synopsisPatterns = listOf(
+                Regex("""(?i)(?:^|\n)\s*(?:sinopsis|argumento|resumen|synopsis|summary)\s*[:\-\n]+\s*([^\n]+(?:\n(?!\s*(?:cap[íi]tulo|índice|index|tabla|volumen|prólogo|créditos|\d+[\.\s]))[^\n]+){1,10})"""),
+                Regex("""(?i)sinopsis\s*[:\-\n]+\s*([^\n\r]+(?:\n[^\n\r]+){1,8})""")
+            )
+
+            for (pattern in synopsisPatterns) {
+                val match = pattern.find(rawText)
+                if (match != null) {
+                    val candidate = match.groupValues[1].trim()
+                    val cleaned = cleanSynopsisText(candidate)
+                    if (cleaned.length >= 60) {
+                        return@withContext cleaned
+                    }
+                }
+            }
+
+            // 2. Si no hay encabezado explícito, limpiar el texto descartando ruido técnico y resumir
+            val cleanParagraphs = rawText.lines()
+                .map { it.trim() }
+                .filter { line ->
+                    line.length >= 35 &&
+                    !line.contains("http", ignoreCase = true) &&
+                    !line.contains("t.me/", ignoreCase = true) &&
+                    !line.contains("traducido", ignoreCase = true) &&
+                    !line.contains("recopilado", ignoreCase = true) &&
+                    !line.contains("copyright", ignoreCase = true) &&
+                    !line.contains("todos los derechos", ignoreCase = true) &&
+                    !line.matches(Regex("""^(?:pág(?:ina)?\s*\d+|\d+)$""", RegexOption.IGNORE_CASE))
+                }
+
+            if (cleanParagraphs.isEmpty()) return@withContext ""
+
+            val combinedText = cleanParagraphs.take(15).joinToString("\n\n")
+            if (combinedText.length >= 150) {
+                val summary = summarizer.summarize(combinedText, numSentences = 3)
+                if (summary.isNotBlank()) return@withContext summary
+            }
+
+            cleanParagraphs.firstOrNull { it.length in 80..400 } ?: ""
+        } catch (e: Exception) {
+            Log.w(TAG, "Error extracting PDF synopsis", e)
+            ""
+        }
+    }
+
+    private fun cleanSynopsisText(text: String): String {
+        return text
+            .replace(Regex("""(?i)https?://\S+"""), "")
+            .replace(Regex("""(?i)t\.me/\S+"""), "")
+            .replace(Regex("""(?i)traducido\s+por\s+[^\n.]+"""), "")
+            .replace(Regex("""(?i)recopilado\s+por\s+[^\n.]+"""), "")
+            .replace("\r", "")
+            .lines()
+            .map { it.trim() }
+            .filter { line ->
+                line.isNotBlank() &&
+                !line.contains("copyright", ignoreCase = true) &&
+                !line.contains("todos los derechos", ignoreCase = true) &&
+                !line.matches(Regex("""^(?:pág(?:ina)?\s*\d+|\d+)$""", RegexOption.IGNORE_CASE))
+            }
+            .joinToString("\n\n")
+            .trim()
     }
 
     /**

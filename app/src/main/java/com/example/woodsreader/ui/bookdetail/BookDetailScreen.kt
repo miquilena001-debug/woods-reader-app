@@ -83,6 +83,7 @@ fun BookDetailScreen(
                 onUpdateStatus = viewModel::updateReadingStatus,
                 onUpdateRating = viewModel::updateRating,
                 onUpdateNotes = viewModel::updateUserNotes,
+                onUpdateDescription = viewModel::updateDescription,
                 onGenerateSynopsis = viewModel::generateSynopsis,
                 onDeleteHighlight = viewModel::deleteHighlight,
                 onDeleteBookmark = viewModel::deleteBookmark,
@@ -105,6 +106,7 @@ private fun BookDetailContent(
     onUpdateStatus: (ReadingStatus) -> Unit,
     onUpdateRating: (Int?) -> Unit,
     onUpdateNotes: (String) -> Unit,
+    onUpdateDescription: (String) -> Unit,
     onGenerateSynopsis: () -> Unit,
     onDeleteHighlight: (HighlightEntity) -> Unit,
     onDeleteBookmark: (BookmarkEntity) -> Unit,
@@ -138,6 +140,7 @@ private fun BookDetailContent(
                 onUpdateStatus = onUpdateStatus,
                 onUpdateRating = onUpdateRating,
                 onUpdateNotes = onUpdateNotes,
+                onUpdateDescription = onUpdateDescription,
                 onGenerateSynopsis = onGenerateSynopsis
             )
 
@@ -404,6 +407,7 @@ private fun MetadataSection(
     onUpdateStatus: (ReadingStatus) -> Unit,
     onUpdateRating: (Int?) -> Unit,
     onUpdateNotes: (String) -> Unit,
+    onUpdateDescription: (String) -> Unit,
     onGenerateSynopsis: () -> Unit
 ) {
     Column(
@@ -435,7 +439,8 @@ private fun MetadataSection(
         DescriptionCard(
             description = book.description,
             isGenerating = isGeneratingSynopsis,
-            onGenerate = onGenerateSynopsis
+            onGenerate = onGenerateSynopsis,
+            onSaveDescription = onUpdateDescription
         )
 
         // User notes
@@ -625,9 +630,13 @@ private fun MetadataCell(
 private fun DescriptionCard(
     description: String,
     isGenerating: Boolean,
-    onGenerate: () -> Unit
+    onGenerate: () -> Unit,
+    onSaveDescription: (String) -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
+    var tempText by remember(description) { mutableStateOf(description) }
+
     GlassCard {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -640,18 +649,37 @@ private fun DescriptionCard(
                     style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 1.sp),
                     color = HiddenForest.TextLow
                 )
-                // Botón regenerar (siempre visible, por si el usuario quiere actualizarla)
+                // Botones: Regenerar con IA/extracción y Editar manualmente
                 if (!isGenerating) {
-                    IconButton(
-                        onClick = onGenerate,
-                        modifier = Modifier.size(28.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Default.AutoAwesome,
-                            contentDescription = "Generar sinopsis",
-                            tint = HiddenForest.Accent.copy(alpha = 0.7f),
-                            modifier = Modifier.size(16.dp)
-                        )
+                        IconButton(
+                            onClick = onGenerate,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = "Generar sinopsis",
+                                tint = HiddenForest.Accent.copy(alpha = 0.8f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                tempText = description
+                                showEditDialog = true
+                            },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Editar sinopsis",
+                                tint = HiddenForest.TextLow,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -721,6 +749,57 @@ private fun DescriptionCard(
                 }
             }
         }
+    }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = {
+                Text(
+                    text = "Editar Sinopsis",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = HiddenForest.Text
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = tempText,
+                    onValueChange = { tempText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp, max = 340.dp),
+                    placeholder = {
+                        Text(
+                            "Escribe o pega la sinopsis del libro aquí...",
+                            color = HiddenForest.TextLow
+                        )
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = HiddenForest.Text),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = HiddenForest.Accent,
+                        unfocusedBorderColor = HiddenForest.Outline,
+                        focusedContainerColor = HiddenForest.SurfaceVariant,
+                        unfocusedContainerColor = HiddenForest.SurfaceVariant
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSaveDescription(tempText)
+                        showEditDialog = false
+                    }
+                ) {
+                    Text("Guardar", color = HiddenForest.Accent, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancelar", color = HiddenForest.TextLow)
+                }
+            },
+            containerColor = HiddenForest.Surface
+        )
     }
 }
 

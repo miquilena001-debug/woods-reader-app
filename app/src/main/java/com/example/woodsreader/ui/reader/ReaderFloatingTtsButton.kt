@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
@@ -85,6 +86,7 @@ fun ReaderFloatingTtsButton(
     chapterProgress: Float,
     hazeState: HazeState,
     onPlayPause: () -> Unit,
+    onStop: () -> Unit = {},
     onOpenSettings: () -> Unit
 ) {
     val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED
@@ -121,24 +123,62 @@ fun ReaderFloatingTtsButton(
 
 
     AnimatedVisibility(
-        visible = isTtsActive && !showTtsMacroWindow && !isReflowMode,
-        enter = fadeIn(tween(300)) + scaleIn(
-            initialScale = 0.8f,
-            animationSpec = tween(300, easing = FastOutSlowInEasing)
+        visible = isTtsActive && !showTtsMacroWindow,
+        enter = fadeIn(tween(350)) + slideInHorizontally(
+            animationSpec = tween(350, easing = FastOutSlowInEasing),
+            initialOffsetX = { it / 2 }
+        ) + scaleIn(
+            initialScale = 0.85f,
+            animationSpec = tween(350, easing = FastOutSlowInEasing)
         ),
-        exit = fadeOut(tween(250)) + scaleOut(
-            targetScale = 0.8f,
+        exit = fadeOut(tween(250)) + slideOutHorizontally(
+            animationSpec = tween(250, easing = FastOutSlowInEasing),
+            targetOffsetX = { it / 2 }
+        ) + scaleOut(
+            targetScale = 0.85f,
             animationSpec = tween(250, easing = FastOutSlowInEasing)
         ),
         modifier = modifier
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // ── Botón Stop / Cerrar (Permite quitar o detener el TTS flotante inmediatamente) ──
             Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.size(60.dp)
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
+                    .background(HiddenForest.Surface.copy(alpha = 0.90f))
+                    .border(
+                        width = 1.dp,
+                        color = HiddenForest.Outline.copy(alpha = 0.35f),
+                        shape = CircleShape
+                    )
+                    .combinedClickable(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onStop()
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Detener y cerrar TTS",
+                    tint = HiddenForest.TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(60.dp)
             ) {
                 // ── Ring progress arc (behind the button) ────────────────────
                 val progressColor = if (isPlaying) HiddenForest.Accent else HiddenForest.TextSecondary
@@ -267,7 +307,6 @@ fun ReaderFloatingTtsButton(
                 }
             }
 
-            // ── Animated equalizer bars (only when playing) ──────────────────
             AnimatedVisibility(
                 visible = isPlaying && !isLoadingTtsModel,
                 enter = fadeIn(tween(200)) + expandVertically(),
@@ -277,4 +316,5 @@ fun ReaderFloatingTtsButton(
             }
         }
     }
+}
 }

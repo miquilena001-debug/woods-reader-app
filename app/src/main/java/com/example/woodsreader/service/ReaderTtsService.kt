@@ -208,6 +208,27 @@ class ReaderTtsService : MediaSessionService() {
         // Registrar el proveedor ANTES de que Media3 emita cualquier notificación.
         // Si se configura tarde hay un parpadeo donde aparece la notificación genérica.
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
+
+        serviceScope.launch {
+            userPreferencesRepository.userPreferencesFlow.collect { prefs ->
+                currentSpeed = prefs.ttsSpeed
+                currentPreferences = currentPreferences.copy(
+                    speed = prefs.ttsSpeed.toDouble().coerceIn(0.25, 4.0),
+                    pitch = prefs.ttsPitch.toDouble().coerceIn(0.5, 2.0),
+                    language = prefs.ttsLanguage?.let { org.readium.r2.shared.util.Language(it) }
+                )
+                ttsManager.setRate(prefs.ttsSpeed)
+                ttsManager.setPitch(prefs.ttsPitch)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    _ttsNavigator.value?.let { navigator ->
+                        try {
+                            navigator.submitPreferences(currentPreferences)
+                        } catch (_: Exception) {}
+                    }
+                    mediaSession?.player?.setPlaybackSpeed(currentSpeed)
+                }
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -249,14 +270,16 @@ class ReaderTtsService : MediaSessionService() {
     // ── Preferencias TTS ─────────────────────────────────────────────────────
     fun updateSettings(speed: Float, pitch: Float, languageCode: String?) {
         currentSpeed = speed
+        currentPreferences = currentPreferences.copy(
+            speed = speed.toDouble().coerceIn(0.25, 4.0),
+            pitch = pitch.toDouble().coerceIn(0.5, 2.0),
+            language = languageCode?.let { org.readium.r2.shared.util.Language(it) }
+        )
+        ttsManager.setRate(speed)
+        ttsManager.setPitch(pitch)
         serviceScope.launch(Dispatchers.Main) {
             _ttsNavigator.value?.let { navigator ->
                 try {
-                    currentPreferences = currentPreferences.copy(
-                        speed = speed.toDouble().coerceIn(0.25, 4.0),
-                        pitch = pitch.toDouble().coerceIn(0.5, 2.0),
-                        language = languageCode?.let { org.readium.r2.shared.util.Language(it) }
-                    )
                     navigator.submitPreferences(currentPreferences)
                 } catch (_: Exception) { }
             }
@@ -300,7 +323,8 @@ class ReaderTtsService : MediaSessionService() {
                     listener = object : TtsNavigator.Listener {
                         override fun onStopRequested() { pause() }
                     },
-                    initialLocator = initialLocator
+                    initialLocator = initialLocator,
+                    initialPreferences = currentPreferences
                 )
             } catch (t: Throwable) {
                 android.util.Log.e("ReaderTtsService", "factory.createNavigator threw exception", t)
@@ -315,6 +339,9 @@ class ReaderTtsService : MediaSessionService() {
             _ttsNavigator.value = navigator
             setupMediaSession(navigator)
             observeNavigator(navigator)
+            try {
+                navigator?.submitPreferences(currentPreferences)
+            } catch (_: Exception) {}
             mediaSession?.player?.setPlaybackSpeed(currentSpeed)
 
             pendingLocatorOnReady?.let { loc ->
@@ -397,7 +424,11 @@ class ReaderTtsService : MediaSessionService() {
     private fun observeNavigator(navigator: TtsNavigator<*, *, *, *>?) {
         navigator ?: return
         serviceScope.launch { navigator.playback.collectLatest { _playbackState.value = it } }
-        serviceScope.launch { navigator.currentLocator.collectLatest { _currentLocator.value = it } }
+        serviceScope.launch {
+            navigator.location.collectLatest { loc ->
+                _currentLocator.value = loc.utteranceLocator
+            }
+        }
     }
 
     // ── Controles públicos (llamados desde ReaderViewModel / EpubFormatManager) ─
@@ -419,6 +450,9 @@ class ReaderTtsService : MediaSessionService() {
     fun stop() {
         pendingPlayOnReady = false
         _ttsNavigator.value?.pause()
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {}
     }
 
     fun go(locator: Locator) {

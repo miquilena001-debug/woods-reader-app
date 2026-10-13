@@ -46,7 +46,7 @@ fun ReaderBottomSlider(
     val chapterTitle = chapterInfo.title
     val chapterMinutes = chapterInfo.timeRemainingMinutes
     Surface(
-        color = Color.Transparent,
+        color = HiddenForest.Surface.copy(alpha = 0.88f),
         modifier = Modifier
             .fillMaxWidth()
             .hazeChild(

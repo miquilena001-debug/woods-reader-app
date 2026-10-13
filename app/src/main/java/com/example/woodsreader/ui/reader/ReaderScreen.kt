@@ -49,9 +49,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.haze
 import dev.chrisbanes.haze.hazeChild
 import com.example.woodsreader.R
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Close
@@ -79,6 +77,8 @@ import org.readium.r2.navigator.VisualNavigator
 import org.readium.r2.navigator.DecorableNavigator
 import org.readium.r2.navigator.Decoration
 import org.readium.r2.navigator.Navigator
+import org.readium.r2.shared.publication.Locator
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.util.AbsoluteUrl
 import androidx.compose.foundation.shape.CircleShape
@@ -106,6 +106,8 @@ import com.example.woodsreader.model.PageTurnStyle
 import com.example.woodsreader.ui.reader.animation.BookPageTurnOverlay
 import com.example.woodsreader.ui.reader.animation.PageTurnDirection
 import com.example.woodsreader.ui.reader.animation.rememberBookPageTurnState
+import androidx.compose.ui.text.style.TextDecoration
+import com.example.woodsreader.ui.theme.LiterataFamily
 
 
 
@@ -115,6 +117,32 @@ private fun Context.findFragmentActivity(): FragmentActivity? {
         if (ctx is FragmentActivity) return ctx
         ctx = ctx.baseContext
     }
+    return null
+}
+
+private fun resolveTocTargetPage(link: Link, locator: Locator?): Int? {
+    // 1. Posición directa en el locator
+    locator?.locations?.position?.takeIf { it > 0 }?.let { return it }
+
+    // 2. Fragmentos en el locator (ej: page=15)
+    locator?.locations?.fragments?.forEach { fragment ->
+        Regex("""(?i)(?:page=)?(\d+)""").find(fragment)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    }
+
+    // 3. Href del locator
+    locator?.href?.toString()?.let { href ->
+        Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""(?i)/page[_-]?(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""#(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    }
+
+    // 4. Href del Link de la tabla de contenidos (#page=15, /15, 15, etc.)
+    val linkHref = link.href.toString()
+    Regex("""(?i)[#?&]page=(\d+)""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    Regex("""(?i)/page[_-]?(\d+)""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    Regex("""#(\d+)$""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    Regex("""^/?(\d+)$""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+
     return null
 }
 
@@ -137,8 +165,11 @@ fun ReaderScreen(
     val highlights by viewModel.highlights.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
+    val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED || ttsState == TtsState.LOADING
     val isLoadingTtsModel by viewModel.isLoadingTtsModel.collectAsStateWithLifecycle()
     val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
+    val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+    val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
     
     val interactionSource = remember { MutableInteractionSource() }
     val isUserInteracting by interactionSource.collectIsPressedAsState()
@@ -178,7 +209,12 @@ fun ReaderScreen(
             }
         }
     }
-    
+
+    androidx.activity.compose.BackHandler {
+        viewModel.saveCurrentProgressBeforeExit()
+        onNavigateUp()
+    }
+
     var showAudioSheet by remember { mutableStateOf(false) }
     var showTtsMacroWindow by remember { mutableStateOf(false) }
     var activeTab by remember { mutableStateOf(ReaderTab.TEXT) }
@@ -191,6 +227,12 @@ fun ReaderScreen(
     var footnoteContent by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
+    LaunchedEffect(isTtsActive) {
+        val activity = context.findFragmentActivity()
+        if (activity != null) {
+            activity.volumeControlStream = android.media.AudioManager.STREAM_MUSIC
+        }
+    }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val highlightColors = LocalHighlightColors.current
     val accentColor = HiddenForest.Accent
@@ -328,9 +370,19 @@ fun ReaderScreen(
         val nav = navigatorState.value ?: return@LaunchedEffect
         if (nav is EpubNavigatorFragment) {
             nav.submitPreferences(epubPreferences)
+            applyToAllWebViews(nav.publicationView) {
+                it.applyCustomFontFamily(userPreferences.fontFamily)
+            }
         } else if (nav is PdfNavigatorFragment<*, *>) {
             @Suppress("UNCHECKED_CAST")
             (nav as PdfNavigatorFragment<*, org.readium.adapter.pdfium.navigator.PdfiumPreferences>).submitPreferences(userPreferences.toPdfPreferences())
+        }
+    }
+
+    LaunchedEffect(userPreferences.fontFamily) {
+        val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
+        applyToAllWebViews(nav.publicationView) {
+            it.applyCustomFontFamily(userPreferences.fontFamily)
         }
     }
 
@@ -357,79 +409,129 @@ fun ReaderScreen(
         nav.applyDecorations(decorations, "highlights")
     }
 
-    LaunchedEffect(ttsState, navigatorState.value, isUserInteracting, currentTtsRange, userPreferences.ttsHighlightStyle) {
+    val isPdf = (uiState as? ReaderUiState.Success)?.book?.format?.name == "PDF"
+    val currentTtsPage by viewModel.currentTtsPage.collectAsStateWithLifecycle()
+
+    // Sincronización TTS para EPUB: resaltado elegante cambiando el color de letra (idéntico a PDF Reflow) y seguimiento visual
+    LaunchedEffect(ttsState, navigatorState.value, isUserInteracting, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
         val nav = navigatorState.value ?: return@LaunchedEffect
+        val decorableNav = nav as? DecorableNavigator
         
         if (ttsState == TtsState.PLAYING) {
+            var lastHighlightedSentence = ""
+            var lastTargetResource = ""
+            var lastPageTurnTime = 0L
+
             viewModel.currentTtsLocator.collectLatest { locator ->
                 if (locator == null) return@collectLatest
-                
-                val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
-                if (nav is VisualNavigator && !isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll) {
-                    nav.go(locator, animated = true)
+                val sentenceText = locator.text.highlight ?: viewModel.currentTtsSentence.value
+                if (sentenceText.isNullOrBlank()) return@collectLatest
+                if (sentenceText == lastHighlightedSentence) return@collectLatest
+                lastHighlightedSentence = sentenceText
+
+                // 1. Asegurar que Readium no dibuje ninguna caja de fondo nativa
+                if (decorableNav != null) {
+                    decorableNav.applyDecorations(emptyList(), "tts")
+                    decorableNav.applyDecorations(emptyList(), "tts-scrub")
                 }
-                
-                if (nav is DecorableNavigator) {
-                    val tintColor = when (userPreferences.ttsHighlightStyle) {
-                        TtsHighlightStyle.BACKGROUND_YELLOW -> highlightColors.yellow.copy(alpha = 0.35f)
-                        TtsHighlightStyle.BACKGROUND_ACCENT -> accentColor.copy(alpha = 0.35f)
-                        TtsHighlightStyle.BACKGROUND_BLUE -> highlightColors.blue.copy(alpha = 0.35f)
-                        TtsHighlightStyle.BACKGROUND_ORANGE -> androidx.compose.ui.graphics.Color(0xFFFFB74D).copy(alpha = 0.35f)
-                        TtsHighlightStyle.UNDERLINE -> accentColor
-                        TtsHighlightStyle.NONE -> null
-                    }
-                    
-                    val decorationStyle = if (tintColor != null) {
-                        if (userPreferences.ttsHighlightStyle == TtsHighlightStyle.UNDERLINE) {
-                            Decoration.Style.Underline(tint = tintColor.toArgb())
-                        } else {
-                            Decoration.Style.Highlight(tint = tintColor.toArgb())
-                        }
-                    } else null
 
-                    if (decorationStyle != null) {
-                        val currentRange = currentTtsRange
-                        val sentence = currentTtsSentence
-                        val wordLocator = if (currentRange != null && currentRange.first >= 0 && currentRange.last < sentence.length) {
-                            try {
-                                locator.copy(
-                                    text = locator.text.copy(
-                                        highlight = sentence.substring(currentRange),
-                                        before = if (currentRange.first > 0) sentence.substring(0, currentRange.first) else "",
-                                        after = if (currentRange.last + 1 < sentence.length) sentence.substring(currentRange.last + 1) else ""
-                                    )
-                                )
-                            } catch (_: Exception) {
-                                locator
+                val cssSelector = locator.locations.otherLocations["cssSelector"] as? String
+                val isPaginated = userPreferences.scrollMode == ScrollMode.PAGINATED
+
+                // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
+                val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
+                val autoScrollEnabled = !isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll
+
+                if (nav is VisualNavigator) {
+                    val currentScreenLoc = nav.currentLocator.value
+                    val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
+                    val currentRes = currentScreenLoc.href.toString().substringAfterLast('/').substringBefore('#')
+
+                    if (targetRes.isNotEmpty() && currentRes.isNotEmpty() && targetRes != currentRes && targetRes != lastTargetResource && autoScrollEnabled) {
+                        lastTargetResource = targetRes
+                        nav.go(locator, animated = false)
+                        kotlinx.coroutines.delay(250L)
+                        val newWv = findActiveWebView(nav.publicationView)
+                        newWv?.applyCustomTtsHighlight(
+                            cssSelector = cssSelector,
+                            textSnippet = sentenceText,
+                            style = userPreferences.ttsHighlightStyle,
+                            theme = userPreferences.theme,
+                            isPaginated = isPaginated,
+                            autoScroll = autoScrollEnabled,
+                            onPageAction = { action ->
+                                val now = System.currentTimeMillis()
+                                if (now - lastPageTurnTime > 350L) {
+                                    lastPageTurnTime = now
+                                    when (action) {
+                                        "NEXT" -> nav.goForwardCompat(animated = true)
+                                        "PREV" -> nav.goBackwardCompat(animated = true)
+                                        "JUMP" -> nav.go(locator, animated = false)
+                                    }
+                                }
                             }
-                        } else {
-                            locator
-                        }
-
-                        val decoration = Decoration(
-                            id = "tts-highlight",
-                            locator = wordLocator,
-                            style = decorationStyle
                         )
-                        nav.applyDecorations(listOf(decoration), "tts")
                     } else {
-                        nav.applyDecorations(emptyList(), "tts")
+                        val activeWv = findActiveWebView(nav.publicationView)
+                        activeWv?.applyCustomTtsHighlight(
+                            cssSelector = cssSelector,
+                            textSnippet = sentenceText,
+                            style = userPreferences.ttsHighlightStyle,
+                            theme = userPreferences.theme,
+                            isPaginated = isPaginated,
+                            autoScroll = autoScrollEnabled,
+                            onPageAction = { action ->
+                                val now = System.currentTimeMillis()
+                                if (now - lastPageTurnTime > 350L) {
+                                    lastPageTurnTime = now
+                                    when (action) {
+                                        "NEXT" -> nav.goForwardCompat(animated = true)
+                                        "PREV" -> nav.goBackwardCompat(animated = true)
+                                        "JUMP" -> nav.go(locator, animated = false)
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
-        } else if (nav is DecorableNavigator && (ttsState == TtsState.STOPPED || ttsState == TtsState.IDLE)) {
-             nav.applyDecorations(emptyList(), "tts")
-             nav.applyDecorations(emptyList(), "tts-scrub")  // Limpiar también el scrub al detener
-        } else if (nav is DecorableNavigator && ttsState == TtsState.PAUSED) {
-             nav.applyDecorations(emptyList(), "tts-scrub")  // Al pausar: limpiar scrub, mantener highlight de posición
+        } else {
+            if (decorableNav != null) {
+                decorableNav.applyDecorations(emptyList(), "tts")
+                decorableNav.applyDecorations(emptyList(), "tts-scrub")
+            }
+            if (nav is VisualNavigator) {
+                applyToAllWebViews(nav.publicationView) { wv ->
+                    wv.clearCustomTtsHighlight()
+                }
+            }
+        }
+    }
+
+    // Sincronización automática de página para PDF Original (modo no reflow)
+    var lastNavigatedPdfPage by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(currentTtsPage, ttsState, isReflowMode, isPdf, navigatorState.value) {
+        if (isPdf && !isReflowMode && ttsState == TtsState.PLAYING && currentTtsPage > 0) {
+            val nav = navigatorState.value ?: return@LaunchedEffect
+            val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
+            if (!isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll) {
+                if (lastNavigatedPdfPage != currentTtsPage) {
+                    lastNavigatedPdfPage = currentTtsPage
+                    val loc = viewModel.getLocatorForPdfPage(currentTtsPage)
+                    if (loc != null && nav is VisualNavigator) {
+                        nav.go(loc, animated = false)
+                    }
+                }
+            }
+        } else if (ttsState != TtsState.PLAYING) {
+            lastNavigatedPdfPage = -1
         }
     }
 
     val pageTurnState = rememberBookPageTurnState()
 
-    val turnPageForward: (VisualNavigator) -> Unit = { nav ->
-        if (userPreferences.scrollMode == ScrollMode.PAGINATED && 
-            userPreferences.pageTurnAnimation && 
+    val performPageForward: (VisualNavigator) -> Unit = { nav ->
+        if (userPreferences.pageTurnAnimation && 
             userPreferences.pageTurnStyle != PageTurnStyle.NONE
         ) {
             scope.launch {
@@ -446,9 +548,51 @@ fun ReaderScreen(
         }
     }
 
-    val turnPageBackward: (VisualNavigator) -> Unit = { nav ->
-        if (userPreferences.scrollMode == ScrollMode.PAGINATED && 
-            userPreferences.pageTurnAnimation && 
+    val turnPageForward: (VisualNavigator, android.webkit.WebView?) -> Unit = { nav, directWv ->
+        if (nav is EpubNavigatorFragment) {
+            val activeWv = directWv ?: findActiveWebView(nav.publicationView)
+            if (activeWv != null) {
+                // Modo Unificado: Contenido con scroll vertical
+                if (activeWv.canScrollVertically(1)) {
+                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
+                        scope.launch {
+                            pageTurnState.turnPage(
+                                view = nav.publicationView,
+                                dir = PageTurnDirection.FORWARD,
+                                style = userPreferences.pageTurnStyle
+                            ) {
+                                activeWv.scrollByViewportDown(0.85f, animated = false)
+                            }
+                        }
+                    } else {
+                        activeWv.scrollByViewportDown(0.85f, animated = true)
+                    }
+                } else {
+                    // Al agotar las páginas del capítulo actual, pasar al siguiente capítulo
+                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
+                        scope.launch {
+                            pageTurnState.turnPage(
+                                view = nav.publicationView,
+                                dir = PageTurnDirection.FORWARD,
+                                style = userPreferences.pageTurnStyle
+                            ) {
+                                viewModel.goToNextChapter(nav)
+                            }
+                        }
+                    } else {
+                        viewModel.goToNextChapter(nav)
+                    }
+                }
+            } else {
+                performPageForward(nav)
+            }
+        } else {
+            performPageForward(nav)
+        }
+    }
+
+    val performPageBackward: (VisualNavigator) -> Unit = { nav ->
+        if (userPreferences.pageTurnAnimation && 
             userPreferences.pageTurnStyle != PageTurnStyle.NONE
         ) {
             scope.launch {
@@ -462,6 +606,50 @@ fun ReaderScreen(
             }
         } else {
             viewModel.pageBackward(nav)
+        }
+    }
+
+    val turnPageBackward: (VisualNavigator, android.webkit.WebView?) -> Unit = { nav, directWv ->
+        if (nav is EpubNavigatorFragment) {
+            val activeWv = directWv ?: findActiveWebView(nav.publicationView)
+            if (activeWv != null) {
+                // Modo Unificado: Contenido con scroll vertical
+                val canGoBack = activeWv.canScrollVertically(-1) || activeWv.scrollY > 20
+                if (canGoBack) {
+                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
+                        scope.launch {
+                            pageTurnState.turnPage(
+                                view = nav.publicationView,
+                                dir = PageTurnDirection.BACKWARD,
+                                style = userPreferences.pageTurnStyle
+                            ) {
+                                activeWv.scrollByViewportUp(0.85f, animated = false)
+                            }
+                        }
+                    } else {
+                        activeWv.scrollByViewportUp(0.85f, animated = true)
+                    }
+                } else {
+                    // Al inicio del capítulo: Pasar al final del capítulo anterior
+                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
+                        scope.launch {
+                            pageTurnState.turnPage(
+                                view = nav.publicationView,
+                                dir = PageTurnDirection.BACKWARD,
+                                style = userPreferences.pageTurnStyle
+                            ) {
+                                viewModel.goToPreviousChapter(nav)
+                            }
+                        }
+                    } else {
+                        viewModel.goToPreviousChapter(nav)
+                    }
+                }
+            } else {
+                performPageBackward(nav)
+            }
+        } else {
+            performPageBackward(nav)
         }
     }
 
@@ -483,12 +671,12 @@ fun ReaderScreen(
                 val isForwardTap = if (userPreferences.invertedTapZones) isLeftTap else isRightTap
 
                 return when {
-                    isBackTap -> {
-                        turnPageBackward(nav)
+                    isForwardTap -> {
+                        turnPageForward(nav, null)
                         true
                     }
-                    isForwardTap -> {
-                        turnPageForward(nav)
+                    isBackTap -> {
+                        turnPageBackward(nav, null)
                         true
                     }
                     else -> {
@@ -507,9 +695,8 @@ fun ReaderScreen(
             onGoForward = { viewModel.goToNextChapter(nav) },
             onGoBackward = { viewModel.goToPreviousChapter(nav) },
             onPullProgress = { pullProgress = it },
-            onPageForward = { turnPageForward(nav) },
-            onPageBackward = { turnPageBackward(nav) },
-            isPaginatedMode = { userPreferences.scrollMode == ScrollMode.PAGINATED }
+            onPageForward = { wv -> turnPageForward(nav, wv) },
+            onPageBackward = { wv -> turnPageBackward(nav, wv) }
         )
         detector.attach()
 
@@ -526,16 +713,19 @@ fun ReaderScreen(
             .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { event ->
-                if (userPreferences.volumeKeysNavigation && event.type == KeyEventType.KeyDown) {
+                if (isTtsActive) {
+                    // Durante TTS, permitir que el sistema operativo y MainActivity controlen el volumen multimedia
+                    false
+                } else if (userPreferences.volumeKeysNavigation && event.type == KeyEventType.KeyDown) {
                     when (event.key) {
                         Key.VolumeUp -> {
                             val nav = navigatorState.value as? VisualNavigator
-                            if (nav != null) turnPageBackward(nav) else viewModel.pageBackward(navigatorState.value)
+                            if (nav != null) turnPageBackward(nav, null) else viewModel.pageBackward(navigatorState.value)
                             true
                         }
                         Key.VolumeDown -> {
                             val nav = navigatorState.value as? VisualNavigator
-                            if (nav != null) turnPageForward(nav) else viewModel.pageForward(navigatorState.value)
+                            if (nav != null) turnPageForward(nav, null) else viewModel.pageForward(navigatorState.value)
                             true
                         }
                         else -> false
@@ -603,13 +793,7 @@ fun ReaderScreen(
                                     try { org.readium.r2.shared.publication.Locator.fromJSON(org.json.JSONObject(it)) } catch (_: Exception) { null }
                                 }
                                 
-                                val magnetProperties = RsProperties(
-                                    overrides = mapOf(
-                                        "scroll-snap-type" to "y proximity",
-                                        "scroll-snap-align" to "start",
-                                        "scroll-padding" to "20px"
-                                    )
-                                )
+                                val magnetProperties = RsProperties()
 
                                 val factory = when (state.book.format.name) {
                                     "EPUB" -> EpubNavigatorFactory(state.publication).createFragmentFactory(
@@ -710,7 +894,7 @@ fun ReaderScreen(
             visible = showControls,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
+            modifier = Modifier.align(Alignment.TopCenter).zIndex(15f)
         ) {
             if (successState != null) {
                 ReaderTopBar(
@@ -718,7 +902,13 @@ fun ReaderScreen(
                     ttsState = ttsState,
                     hasSelection = showHighlightMenu != null,
                     hazeState = hazeState,
-                    onBack = onNavigateUp,
+                    isPdf = successState.book.format.name == "PDF",
+                    isReflowMode = isReflowMode,
+                    onToggleReflow = { viewModel.toggleReflowMode() },
+                    onBack = {
+                        viewModel.saveCurrentProgressBeforeExit()
+                        onNavigateUp()
+                    },
                     onHighlight = {
                         scope.launch {
                             val nav = navigatorState.value as? SelectableNavigator
@@ -732,8 +922,7 @@ fun ReaderScreen(
                         } else if (ttsState == TtsState.PAUSED) {
                             viewModel.resumeTts()
                         } else {
-                            val loc = currentLocator ?: viewModel.getFallbackLocator()
-                            if (loc != null) viewModel.playTts(loc) else viewModel.onPlay()
+                            viewModel.onPlay()
                         }
                     },
                     onMenuClick = { showMasterMenu = true }
@@ -741,19 +930,16 @@ fun ReaderScreen(
             }
         }
 
-        // CAPA 1.5: Modo Reflow (Movil)
+        // CAPA 1.5: Modo Reflow (Vista Libro PDF)
         val reflowState by viewModel.reflowState.collectAsStateWithLifecycle()
         val isLoadingMore by viewModel.isLoadingMoreReflow.collectAsStateWithLifecycle()
         // Note: ttsState and currentTtsLocator already collected at the top of ReaderScreen
 
-        // B.2: Modo Reflow ya maneja su propio TTS via TtsManager
-        
         val ttsActiveBlockIndex by viewModel.ttsActiveBlockIndex.collectAsStateWithLifecycle()
-        
         val currentSpeed by viewModel.currentSpeed.collectAsStateWithLifecycle()
-        
+
         ReaderReflowOverlay(
-            modifier = Modifier.zIndex(5f),
+            modifier = Modifier.fillMaxSize().zIndex(1f),
             isVisible = isReflowMode,
             reflowState = reflowState,
             ttsActiveBlockIndex = ttsActiveBlockIndex,
@@ -767,6 +953,7 @@ fun ReaderScreen(
             onLoadMore = { viewModel.loadNextPage() },
             onLoadPrevious = { viewModel.loadPreviousPage() },
             onScroll = { index, isScrolling -> viewModel.onReflowScroll(index, isScrolling) },
+            onToggleControls = { viewModel.toggleControls() },
             onPlayPause = { 
                 if (ttsState == TtsState.PLAYING) viewModel.pauseTts()
                 else viewModel.onPlay()
@@ -781,37 +968,106 @@ fun ReaderScreen(
             }
         )
 
-        // CAPA 1.8: Indicador de Pagina TTS (Solo PDF Normal)
-        val currentTtsPage by viewModel.currentTtsPage.collectAsStateWithLifecycle()
-        val isPdf = (uiState as? ReaderUiState.Success)?.book?.format?.name == "PDF"
-        
+        // CAPA 1.8: Indicador de Lectura y Oración TTS (Solo PDF Normal)
+        val ttsHudBottomPadding = if (userPreferences.ttsUiStyle == TtsUiStyle.BAR) 96.dp else 130.dp
+
         AnimatedVisibility(
-            visible = !isReflowMode && isPdf && ttsState == TtsState.PLAYING,
+            visible = !isReflowMode && isPdf && (ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED),
             enter = fadeIn() + slideInVertically { it },
             exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp).zIndex(4f)
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = ttsHudBottomPadding)
+                .zIndex(4f)
         ) {
             Surface(
-                color = HiddenForest.Accent.copy(alpha = 0.9f),
-                shape = RoundedCornerShape(20.dp),
-                shadowElevation = 8.dp
+                color = HiddenForest.Surface.copy(alpha = 0.94f),
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f)),
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .widthIn(max = 520.dp)
+                    .padding(horizontal = 16.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Column(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Headset,
-                        contentDescription = null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Leyendo Página $currentTtsPage",
-                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                        color = Color.Black
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Headset,
+                                contentDescription = null,
+                                tint = HiddenForest.Accent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "PÁGINA $currentTtsPage",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                ),
+                                color = HiddenForest.Accent
+                            )
+                        }
+                        if (ttsState == TtsState.PAUSED) {
+                            Surface(
+                                color = HiddenForest.TextSecondary.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "EN PAUSA",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = HiddenForest.TextSecondary,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    if (currentTtsSentence.isNotBlank()) {
+                        val isDarkTheme = userPreferences.theme != com.example.woodsreader.model.ReaderTheme.DAY && 
+                                          userPreferences.theme != com.example.woodsreader.model.ReaderTheme.SEPIA
+                        val hudHighlightColor = when (userPreferences.ttsHighlightStyle) {
+                            TtsHighlightStyle.BACKGROUND_YELLOW -> if (isDarkTheme) Color(0xFFFFD600) else Color(0xFF9E6500)
+                            TtsHighlightStyle.BACKGROUND_ACCENT -> if (isDarkTheme) Color(0xFF2ECC71) else Color(0xFF1B663E)
+                            TtsHighlightStyle.BACKGROUND_BLUE -> if (isDarkTheme) Color(0xFF2196F3) else Color(0xFF0D47A1)
+                            TtsHighlightStyle.BACKGROUND_ORANGE -> if (isDarkTheme) Color(0xFFFF7A45) else Color(0xFFB03A00)
+                            TtsHighlightStyle.UNDERLINE -> if (isDarkTheme) HiddenForest.Text else Color(0xFF1B1B1B)
+                            TtsHighlightStyle.NONE -> if (isDarkTheme) HiddenForest.Text else Color(0xFF1B1B1B)
+                        }
+                        val hudBgColor = Color.Transparent
+                        val hudUnderline = if (userPreferences.ttsHighlightStyle == TtsHighlightStyle.UNDERLINE) TextDecoration.Underline else TextDecoration.None
+                        val hudWeight = if (userPreferences.ttsHighlightStyle == TtsHighlightStyle.NONE) FontWeight.Normal else FontWeight.Medium
+
+                        Surface(
+                            color = hudBgColor,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = currentTtsSentence,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontFamily = LiterataFamily,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    fontWeight = hudWeight
+                                ),
+                                color = hudHighlightColor,
+                                textDecoration = hudUnderline,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -819,13 +1075,14 @@ fun ReaderScreen(
         // CAPA 4: Master Menu (Panel Lateral)
         AnimatedVisibility(
             visible = showMasterMenu,
-            modifier = Modifier.zIndex(10f), // Asegurar que estÃƒÂ© por encima de casi todo
+            modifier = Modifier.zIndex(25f), // Asegurar que esté por encima de todo
             enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
             exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
         ) {
             ReaderSideMenu(
                 hazeState = hazeState,
                 isReflowAvailable = (uiState as? ReaderUiState.Success)?.book?.format?.name == "PDF",
+                isReflowMode = isReflowMode,
                 currentScrollMode = userPreferences.scrollMode,
                 onOptionClick = { option ->
                     showMasterMenu = false
@@ -852,13 +1109,12 @@ fun ReaderScreen(
 
         // CAPA 2: Slider Inferior (hidden when TTS bar is active in BAR mode)
         val ttsUiStyle = userPreferences.ttsUiStyle
-        val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED
         val showBottomSlider = showControls && !(isTtsActive && ttsUiStyle == TtsUiStyle.BAR)
         AnimatedVisibility(
             visible = showBottomSlider,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter)
+            modifier = Modifier.align(Alignment.BottomCenter).zIndex(15f)
         ) {
             ReaderBottomSlider(
                 navigator = navigator,
@@ -909,6 +1165,7 @@ fun ReaderScreen(
                 onPageTurnAnimationChange = { viewModel.onPageTurnAnimationChange(it) },
                 onPageTurnStyleChange = { viewModel.onPageTurnStyleChange(it) },
                 onInvertedTapZonesChange = { viewModel.onInvertedTapZonesChange(it) },
+                onTtsHighlightStyleChange = { viewModel.updateTtsHighlightStyle(it) },
                 hazeState = hazeState,
                 onDismiss = { showAudioSheet = false }
             )
@@ -931,8 +1188,7 @@ fun ReaderScreen(
                 onOpenRules = { showTtsRulesSheet = true },
                 onPlay = { 
                     if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                        val loc = currentLocator ?: viewModel.getFallbackLocator()
-                        if (loc != null) viewModel.playTts(loc) else viewModel.onPlay()
+                        viewModel.onPlay()
                     } else {
                         viewModel.resumeTts()
                     }
@@ -944,6 +1200,7 @@ fun ReaderScreen(
                 onTtsAutoScrollChange = { enabled -> viewModel.onTtsAutoScrollChange(enabled) },
                 useSherpaTts = userPreferences.useSherpaTts,
                 onUseSherpaTtsChange = { enabled -> viewModel.updateUseSherpaTts(enabled) },
+                sherpaDownloadState = sherpaDownloadState,
                 currentPitch = userPreferences.ttsPitch,
                 onPitchChange = { pitch -> viewModel.onPitchChange(pitch) },
                 onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
@@ -967,6 +1224,44 @@ fun ReaderScreen(
             )
         }
 
+        if (showSherpaDownloadDialog) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissSherpaDownloadDialog() },
+                title = {
+                    Text(
+                        "Descargar Voz Neuronal (IA)",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = HiddenForest.Text
+                    )
+                },
+                text = {
+                    Text(
+                        "La voz neural de alta calidad (Sherpa ONNX) se ejecuta 100% offline en tu dispositivo.\n\nRequiere una descarga única de aproximadamente 64 MB. ¿Deseas descargarla ahora?",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = HiddenForest.TextSecondary
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { viewModel.downloadSherpaModel() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = HiddenForest.Accent,
+                            contentColor = HiddenForest.Background
+                        )
+                    ) {
+                        Text("Descargar (~64 MB)", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissSherpaDownloadDialog() }) {
+                        Text("Cancelar", color = HiddenForest.TextLow)
+                    }
+                },
+                containerColor = HiddenForest.Surface,
+                shape = RoundedCornerShape(16.dp)
+            )
+        }
+
         if (showToc && successState != null) {
             TocBottomSheet(
                 publication = successState.publication,
@@ -974,12 +1269,24 @@ fun ReaderScreen(
                 hazeState = hazeState,
                 onChapterClick = { link ->
                     val locator = successState.publication.locatorFromLink(link)
-                    if (locator != null) {
-                        (navigator as? VisualNavigator)?.go(locator, animated = true)
-                        if (isReflowMode) {
-                            val targetPage = locator.locations.position ?: 1
-                            viewModel.jumpToReflowPage(targetPage)
-                        }
+                    val isPdf = successState.book.format.name == "PDF"
+                    val targetPage = if (isPdf) resolveTocTargetPage(link, locator) else locator?.locations?.position
+
+                    val finalLocator = locator ?: run {
+                        val readingOrderLink = successState.publication.readingOrder.firstOrNull()
+                        if (readingOrderLink != null && targetPage != null) {
+                            successState.publication.locatorFromLink(readingOrderLink)?.copy(
+                                locations = Locator.Locations(position = targetPage)
+                            )
+                        } else null
+                    }
+
+                    if (finalLocator != null) {
+                        (navigator as? VisualNavigator)?.go(finalLocator, animated = true)
+                    }
+
+                    if (isReflowMode && targetPage != null) {
+                        viewModel.jumpToReflowPage(targetPage)
                     }
                     showToc = false
                 },
@@ -1021,12 +1328,12 @@ fun ReaderScreen(
             TtsUiStyle.BAR -> {
                 // Compact bottom bar — Moon+ Reader style
                 AnimatedVisibility(
-                    visible = isTtsActive && !showTtsMacroWindow && !isReflowMode,
+                    visible = isTtsActive && !showTtsMacroWindow,
                     enter = fadeIn() + slideInVertically { it },
                     exit = fadeOut() + slideOutVertically { it },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .zIndex(20f)
+                        .zIndex(50f)
                 ) {
                     ReaderTtsBar(
                         ttsState = ttsState,
@@ -1038,8 +1345,7 @@ fun ReaderScreen(
                         hazeState = hazeState,
                         onPlay = {
                             if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                                val loc = currentLocator ?: viewModel.getFallbackLocator()
-                                if (loc != null) viewModel.playTts(loc) else viewModel.onPlay()
+                                viewModel.onPlay()
                             } else {
                                 viewModel.resumeTts()
                             }
@@ -1050,6 +1356,8 @@ fun ReaderScreen(
                         onSkipBackward = { viewModel.skipTtsSentenceBackward() },
                         onSkipWordForward = { viewModel.skipTtsWordForward() },
                         onSkipWordBackward = { viewModel.skipTtsWordBackward() },
+                        onSkipChapterForward = { viewModel.skipTtsChapterForward() },
+                        onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
                         onLock = { isTtsScreenLocked = true },
                         onExpandSettings = { showTtsMacroWindow = true },
                         onSpeedUp = { viewModel.ttsSpeedUp() },
@@ -1076,10 +1384,10 @@ fun ReaderScreen(
                         } else if (ttsState == TtsState.PAUSED) {
                             viewModel.resumeTts()
                         } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                            val loc = currentLocator ?: viewModel.getFallbackLocator()
-                            if (loc != null) viewModel.playTts(loc) else viewModel.onPlay()
+                            viewModel.onPlay()
                         }
                     },
+                    onStop = { viewModel.stopTts() },
                     onOpenSettings = {
                         showTtsMacroWindow = true
                     }
@@ -1109,8 +1417,11 @@ fun ReaderScreen(
                             viewModel.pauseTts()
                         } else if (ttsState == TtsState.PAUSED) {
                             viewModel.resumeTts()
+                        } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
+                            viewModel.onPlay()
                         }
                     },
+                    onStop = { viewModel.stopTts() },
                     onOpenSettings = {
                         showTtsMacroWindow = true
                     }
@@ -1132,94 +1443,7 @@ fun ReaderScreen(
             modifier = Modifier.align(Alignment.Center)
         )
 
-        // Overlay de detección de brillo en el borde izquierdo (estilo Moon+ Reader)
-        var showBrightnessIndicator by remember { mutableStateOf(false) }
-        var currentBrightnessPercent by remember { mutableStateOf(0) }
-        var brightnessIndicatorJob by remember { mutableStateOf<Job?>(null) }
 
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(48.dp)
-                .align(Alignment.CenterStart)
-                .zIndex(30f)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            showBrightnessIndicator = true
-                        },
-                        onDragEnd = {
-                            brightnessIndicatorJob?.cancel()
-                            brightnessIndicatorJob = scope.launch {
-                                delay(1200)
-                                showBrightnessIndicator = false
-                            }
-                        },
-                        onDragCancel = {
-                            showBrightnessIndicator = false
-                        },
-                        onVerticalDrag = { _, dragAmount ->
-                            val delta = -dragAmount / 500f
-                            val activity = context.findFragmentActivity()
-                            if (activity != null) {
-                                val lp = activity.window.attributes
-                                val currentVal = if (lp.screenBrightness < 0) {
-                                    try {
-                                        android.provider.Settings.System.getInt(
-                                            activity.contentResolver,
-                                            android.provider.Settings.System.SCREEN_BRIGHTNESS
-                                        ) / 255f
-                                    } catch (e: Exception) {
-                                        0.5f
-                                    }
-                                } else {
-                                    lp.screenBrightness
-                                }
-                                val newVal = (currentVal + delta).coerceIn(0.01f, 1.0f)
-                                lp.screenBrightness = newVal
-                                activity.window.attributes = lp
-                                currentBrightnessPercent = (newVal * 100).toInt()
-                            }
-                        }
-                    )
-                }
-        )
-
-        // Indicador visual de brillo
-        AnimatedVisibility(
-            visible = showBrightnessIndicator,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.Center)
-                .zIndex(40f)
-        ) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.8f),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
-                modifier = Modifier.size(100.dp)
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.WbSunny,
-                        contentDescription = "Brillo",
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "$currentBrightnessPercent%",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White
-                    )
-                }
-            }
-        }
 
         // BottomSheets para Diccionario y Traducción
         if (showDictionarySheet) {

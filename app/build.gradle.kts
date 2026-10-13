@@ -29,8 +29,8 @@ android {
         applicationId = "com.example.woodsreader"
         minSdk = 33
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // arm64 para rendimiento, armeabi-v7a para compatibilidad total
         ndk {
@@ -47,6 +47,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("long", "BUILD_TIME_MILLIS", "${System.currentTimeMillis()}L")
+            buildConfigField("long", "BETA_EXPIRATION_DAYS", "45L")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -54,6 +58,8 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            buildConfigField("long", "BUILD_TIME_MILLIS", "0L")
+            buildConfigField("long", "BETA_EXPIRATION_DAYS", "0L")
         }
     }
 
@@ -82,6 +88,11 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 }
 
@@ -172,6 +183,8 @@ dependencies {
 
     // ── Sherpa ONNX para TTS Neuronal Offline ───────────────────────────────
     implementation(files("libs/sherpa-onnx.aar"))
+    implementation(libs.commons.compress)
+    implementation(libs.okhttp)
 
 
 

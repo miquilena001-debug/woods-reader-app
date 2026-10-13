@@ -100,23 +100,25 @@ private suspend fun captureViewSnapshot(view: View): Bitmap? = withContext(Dispa
 
         if (bitmap != null) {
             val rect = Rect(left, top, right, bottom)
-            val success = suspendCancellableCoroutine<Boolean> { cont ->
-                try {
-                    PixelCopy.request(
-                        window,
-                        rect,
-                        bitmap,
-                        { copyResult ->
-                            if (cont.isActive) {
-                                cont.resume(copyResult == PixelCopy.SUCCESS)
-                            }
-                        },
-                        Handler(Looper.getMainLooper())
-                    )
-                } catch (_: Throwable) {
-                    if (cont.isActive) cont.resume(false)
+            val success = kotlinx.coroutines.withTimeoutOrNull(200L) {
+                suspendCancellableCoroutine<Boolean> { cont ->
+                    try {
+                        PixelCopy.request(
+                            window,
+                            rect,
+                            bitmap,
+                            { copyResult ->
+                                if (cont.isActive) {
+                                    cont.resume(copyResult == PixelCopy.SUCCESS)
+                                }
+                            },
+                            Handler(Looper.getMainLooper())
+                        )
+                    } catch (_: Throwable) {
+                        if (cont.isActive) cont.resume(false)
+                    }
                 }
-            }
+            } ?: false
 
             if (success) {
                 return@withContext bitmap
@@ -166,9 +168,8 @@ class BookPageTurnState {
             return
         }
 
-        // Si ya hay una animación en curso, permitir que continúe
+        // Si ya hay una animación en curso, ignorar toques subsiguientes para evitar saltos dobles
         if (isTurning) {
-            onNavigate()
             return
         }
 
@@ -188,7 +189,7 @@ class BookPageTurnState {
         onNavigate()
 
         try {
-            val duration = if (style == PageTurnStyle.BOOK_FLIP) 270 else 230
+            val duration = if (style == PageTurnStyle.BOOK_FLIP) 200 else 180
             progress.animateTo(
                 targetValue = 1f,
                 animationSpec = tween(
@@ -197,9 +198,10 @@ class BookPageTurnState {
                 )
             )
         } finally {
-            isTurning = false
-            snapshotBitmap?.recycle()
+            val toRecycle = snapshotBitmap
             snapshotBitmap = null
+            isTurning = false
+            toRecycle?.recycle()
         }
     }
 }
@@ -224,6 +226,7 @@ fun BookPageTurnOverlay(
 ) {
     if (!state.isTurning || style == PageTurnStyle.NONE) return
     val bitmap = state.snapshotBitmap ?: return
+    if (bitmap.isRecycled) return
 
     val p = state.progress.value
     val density = LocalDensity.current.density
@@ -292,28 +295,7 @@ fun BookPageTurnOverlay(
 
                 // Efectos de papel: Brillo especular y sombreado de curvatura
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    // ── Brillo especular que barre el cilindro de curvatura ──────
-                    if (bend > 0.05f) {
-                        val highlightCenter = if (isForward) {
-                            size.width * (1f - p * 0.8f)
-                        } else {
-                            size.width * (p * 0.8f)
-                        }
-                        val highlightWidth = size.width * 0.22f
-                        val highlightAlpha = 0.18f * bend
-
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = highlightAlpha),
-                                    Color.Transparent
-                                ),
-                                startX = (highlightCenter - highlightWidth).coerceAtLeast(0f),
-                                endX = (highlightCenter + highlightWidth).coerceAtMost(size.width)
-                            )
-                        )
-                    }
+                    // ── Sombreado de curvatura suave y natural sin destellos blancos ──────
 
                     // ── Sombra de elevación sobre el borde que se despega ────────
                     if (isForward) {

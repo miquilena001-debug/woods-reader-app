@@ -87,12 +87,19 @@ class EpubFormatManager @Inject constructor(
         this.navigator = nav
     }
 
+    private var pendingSpeed: Float? = null
+    private var pendingPitch: Float? = null
+    private var pendingLanguage: String? = null
+
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as? ReaderTtsService.TtsBinder
             ttsService = binder?.getService()
             _isServiceBound.value = true
             ttsService?.preWarmEngine()
+            pendingSpeed?.let { spd ->
+                ttsService?.updateSettings(spd, pendingPitch ?: 1.0f, pendingLanguage)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -150,13 +157,18 @@ class EpubFormatManager @Inject constructor(
         rules: List<WordExclusionRule> = emptyList()
     ): ProcessedDocument? = withContext(Dispatchers.Default) {
         if (href.isBlank()) return@withContext null
-        if (href == lastProcessedHref && _currentProcessedDocument.value != null) {
+        val targetRes = href.substringAfterLast('/').substringBefore('#')
+        val lastRes = lastProcessedHref?.substringAfterLast('/')?.substringBefore('#')
+        if (targetRes.isNotEmpty() && targetRes == lastRes && _currentProcessedDocument.value != null) {
             return@withContext _currentProcessedDocument.value
         }
         val pub = currentPublication ?: return@withContext null
-        val link = pub.readingOrder.find { it.href.toString() == href }
-            ?: pub.manifest.resources.find { it.href.toString() == href }
-            ?: return@withContext null
+        val baseHref = href.substringBefore('#')
+        val link = pub.readingOrder.find { 
+            it.href.toString() == href || it.href.toString() == baseHref || it.href.toString().substringAfterLast('/') == targetRes 
+        } ?: pub.manifest.resources.find { 
+            it.href.toString() == href || it.href.toString() == baseHref || it.href.toString().substringAfterLast('/') == targetRes 
+        } ?: return@withContext null
 
         val html = try {
             pub.get(link)?.read()?.getOrNull()?.let { String(it, Charsets.UTF_8) }
@@ -181,12 +193,17 @@ class EpubFormatManager @Inject constructor(
             launch {
                 service.playbackState.collectLatest { pbr ->
                     if (pbr == null) return@collectLatest
+                    if (ttsUserStopped) {
+                        _currentTtsSentence.value = ""
+                        _currentTtsRange.value = null
+                        _ttsState.value = TtsState.STOPPED
+                        return@collectLatest
+                    }
                     _currentTtsSentence.value = pbr.utterance
                     _currentTtsRange.value = pbr.range
                     _ttsState.value = when (pbr.state) {
                         is MediaNavigator.State.Ready -> {
-                            if (ttsUserStopped) TtsState.STOPPED
-                            else if (pbr.playWhenReady) {
+                            if (pbr.playWhenReady) {
                                 hasEverStartedTts = true
                                 onTtsStateChanged?.invoke(ReadingMode.TTS, pbr.utterance)
                                 TtsState.PLAYING
@@ -204,7 +221,7 @@ class EpubFormatManager @Inject constructor(
                             hasEverStartedTts = false
                             TtsState.STOPPED
                         }
-                        else -> TtsState.IDLE
+                        else -> if (ttsUserStopped) TtsState.STOPPED else TtsState.IDLE
                     }
                 }
             }
@@ -213,16 +230,20 @@ class EpubFormatManager @Inject constructor(
                     if (locator == null) return@collectLatest
                     _currentTtsLocator.value = locator
                     onLocatorChanged?.invoke(locator)
-                    if (!ttsUserStopped) {
-                        (navigator as? VisualNavigator)?.go(locator, animated = true)
+                    val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
+                    val lastRes = lastProcessedHref?.substringAfterLast('/')?.substringBefore('#')
+                    if (targetRes.isNotEmpty() && targetRes != lastRes) {
+                        processResource(locator.href.toString())
                     }
-                    processResource(locator.href.toString())
                 }
             }
         }
     }
 
     fun syncPreferences(speed: Float, language: String?, pitch: Float = 1.0f) {
+        pendingSpeed = speed
+        pendingPitch = pitch
+        pendingLanguage = language
         ttsService?.updateSettings(speed, pitch, language)
     }
 
@@ -274,7 +295,11 @@ class EpubFormatManager @Inject constructor(
             currentScope?.let { observeServiceFlows(it) }
         }
         val visualNavigator = navigator as? VisualNavigator
-        visualNavigator?.go(locator, animated = false)
+        val currentRes = visualNavigator?.currentLocator?.value?.href?.toString()?.substringAfterLast('/')?.substringBefore('#')
+        val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
+        if (!currentRes.isNullOrEmpty() && !targetRes.isNullOrEmpty() && currentRes != targetRes) {
+            visualNavigator?.go(locator, animated = false)
+        }
         service.go(locator)
         service.play()
     }
@@ -288,6 +313,9 @@ class EpubFormatManager @Inject constructor(
         hasEverStartedTts = false
         ttsService?.stop()
         _ttsState.value = TtsState.STOPPED
+        _currentTtsSentence.value = ""
+        _currentTtsRange.value = null
+        _currentTtsLocator.value = null
     }
 
     fun resumeTts() {

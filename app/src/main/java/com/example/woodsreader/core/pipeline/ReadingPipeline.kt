@@ -167,8 +167,29 @@ class ReadingPipeline @Inject constructor(
     }
 
     private fun isLikelyHeading(fontSize: Float, text: String): Boolean {
-        if (fontSize >= 15f && text.length < 120 && !text.endsWith(".")) return true
-        if (text.startsWith("Capítulo", ignoreCase = true) || text.startsWith("Parte", ignoreCase = true)) return true
+        val trimmed = text.trim()
+        if (trimmed.startsWith("“") || trimmed.startsWith("\"") || trimmed.startsWith("«") ||
+            trimmed.startsWith("—") || trimmed.startsWith("–") || trimmed.startsWith("- ")
+        ) {
+            return false // Diálogo, nunca es un título
+        }
+        if (trimmed.endsWith(".") || trimmed.endsWith(".”") || trimmed.endsWith("…”") || trimmed.endsWith("!»") || trimmed.endsWith("?»")) {
+            return false // Oración o diálogo con puntuación de cierre
+        }
+        if (trimmed.startsWith("Capítulo", ignoreCase = true) ||
+            trimmed.startsWith("Capitulo", ignoreCase = true) ||
+            trimmed.startsWith("Chapter", ignoreCase = true) ||
+            trimmed.startsWith("Parte", ignoreCase = true) ||
+            trimmed.startsWith("Prólogo", ignoreCase = true) ||
+            trimmed.startsWith("Prologo", ignoreCase = true) ||
+            trimmed.startsWith("Epílogo", ignoreCase = true) ||
+            trimmed.startsWith("Epilogo", ignoreCase = true) ||
+            trimmed.startsWith("#")
+        ) {
+            return true
+        }
+        // Solo encabezados reales: tamaño notablemente mayor que el texto base y longitud corta sin puntuación
+        if (fontSize >= 18f && trimmed.length < 60) return true
         return false
     }
 
