@@ -370,8 +370,10 @@ fun ReaderScreen(
         val nav = navigatorState.value ?: return@LaunchedEffect
         if (nav is EpubNavigatorFragment) {
             nav.submitPreferences(epubPreferences)
-            applyToAllWebViews(nav.publicationView) {
-                it.applyCustomFontFamily(userPreferences.fontFamily)
+            nav.safePublicationView?.let { pubView ->
+                applyToAllWebViews(pubView) {
+                    it.applyCustomFontFamily(userPreferences.fontFamily)
+                }
             }
         } else if (nav is PdfNavigatorFragment<*, *>) {
             @Suppress("UNCHECKED_CAST")
@@ -381,8 +383,10 @@ fun ReaderScreen(
 
     LaunchedEffect(userPreferences.fontFamily) {
         val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
-        applyToAllWebViews(nav.publicationView) {
-            it.applyCustomFontFamily(userPreferences.fontFamily)
+        nav.safePublicationView?.let { pubView ->
+            applyToAllWebViews(pubView) {
+                it.applyCustomFontFamily(userPreferences.fontFamily)
+            }
         }
     }
 
