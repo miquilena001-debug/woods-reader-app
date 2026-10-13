@@ -5,6 +5,7 @@ import com.example.woodsreader.core.managers.SleepTimer
 import com.example.woodsreader.core.managers.ReadingSessionManager
 import com.example.woodsreader.core.managers.ReadingProgressManager
 import android.content.Context
+import java.util.Locale
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -66,6 +67,7 @@ import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.content.*
 
 import org.readium.r2.shared.publication.services.positions
+import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.util.asset.AssetRetriever
 
 import org.readium.r2.streamer.PublicationOpener
@@ -126,6 +128,7 @@ class ReaderViewModel @Inject constructor(
 
     private var totalPositions = 0
     private var resourceIndexCache: Map<String, Int>? = null
+    private var positionsJob: Job? = null
 
     private val _bookTimeRemaining = MutableStateFlow<String?>(null)
     val bookTimeRemaining = _bookTimeRemaining.asStateFlow()
@@ -282,6 +285,12 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = ReaderUiState.Loading
             try {
+                // Liberar inmediatamente cualquier publicación previa y cancelar cálculo de posiciones
+                positionsJob?.cancel()
+                positionsJob = null
+                publication?.close()
+                publication = null
+
                 val book = withContext(Dispatchers.IO) {
                     bookRepository.getBook(bookId)
                 }
@@ -327,15 +336,15 @@ class ReaderViewModel @Inject constructor(
 
                 publication = pub
 
-                viewModelScope.launch(Dispatchers.Default) {
-                    val positions = try { pub.positions() } catch (e: Exception) {
+                positionsJob = viewModelScope.launch(Dispatchers.IO) {
+                    val byReadingOrder = try {
+                        pub.positionsByReadingOrder()
+                    } catch (e: Exception) {
                         Log.w(TAG, "Error calculating positions", e)
                         emptyList()
                     }
-                    totalPositions = positions.size
-                    positionsByResource = pub.readingOrder.map { link ->
-                        positions.filter { it.href.toString() == link.href.toString() }
-                    }
+                    totalPositions = byReadingOrder.sumOf { it.size }
+                    positionsByResource = byReadingOrder
                     resourceIndexCache = pub.readingOrder.mapIndexed { index, link ->
                         link.href.toString() to index
                     }.toMap()
@@ -722,7 +731,11 @@ class ReaderViewModel @Inject constructor(
                             "$chapterMinLeft min para el capítulo"
                         } else "Terminando capítulo"
 
-                        val positionsBefore = positionsByResource.take(resourceIndex).sumOf { it.size }
+                        var positionsBefore = 0
+                        val limit = minOf(resourceIndex, positionsByResource.size)
+                        for (i in 0 until limit) {
+                            positionsBefore += positionsByResource[i].size
+                        }
                         _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
                     }
                 }
@@ -820,22 +833,14 @@ class ReaderViewModel @Inject constructor(
                         _chapterTimeRemaining.value = if (chapterMinLeft > 0) {
                             "$chapterMinLeft min para el capítulo"
                         } else "Terminando capítulo"
-                    }
-                }
-            }
-        }
 
-        if (totalPositions > 0) {
-            val pub = publication ?: return
-            val resourceIndex = resourceIndexCache?.get(locator.href.toString()) ?: pub.readingOrder.indexOfFirst { it.href.toString() == locator.href.toString() }
-            if (resourceIndex != -1) {
-                val positionsBefore = positionsByResource.take(resourceIndex).sumOf { it.size }
-                val currentResourcePositions = positionsByResource.getOrNull(resourceIndex) ?: emptyList()
-                if (currentResourcePositions.isNotEmpty()) {
-                    val positionInResource = currentResourcePositions
-                        .indexOfFirst { (it.locations.progression ?: 0.0) >= (locator.locations.progression ?: 0.0) }
-                        .coerceAtLeast(0)
-                    _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
+                        var positionsBefore = 0
+                        val limit = minOf(resourceIndex, positionsByResource.size)
+                        for (i in 0 until limit) {
+                            positionsBefore += positionsByResource[i].size
+                        }
+                        _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
+                    }
                 }
             }
         }
@@ -1043,10 +1048,7 @@ class ReaderViewModel @Inject constructor(
 
         val href = nav.currentLocator.value.href.toString()
         val order = pub.readingOrder
-        val cleanHref = href.substringBefore('#').substringBefore('?').trimStart('/')
-        val currentIdx = order.indexOfFirst {
-            it.href.toString().substringBefore('#').substringBefore('?').trimStart('/') == cleanHref
-        }.takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
+        val currentIdx = findMatchingResourceIndex(href, order).takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
 
         if (currentIdx != -1 && currentIdx < order.size - 1) {
             val nextLink = order[currentIdx + 1]
@@ -1058,7 +1060,52 @@ class ReaderViewModel @Inject constructor(
             } else {
                 nav.go(nextLink, animated = false)
             }
+        } else {
+            // Fallback a navegación nativa de Readium si no se resolvió el índice
+            nav.goForwardCompat(animated = true)
         }
+    }
+
+    private fun findMatchingResourceIndex(rawHref: String, order: List<org.readium.r2.shared.publication.Link>): Int {
+        if (rawHref.isBlank() || order.isEmpty()) return -1
+
+        fun normalize(str: String): String {
+            val decoded = try {
+                java.net.URLDecoder.decode(str, "UTF-8")
+            } catch (_: Exception) {
+                str
+            }
+            return decoded
+                .substringBefore('#')
+                .substringBefore('?')
+                .replace('\\', '/')
+                .trimStart('/')
+                .lowercase(Locale.ROOT)
+        }
+
+        val target = normalize(rawHref)
+        val normalizedOrder = order.map { normalize(it.href.toString()) }
+
+        // Estrategia 1: Coincidencia exacta limpia
+        var idx = normalizedOrder.indexOf(target)
+        if (idx != -1) return idx
+
+        // Estrategia 2: Coincidencia de ruta relativa segmentada por carpetas
+        idx = normalizedOrder.indexOfFirst { item ->
+            item == target || item.endsWith("/$target") || target.endsWith("/$item")
+        }
+        if (idx != -1) return idx
+
+        // Estrategia 3: Solo nombre del archivo (ej: 0001_chapter_1.xhtml)
+        val targetFilename = target.substringAfterLast('/')
+        if (targetFilename.isNotBlank()) {
+            idx = normalizedOrder.indexOfFirst { item ->
+                item.substringAfterLast('/') == targetFilename
+            }
+            if (idx != -1) return idx
+        }
+
+        return -1
     }
 
     fun goToPreviousChapter(navigator: Navigator?) {
@@ -1096,10 +1143,7 @@ class ReaderViewModel @Inject constructor(
 
         val href = nav.currentLocator.value.href.toString()
         val order = pub.readingOrder
-        val cleanHref = href.substringBefore('#').substringBefore('?').trimStart('/')
-        val currentIdx = order.indexOfFirst {
-            it.href.toString().substringBefore('#').substringBefore('?').trimStart('/') == cleanHref
-        }.takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
+        val currentIdx = findMatchingResourceIndex(href, order).takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
 
         if (currentIdx > 0) {
             val prevLink = order[currentIdx - 1]
@@ -1115,8 +1159,20 @@ class ReaderViewModel @Inject constructor(
             viewModelScope.launch {
                 for (delayMs in listOf(80L, 200L, 450L, 800L, 1200L)) {
                     kotlinx.coroutines.delay(delayMs)
-                    applyToAllWebViews(nav.publicationView) { wv ->
+                    val pubView = nav.safePublicationView ?: return@launch
+                    applyToAllWebViews(pubView) { wv ->
                         wv.scrollToBottom()
+                    }
+                }
+            }
+        } else {
+            // Fallback a navegación nativa de Readium cuando estamos al inicio del libro o índice 0
+            val moved = nav.goBackwardCompat(animated = true)
+            if (!moved) {
+                viewModelScope.launch {
+                    val pubView = nav.safePublicationView ?: return@launch
+                    applyToAllWebViews(pubView) { wv ->
+                        wv.scrollTo(0, 0)
                     }
                 }
             }
@@ -1130,10 +1186,13 @@ class ReaderViewModel @Inject constructor(
     fun getLocatorForPdfPage(page: Int): Locator? {
         val pub = publication ?: return null
         if (totalPositions > 0 && positionsByResource.isNotEmpty()) {
-            val allPositions = positionsByResource.flatten()
-            if (allPositions.isNotEmpty()) {
-                val targetIdx = (page - 1).coerceIn(0, allPositions.size - 1)
-                return allPositions[targetIdx]
+            var count = 0
+            for (sublist in positionsByResource) {
+                if (page - 1 < count + sublist.size) {
+                    val loc = sublist.getOrNull(page - 1 - count)
+                    if (loc != null) return loc
+                }
+                count += sublist.size
             }
         }
         val targetIdx = (page - 1).coerceAtLeast(0)
@@ -1671,7 +1730,13 @@ class ReaderViewModel @Inject constructor(
         super.onCleared()
         ttsManager.shutdown()
 
+        positionsJob?.cancel()
+        positionsJob = null
         publication?.close()
+        publication = null
+        navigator = null
+        positionsByResource = emptyList()
+        resourceIndexCache = null
     }
 
 }

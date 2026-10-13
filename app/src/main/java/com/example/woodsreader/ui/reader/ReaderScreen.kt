@@ -2,6 +2,7 @@ package com.example.woodsreader.ui.reader
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.util.Log
 import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuItem
@@ -241,9 +242,30 @@ fun ReaderScreen(
     val fm = fragmentManager
     val focusRequester = remember { FocusRequester() }
 
+    var activeActionMode by remember { mutableStateOf<ActionMode?>(null) }
+
+    val clearActiveSelection: () -> Unit = {
+        try {
+            activeActionMode?.finish()
+            activeActionMode = null
+        } catch (_: Exception) {}
+        try {
+            (navigatorState.value as? SelectableNavigator)?.clearSelection()
+        } catch (_: Exception) {}
+        showHighlightMenu = null
+        val pubView = (navigatorState.value as? VisualNavigator)?.safePublicationView
+        if (pubView != null) {
+            applyToAllWebViews(pubView) { wv ->
+                wv.clearFocus()
+                wv.evaluateJavascript("if (window.getSelection) { window.getSelection().removeAllRanges(); }", null)
+            }
+        }
+    }
+
     val ttsSelectionCallback = remember(viewModel, scope) {
         object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                activeActionMode = mode
                 menu.add(Menu.NONE, MENU_ITEM_HIGHLIGHT_ID, Menu.NONE, "✦ Resaltar")
                 menu.add(Menu.NONE, MENU_ITEM_TTS_ID, Menu.NONE, "🔊 Narrar")
                 menu.add(Menu.NONE, MENU_ITEM_DICTIONARY_ID, Menu.NONE, "📖 Diccionario")
@@ -260,6 +282,7 @@ fun ReaderScreen(
                                 viewModel.hideControls()
                             }
                             mode.finish()
+                            activeActionMode = null
                         }
                         return true
                     }
@@ -272,6 +295,7 @@ fun ReaderScreen(
                                 showTtsMacroWindow = true
                             }
                             mode.finish()
+                            activeActionMode = null
                         }
                         return true
                     }
@@ -285,6 +309,7 @@ fun ReaderScreen(
                                 viewModel.hideControls()
                             }
                             mode.finish()
+                            activeActionMode = null
                         }
                         return true
                     }
@@ -298,13 +323,18 @@ fun ReaderScreen(
                                 viewModel.hideControls()
                             }
                             mode.finish()
+                            activeActionMode = null
                         }
                         return true
                     }
                 }
                 return false
             }
-            override fun onDestroyActionMode(mode: ActionMode) {}
+            override fun onDestroyActionMode(mode: ActionMode) {
+                if (activeActionMode == mode) {
+                    activeActionMode = null
+                }
+            }
             override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
         }
     }
@@ -334,7 +364,22 @@ fun ReaderScreen(
             }
         }
         fragmentManager.registerFragmentLifecycleCallbacks(callback, false)
-        onDispose { fragmentManager.unregisterFragmentLifecycleCallbacks(callback) }
+        onDispose {
+            fragmentManager.unregisterFragmentLifecycleCallbacks(callback)
+            val navFragments = fragmentManager.fragments.filter { it is Navigator }
+            if (navFragments.isNotEmpty() && !fragmentManager.isStateSaved) {
+                try {
+                    fragmentManager.commit(allowStateLoss = true) {
+                        navFragments.forEach { remove(it) }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ReaderScreen", "Error removing navigator fragments onDispose", e)
+                }
+            }
+            fragmentManager.fragmentFactory = androidx.fragment.app.FragmentFactory()
+            navigatorState.value = null
+            System.gc()
+        }
     }
 
     // << CHANGE: Auto-hide UI despuÃƒÂ©s de 5s de inactividad (Modo Inmersivo)
@@ -455,7 +500,7 @@ fun ReaderScreen(
                         lastTargetResource = targetRes
                         nav.go(locator, animated = false)
                         kotlinx.coroutines.delay(250L)
-                        val newWv = findActiveWebView(nav.publicationView)
+                        val newWv = nav.safePublicationView?.let { findActiveWebView(it) }
                         newWv?.applyCustomTtsHighlight(
                             cssSelector = cssSelector,
                             textSnippet = sentenceText,
@@ -476,7 +521,7 @@ fun ReaderScreen(
                             }
                         )
                     } else {
-                        val activeWv = findActiveWebView(nav.publicationView)
+                        val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
                         activeWv?.applyCustomTtsHighlight(
                             cssSelector = cssSelector,
                             textSnippet = sentenceText,
@@ -505,8 +550,10 @@ fun ReaderScreen(
                 decorableNav.applyDecorations(emptyList(), "tts-scrub")
             }
             if (nav is VisualNavigator) {
-                applyToAllWebViews(nav.publicationView) { wv ->
-                    wv.clearCustomTtsHighlight()
+                nav.safePublicationView?.let { pubView ->
+                    applyToAllWebViews(pubView) { wv ->
+                        wv.clearCustomTtsHighlight()
+                    }
                 }
             }
         }
@@ -535,12 +582,14 @@ fun ReaderScreen(
     val pageTurnState = rememberBookPageTurnState()
 
     val performPageForward: (VisualNavigator) -> Unit = { nav ->
+        val pubView = nav.safePublicationView
         if (userPreferences.pageTurnAnimation && 
-            userPreferences.pageTurnStyle != PageTurnStyle.NONE
+            userPreferences.pageTurnStyle != PageTurnStyle.NONE &&
+            pubView != null
         ) {
             scope.launch {
                 pageTurnState.turnPage(
-                    view = nav.publicationView,
+                    view = pubView,
                     dir = PageTurnDirection.FORWARD,
                     style = userPreferences.pageTurnStyle
                 ) {
@@ -553,42 +602,38 @@ fun ReaderScreen(
     }
 
     val turnPageForward: (VisualNavigator, android.webkit.WebView?) -> Unit = { nav, directWv ->
+        clearActiveSelection()
         if (nav is EpubNavigatorFragment) {
-            val activeWv = directWv ?: findActiveWebView(nav.publicationView)
-            if (activeWv != null) {
-                // Modo Unificado: Contenido con scroll vertical
-                if (activeWv.canScrollVertically(1)) {
-                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
-                        scope.launch {
-                            pageTurnState.turnPage(
-                                view = nav.publicationView,
-                                dir = PageTurnDirection.FORWARD,
-                                style = userPreferences.pageTurnStyle
-                            ) {
-                                activeWv.scrollByViewportDown(0.85f, animated = false)
-                            }
+            val pubView = nav.safePublicationView
+            val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
+            if (activeWv != null && activeWv.canScrollVertically(1)) {
+                if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
+                    scope.launch {
+                        pageTurnState.turnPage(
+                            view = pubView,
+                            dir = PageTurnDirection.FORWARD,
+                            style = userPreferences.pageTurnStyle
+                        ) {
+                            activeWv.scrollByViewportDown(0.85f, animated = false)
                         }
-                    } else {
-                        activeWv.scrollByViewportDown(0.85f, animated = true)
                     }
                 } else {
-                    // Al agotar las páginas del capítulo actual, pasar al siguiente capítulo
-                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
-                        scope.launch {
-                            pageTurnState.turnPage(
-                                view = nav.publicationView,
-                                dir = PageTurnDirection.FORWARD,
-                                style = userPreferences.pageTurnStyle
-                            ) {
-                                viewModel.goToNextChapter(nav)
-                            }
-                        }
-                    } else {
-                        viewModel.goToNextChapter(nav)
-                    }
+                    activeWv.scrollByViewportDown(0.85f, animated = true)
                 }
             } else {
-                performPageForward(nav)
+                if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
+                    scope.launch {
+                        pageTurnState.turnPage(
+                            view = pubView,
+                            dir = PageTurnDirection.FORWARD,
+                            style = userPreferences.pageTurnStyle
+                        ) {
+                            viewModel.goToNextChapter(nav)
+                        }
+                    }
+                } else {
+                    viewModel.goToNextChapter(nav)
+                }
             }
         } else {
             performPageForward(nav)
@@ -596,12 +641,14 @@ fun ReaderScreen(
     }
 
     val performPageBackward: (VisualNavigator) -> Unit = { nav ->
+        val pubView = nav.safePublicationView
         if (userPreferences.pageTurnAnimation && 
-            userPreferences.pageTurnStyle != PageTurnStyle.NONE
+            userPreferences.pageTurnStyle != PageTurnStyle.NONE &&
+            pubView != null
         ) {
             scope.launch {
                 pageTurnState.turnPage(
-                    view = nav.publicationView,
+                    view = pubView,
                     dir = PageTurnDirection.BACKWARD,
                     style = userPreferences.pageTurnStyle
                 ) {
@@ -614,43 +661,39 @@ fun ReaderScreen(
     }
 
     val turnPageBackward: (VisualNavigator, android.webkit.WebView?) -> Unit = { nav, directWv ->
+        clearActiveSelection()
         if (nav is EpubNavigatorFragment) {
-            val activeWv = directWv ?: findActiveWebView(nav.publicationView)
-            if (activeWv != null) {
-                // Modo Unificado: Contenido con scroll vertical
-                val canGoBack = activeWv.canScrollVertically(-1) || activeWv.scrollY > 20
-                if (canGoBack) {
-                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
-                        scope.launch {
-                            pageTurnState.turnPage(
-                                view = nav.publicationView,
-                                dir = PageTurnDirection.BACKWARD,
-                                style = userPreferences.pageTurnStyle
-                            ) {
-                                activeWv.scrollByViewportUp(0.85f, animated = false)
-                            }
+            val pubView = nav.safePublicationView
+            val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
+            val canGoBack = activeWv != null && (activeWv.canScrollVertically(-1) || activeWv.scrollY > 20)
+            if (canGoBack) {
+                if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
+                    scope.launch {
+                        pageTurnState.turnPage(
+                            view = pubView,
+                            dir = PageTurnDirection.BACKWARD,
+                            style = userPreferences.pageTurnStyle
+                        ) {
+                            activeWv.scrollByViewportUp(0.85f, animated = false)
                         }
-                    } else {
-                        activeWv.scrollByViewportUp(0.85f, animated = true)
                     }
                 } else {
-                    // Al inicio del capítulo: Pasar al final del capítulo anterior
-                    if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE) {
-                        scope.launch {
-                            pageTurnState.turnPage(
-                                view = nav.publicationView,
-                                dir = PageTurnDirection.BACKWARD,
-                                style = userPreferences.pageTurnStyle
-                            ) {
-                                viewModel.goToPreviousChapter(nav)
-                            }
-                        }
-                    } else {
-                        viewModel.goToPreviousChapter(nav)
-                    }
+                    activeWv.scrollByViewportUp(0.85f, animated = true)
                 }
             } else {
-                performPageBackward(nav)
+                if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
+                    scope.launch {
+                        pageTurnState.turnPage(
+                            view = pubView,
+                            dir = PageTurnDirection.BACKWARD,
+                            style = userPreferences.pageTurnStyle
+                        ) {
+                            viewModel.goToPreviousChapter(nav)
+                        }
+                    }
+                } else {
+                    viewModel.goToPreviousChapter(nav)
+                }
             }
         } else {
             performPageBackward(nav)
@@ -659,15 +702,27 @@ fun ReaderScreen(
 
     DisposableEffect(navigatorState.value, userPreferences.invertedTapZones, userPreferences.pageTurnStyle, userPreferences.pageTurnAnimation) {
         val nav = navigatorState.value as? VisualNavigator ?: return@DisposableEffect onDispose {}
+        val pubView = nav.safePublicationView ?: return@DisposableEffect onDispose {}
 
         val listener = object : InputListener {
             override fun onTap(event: TapEvent): Boolean {
                 val tapX = event.point.x
-                val viewWidth = nav.publicationView.width.toFloat()
-                val relativeX = if (viewWidth > 0f) tapX / viewWidth else 0.5f
+                val density = pubView.context.resources.displayMetrics.density
+                val viewWidthDp = if (density > 0f) pubView.width / density else pubView.width.toFloat()
+                val relativeX = when {
+                    viewWidthDp > 0f && tapX <= viewWidthDp -> (tapX / viewWidthDp).coerceIn(0f, 1f)
+                    pubView.width > 0 -> (tapX / pubView.width.toFloat()).coerceIn(0f, 1f)
+                    else -> 0.5f
+                }
 
                 lastInteractionTime = System.currentTimeMillis()
                 viewModel.onUserInteraction() 
+
+                // Si hay una selección activa o popup de selección abierto, el toque lo cierra de inmediato
+                if (activeActionMode != null || showHighlightMenu != null) {
+                    clearActiveSelection()
+                    return true
+                }
 
                 val isLeftTap = relativeX < 0.30f
                 val isRightTap = relativeX > 0.70f
@@ -694,13 +749,14 @@ fun ReaderScreen(
         nav.addInputListener(listener)
 
         val detector = ChapterScrollDetector(
-            rootView = nav.publicationView,
+            rootView = pubView,
             scope = scope,
             onGoForward = { viewModel.goToNextChapter(nav) },
             onGoBackward = { viewModel.goToPreviousChapter(nav) },
             onPullProgress = { pullProgress = it },
             onPageForward = { wv -> turnPageForward(nav, wv) },
-            onPageBackward = { wv -> turnPageBackward(nav, wv) }
+            onPageBackward = { wv -> turnPageBackward(nav, wv) },
+            onClearSelection = { clearActiveSelection() }
         )
         detector.attach()
 
@@ -851,31 +907,26 @@ fun ReaderScreen(
                 hazeState = hazeState,
                 onColorSelected = { color ->
                     viewModel.addHighlight(locator, color, highlightedText)
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                 },
                 onPlayTts = {
                     viewModel.playTts(locator)
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                     showTtsMacroWindow = true
                 },
                 onSearch = {
                     initialSearchQuery = highlightedText
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                     showSearch = true
                 },
                 onTranslate = {
                     selectedTextForQuery = highlightedText
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                     showTranslateSheet = true
                 },
                 onDictionary = {
                     selectedTextForQuery = highlightedText
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                     showDictionarySheet = true
                 },
                 onIgnoreTts = {
@@ -886,10 +937,9 @@ fun ReaderScreen(
                             applyToAllBooks = false
                         )
                     }
-                    (navigatorState.value as? SelectableNavigator)?.clearSelection()
-                    showHighlightMenu = null
+                    clearActiveSelection()
                 },
-                onDismiss = { showHighlightMenu = null }
+                onDismiss = { clearActiveSelection() }
             )
         }
 

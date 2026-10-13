@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.core.managers
+package com.example.woodsreader.core.managers
 
 import java.time.LocalDate
 import javax.inject.Inject

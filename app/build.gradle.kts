@@ -29,8 +29,8 @@ android {
         applicationId = "com.example.woodsreader"
         minSdk = 33
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 8
+        versionName = "1.0.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // arm64 para rendimiento, armeabi-v7a para compatibilidad total
         ndk {

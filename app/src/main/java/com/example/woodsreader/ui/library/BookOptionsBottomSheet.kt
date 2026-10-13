@@ -97,6 +97,7 @@ fun BookOptionsBottomSheet(
                                 .data(coverFile)
                                 .memoryCacheKey("cover-bottomsheet-${book.id}")
                                 .diskCacheKey("cover-bottomsheet-${book.id}")
+                                .size(180, 260)
                                 .crossfade(true)
                                 .build(),
                             placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),

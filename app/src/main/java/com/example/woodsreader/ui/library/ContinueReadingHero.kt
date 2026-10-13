@@ -101,6 +101,7 @@ fun ContinueReadingHero(
                                 .data(coverFile)
                                 .memoryCacheKey("cover-grid-$bookId")
                                 .diskCacheKey("cover-grid-$bookId")
+                                .size(240, 330)
                                 .crossfade(true)
                                 .build(),
                             placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),

@@ -207,6 +207,7 @@ private fun CoverHeroSection(
                     .data(coverFile)
                     .memoryCacheKey("cover-detail-blur-${book.id}")
                     .diskCacheKey("cover-detail-blur-${book.id}")
+                    .size(120, 180)
                     .crossfade(true)
                     .build(),
                 placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
@@ -354,6 +355,7 @@ private fun BookCoverCard(book: BookEntity, modifier: Modifier = Modifier) {
                     .data(coverFile)
                     .memoryCacheKey("cover-detail-${book.id}")
                     .diskCacheKey("cover-detail-${book.id}")
+                    .size(360, 540)
                     .crossfade(true)
                     .build(),
                 placeholder = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),

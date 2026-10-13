@@ -416,9 +416,18 @@ class EpubFormatManager @Inject constructor(
 
     fun onCleared(context: Context) {
         serviceFlowJob?.cancel()
+        serviceFlowJob = null
         try { context.unbindService(serviceConnection) } catch (_: Exception) {}
-        // Detener el servicio foreground para limpiar la notificación al salir del lector
         try { context.stopService(Intent(context, ReaderTtsService::class.java)) } catch (_: Exception) {}
+        ttsService = null
+        currentPublication = null
+        currentScope = null
+        navigator = null
+        _currentProcessedDocument.value = null
+        _currentTtsLocator.value = null
+        _currentTtsSentence.value = ""
+        onTtsStateChanged = null
+        onLocatorChanged = null
     }
 }
 

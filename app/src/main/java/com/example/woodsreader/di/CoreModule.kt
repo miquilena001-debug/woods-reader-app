@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.di
+package com.example.woodsreader.di
 
 import com.example.woodsreader.core.managers.SystemTimeProvider
 import com.example.woodsreader.core.managers.TimeProvider

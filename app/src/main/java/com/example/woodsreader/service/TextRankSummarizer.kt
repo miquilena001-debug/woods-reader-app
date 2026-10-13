@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.service
+package com.example.woodsreader.service
 
 import java.util.Locale
 import javax.inject.Inject

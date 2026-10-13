@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.di
+package com.example.woodsreader.di
 
 import com.example.woodsreader.data.scanner.AndroidStorageRootProvider
 import com.example.woodsreader.data.scanner.DeepFileSystemScanner

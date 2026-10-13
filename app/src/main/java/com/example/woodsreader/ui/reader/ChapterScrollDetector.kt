@@ -26,6 +26,7 @@ class ChapterScrollDetector(
     private val onPullProgress: (Float) -> Unit = {},
     private val onPageForward: ((WebView?) -> Unit)? = null,
     private val onPageBackward: ((WebView?) -> Unit)? = null,
+    private val onClearSelection: () -> Unit = {},
     private val thresholdDp: Float = 45f
 ) {
     private val thresholdPx: Float get() = thresholdDp * rootView.context.resources.displayMetrics.density
@@ -78,6 +79,11 @@ class ChapterScrollDetector(
                 val absDy = kotlin.math.abs(dy)
                 val absDx = kotlin.math.abs(dx)
                 val density = wv.context.resources.displayMetrics.density
+
+                // Descartar cualquier selección previa de texto al comenzar a deslizar o arrastrar
+                if (absDy > 8f * density || absDx > 8f * density) {
+                    onClearSelection()
+                }
 
                 // 1. Detección y bloqueo exclusivo de Swipe Horizontal
                 // Consumir el evento (return true) y mantener disallowParentIntercept para evitar
@@ -160,6 +166,7 @@ class ChapterScrollDetector(
                     if (wasHorizontal) {
                         // Swipe horizontal predominante -> Avanzar o retroceder página dentro del capítulo actual
                         triggered = true
+                        onClearSelection()
                         if (dx > 0) {
                             onPageForward?.invoke(wv)
                         } else {

@@ -293,6 +293,13 @@ class ReaderTtsService : MediaSessionService() {
         updateMediaMetadata(pub)
 
         serviceScope.launch(Dispatchers.Main) {
+            try {
+                _ttsNavigator.value?.close()
+                _ttsNavigator.value = null
+            } catch (e: Exception) {
+                android.util.Log.w("ReaderTtsService", "Error closing old TTS navigator", e)
+            }
+
             val engineProvider = com.example.woodsreader.core.tts.SherpaTtsEngineProvider(
                 context = applicationContext,
                 ttsManager = ttsManager,

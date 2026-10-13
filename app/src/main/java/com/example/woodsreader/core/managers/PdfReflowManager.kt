@@ -158,7 +158,15 @@ class PdfReflowManager @Inject constructor(
         }
     }
     private fun evictFarPages(items: List<ReflowItem>, targetPage: Int): List<ReflowItem> {
-        val filtered = items.filter { kotlin.math.abs(it.pageNumber - targetPage) <= 5 }
+        val filtered = items.filter { item ->
+            val pageDiff = kotlin.math.abs(item.pageNumber - targetPage)
+            if (item is ReflowItem.Image) {
+                // Las imágenes consumen bastante memoria en el heap; solo retenerlas a +/- 2 páginas
+                pageDiff <= 2
+            } else {
+                pageDiff <= 5
+            }
+        }
         if (filtered.isNotEmpty()) {
             firstLoadedPage = filtered.minOf { it.pageNumber }
             lastLoadedPage = filtered.maxOf { it.pageNumber }
@@ -591,10 +599,16 @@ class PdfReflowManager @Inject constructor(
 
     fun onCleared() {
         reflowTtsJob?.cancel()
+        reflowTtsJob = null
         closeDocument()
         unregisterNoisyReceiver()
         _isReflowMode.value = false
         isCurrentlyLoading = false
+        _reflowElements.value = emptyList()
+        _reflowState.value = ReflowState()
+        _ttsNarrationUnits.value = emptyList()
+        currentBookFilePath = null
+        onWordsProcessed = null
     }
 }
 

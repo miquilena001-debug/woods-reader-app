@@ -7,6 +7,7 @@ import com.example.woodsreader.model.ReaderTheme
 import com.example.woodsreader.model.ScrollMode
 import org.readium.adapter.pdfium.navigator.PdfiumPreferences
 import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.pdf.PdfNavigatorFragment
 import org.readium.r2.navigator.preferences.Color
 import org.readium.r2.navigator.preferences.TextAlign
 import org.readium.r2.navigator.preferences.Theme

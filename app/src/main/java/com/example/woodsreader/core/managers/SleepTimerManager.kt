@@ -1,4 +1,4 @@
-﻿package com.example.woodsreader.core.managers
+package com.example.woodsreader.core.managers
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
