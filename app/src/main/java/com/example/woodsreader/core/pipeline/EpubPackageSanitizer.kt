@@ -100,8 +100,8 @@ object EpubPackageSanitizer {
         return ContainerAsset(
             format = containerAsset.format,
             container = TransformingContainer(containerAsset.container) { url, resource ->
-                if (url.path?.endsWith(".opf", ignoreCase = true) == true) {
-                    resource.map { bytes ->
+                when {
+                    url.path?.endsWith(".opf", ignoreCase = true) == true -> resource.map { bytes ->
                         val charset = EpubHtmlSanitizer.detectCharset(bytes)
                         val original = bytes.toString(charset)
                         val repaired = repairPackageDocument(original)
@@ -111,8 +111,19 @@ object EpubPackageSanitizer {
                             Try.success(repaired.toByteArray(charset))
                         }
                     }
-                } else {
-                    resource
+                    listOf(".html", ".xhtml", ".htm").any { extension ->
+                        url.path?.endsWith(extension, ignoreCase = true) == true
+                    } -> resource.map { bytes ->
+                        val charset = EpubHtmlSanitizer.detectCharset(bytes)
+                        val original = bytes.toString(charset)
+                        val sanitized = EpubHtmlSanitizer.sanitize(original)
+                        if (sanitized == original) {
+                            Try.success(bytes)
+                        } else {
+                            Try.success(EpubHtmlSanitizer.encodeSanitized(original, sanitized, charset))
+                        }
+                    }
+                    else -> resource
                 }
             }
         )
