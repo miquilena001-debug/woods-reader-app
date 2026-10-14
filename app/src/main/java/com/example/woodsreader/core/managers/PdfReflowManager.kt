@@ -32,6 +32,7 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import com.example.woodsreader.core.pipeline.NoiseClassifier
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,7 +40,8 @@ import javax.inject.Singleton
 class PdfReflowManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ttsManager: TtsManager,
-    private val readingPipeline: ReadingPipeline
+    private val readingPipeline: ReadingPipeline,
+    private val noiseClassifier: NoiseClassifier
 ) {
     companion object {
         private const val TAG = "PdfReflowManager"
@@ -47,11 +49,16 @@ class PdfReflowManager @Inject constructor(
         private const val BASE_FONT_SIZE = 12f
         private const val HEADER_THRESHOLD = 1.3f
         private const val LOAD_TIMEOUT = 10_000L // 10s para abrir el archivo
-        private const val PAGE_TIMEOUT = 5_000L  // 5s por pÃ¡gina
+        private const val PAGE_TIMEOUT = 5_000L  // 5s por página
     }
 
     private val pdfMutex = Mutex()
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var preloadJob: Job? = null
+    private val pageBoundariesMap = java.util.concurrent.ConcurrentHashMap<Int, Pair<String?, String?>>()
+    @Volatile
+    private var knownRepetitiveHeadersFooters: Set<String> = emptySet()
+
     private var lastLoadedPage: Int = -1
     private var firstLoadedPage: Int = -1
     private val textAnalyzer = TextAnalyzer(
@@ -104,6 +111,8 @@ class PdfReflowManager @Inject constructor(
     }
 
     fun setReflowMode(enabled: Boolean, scope: CoroutineScope, initialPosition: Int = 1) {
+        preloadJob?.cancel()
+        preloadJob = null
         _isReflowMode.value = enabled
         if (enabled) {
             lastLoadedPage = -1
@@ -147,6 +156,8 @@ class PdfReflowManager @Inject constructor(
     }
 
     fun jumpToPage(scope: CoroutineScope, page: Int) {
+        preloadJob?.cancel()
+        preloadJob = null
         pauseReflowTts()
         lastLoadedPage = -1
         firstLoadedPage = -1
@@ -175,6 +186,43 @@ class PdfReflowManager @Inject constructor(
             lastLoadedPage = targetPage
         }
         return filtered
+    }
+
+    private fun sampleDocumentHeadersFooters(document: PDDocument, total: Int) {
+        if (total < 3) return
+        val sampleMax = minOf(total, 7)
+        for (p in 1..sampleMax) {
+            if (pageBoundariesMap.containsKey(p)) continue
+            try {
+                val sampleLines = mutableListOf<TextAnalyzer.LineInfo>()
+                val sampleStripper = object : PDFTextStripper() {
+                    override fun writeString(text: String?, textPositions: MutableList<TextPosition>?) {
+                        super.writeString(text, textPositions)
+                        if (!text.isNullOrBlank() && !textPositions.isNullOrEmpty()) {
+                            val fontSize = textPositions.firstOrNull()?.fontSize ?: 0f
+                            val y = textPositions.firstOrNull()?.yDirAdj ?: 0f
+                            val xStart = textPositions.minOfOrNull { it.xDirAdj } ?: 0f
+                            val xEnd = textPositions.maxOfOrNull { it.xDirAdj + it.widthDirAdj } ?: 0f
+                            sampleLines.add(TextAnalyzer.LineInfo(text, fontSize, y, xStart, xEnd))
+                        }
+                    }
+                }
+                sampleStripper.sortByPosition = true
+                sampleStripper.startPage = p
+                sampleStripper.endPage = p
+                sampleStripper.writeText(document, java.io.StringWriter())
+                val first = sampleLines.firstOrNull()?.text
+                val last = sampleLines.lastOrNull()?.text
+                pageBoundariesMap[p] = Pair(first, last)
+            } catch (_: Exception) {}
+        }
+        updateRepetitiveHeadersFooters()
+    }
+
+    private fun updateRepetitiveHeadersFooters() {
+        if (pageBoundariesMap.size >= 3) {
+            knownRepetitiveHeadersFooters = noiseClassifier.detectRepetitiveHeadersFooters(pageBoundariesMap.values.toList())
+        }
     }
 
     @OptIn(ExperimentalReadiumApi::class)
@@ -207,7 +255,11 @@ class PdfReflowManager @Inject constructor(
                     val total = document.numberOfPages
                     val targetPage = fromPage.coerceIn(1, total)
 
-                    // 1. CARGA INSTANTÃNEA: PÃ¡gina actual completa (con timeout)
+                    if (knownRepetitiveHeadersFooters.isEmpty() && total >= 3) {
+                        sampleDocumentHeadersFooters(document, total)
+                    }
+
+                    // 1. CARGA INSTANTÁNEA: Página actual completa (con timeout)
                     val initialItems = mutableListOf<ReflowItem>()
                     withTimeout(PAGE_TIMEOUT) {
                         _reflowState.update { it.copy(currentLoadingPage = targetPage) }
@@ -215,9 +267,10 @@ class PdfReflowManager @Inject constructor(
                     }
                     
                     _reflowState.update { current ->
+                        val filteredItems = current.items.filterNot { it.pageNumber == targetPage }
                         val combined = if (isInitial) initialItems 
-                                       else if (prepend) initialItems + current.items
-                                       else current.items + initialItems
+                                       else if (prepend) initialItems + filteredItems
+                                       else filteredItems + initialItems
                         val evicted = evictFarPages(combined, targetPage)
                         current.copy(items = evicted, totalPages = total, isLoading = false, currentLoadingPage = targetPage)
                     }
@@ -226,7 +279,8 @@ class PdfReflowManager @Inject constructor(
 
                     // 2. PRECARGA DE FONDO: solo hacia adelante para no desplazar la posición inicial
                     if (isInitial) {
-                        managerScope.launch {
+                        preloadJob?.cancel()
+                        preloadJob = managerScope.launch {
                             loadRangeInBackground(document, targetPage + 1, minOf(total, targetPage + 2), append = true)
                         }
                     }
@@ -244,28 +298,36 @@ class PdfReflowManager @Inject constructor(
 
     private suspend fun loadRangeInBackground(document: PDDocument, start: Int, end: Int, append: Boolean) {
         if (start > end) return
-        if (document !== currentDocument) return // Safety: don't use a closed document
+        if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return
         val range = if (append) start..end else (end downTo start)
         for (pIdx in range) {
-            if (document !== currentDocument) return // Check again each iteration
+            if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return
+            // Evitar duplicar página si ya fue agregada por carga directa
+            if (_reflowState.value.items.any { it.pageNumber == pIdx }) continue
+
             val pageItems = mutableListOf<ReflowItem>()
             try {
                 pdfMutex.withLock {
+                    if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return
                     withTimeout(PAGE_TIMEOUT) {
                         _reflowState.update { it.copy(currentLoadingPage = pIdx) }
                         processSinglePage(document, pIdx, pageItems)
                     }
                 }
-                if (pageItems.isNotEmpty()) {
+                if (pageItems.isNotEmpty() && _isReflowMode.value && currentDocument != null && document === currentDocument) {
                     _reflowState.update { current ->
+                        if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return@update current
+                        if (current.items.any { it.pageNumber == pIdx }) return@update current
                         val newList = if (append) current.items + pageItems else pageItems + current.items
                         val evicted = evictFarPages(newList, pIdx)
                         current.copy(items = evicted)
                     }
-                    _reflowElements.value = _reflowState.value.items
+                    if (_isReflowMode.value && currentDocument != null && document === currentDocument) {
+                        _reflowElements.value = _reflowState.value.items
+                    }
                 }
             } catch (e: Exception) {
-                Timber.w(e, "Error cargando pÃ¡gina de fondo $pIdx")
+                Timber.w(e, "Error cargando página de fondo $pIdx")
             }
         }
     }
@@ -299,11 +361,22 @@ class PdfReflowManager @Inject constructor(
             // 2. Convertir lineas a RawDocumentBlock (tuberia unificada)
             val rawBlocks = textAnalyzer.convertPageToRawBlocks(lineInfos, pageIndex)
 
-            // 3. Pasar por ReadingPipeline: filtro de ruido, formato tipografico, TTS units
-            val processed = readingPipeline.process(rawBlocks, stripNoiseFromDisplay = true)
+            // Registrar límites de página para detección de encabezados y pies repetidos entre páginas
+            pageBoundariesMap[pageIndex] = Pair(lineInfos.firstOrNull()?.text, lineInfos.lastOrNull()?.text)
+            updateRepetitiveHeadersFooters()
 
-            // 4. Acumular unidades de narracion limpias para TTS
-            _ttsNarrationUnits.value = _ttsNarrationUnits.value + processed.ttsNarrationUnits
+            // 3. Pasar por ReadingPipeline: filtro de ruido, formato tipografico, TTS units
+            val processed = readingPipeline.process(
+                rawBlocks = rawBlocks,
+                stripNoiseFromDisplay = true,
+                knownRepetitiveHeadersFooters = knownRepetitiveHeadersFooters
+            )
+
+            // 4. Acumular unidades de narracion limpias para TTS (deduplicando por página)
+            _ttsNarrationUnits.update { current ->
+                val filtered = current.filterNot { it.pageIndex == pageIndex }
+                filtered + processed.ttsNarrationUnits
+            }
 
             // 5. Mapear ReadingBlock a ReflowItem para la UI con IDs estables
             var blockIdx = 0
@@ -330,7 +403,7 @@ class PdfReflowManager @Inject constructor(
             if (wordCount > 0) onWordsProcessed?.invoke(wordCount)
 
         } catch (e: Exception) {
-            Timber.e(e, "Error procesando pÃ¡gina $pageIndex")
+            Timber.e(e, "Error procesando página $pageIndex")
         }
     }
 
@@ -598,6 +671,8 @@ class PdfReflowManager @Inject constructor(
     }
 
     fun onCleared() {
+        preloadJob?.cancel()
+        preloadJob = null
         reflowTtsJob?.cancel()
         reflowTtsJob = null
         closeDocument()
@@ -609,6 +684,8 @@ class PdfReflowManager @Inject constructor(
         _ttsNarrationUnits.value = emptyList()
         currentBookFilePath = null
         onWordsProcessed = null
+        pageBoundariesMap.clear()
+        knownRepetitiveHeadersFooters = emptySet()
     }
 }
 

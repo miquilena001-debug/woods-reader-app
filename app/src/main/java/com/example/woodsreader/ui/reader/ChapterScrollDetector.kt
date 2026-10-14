@@ -27,7 +27,7 @@ class ChapterScrollDetector(
     private val onPageForward: ((WebView?) -> Unit)? = null,
     private val onPageBackward: ((WebView?) -> Unit)? = null,
     private val onClearSelection: () -> Unit = {},
-    private val thresholdDp: Float = 45f
+    private val thresholdDp: Float = 68f
 ) {
     private val thresholdPx: Float get() = thresholdDp * rootView.context.resources.displayMetrics.density
     private val attachedWebViews = java.util.Collections.newSetFromMap(java.util.WeakHashMap<WebView, Boolean>())
@@ -87,61 +87,39 @@ class ChapterScrollDetector(
 
                 // 1. Detección y bloqueo exclusivo de Swipe Horizontal
                 // Consumir el evento (return true) y mantener disallowParentIntercept para evitar
-                // que Chromium libere el bloqueo y ViewPager salte al siguiente capítulo.
-                if (!isVerticalDrag && (isHorizontalSwipe || (absDx > absDy && absDx > 8f * density))) {
+                // que Chromium libere el bloqueo y ViewPager salte al siguiente capítulo de forma descontrolada.
+                if (!isVerticalDrag && (isHorizontalSwipe || (absDx > absDy * 1.35f && absDx > 12f * density))) {
                     isHorizontalSwipe = true
                     disallowParentIntercept(view)
                     return@OnTouchListener true
                 }
 
                 // 2. Detección de arrastre vertical para cambio fluido de capítulo en los extremos
-                if (!triggered && !isHorizontalSwipe && (isVerticalDrag || (absDy >= absDx && absDy > 8f * density))) {
+                if (!isHorizontalSwipe && (isVerticalDrag || (absDy >= absDx && absDy > 8f * density))) {
                     isVerticalDrag = true
                     val hasVerticalScroll = wv.canScrollVertically(1) || wv.canScrollVertically(-1)
 
                     if (hasVerticalScroll) {
                         // En contenido con scroll vertical continuo:
                         if (dy > 0 && !wv.canScrollVertically(1)) {
-                            // Arrastre hacia arriba al final del capítulo -> Avanzar al siguiente capítulo
+                            // Arrastre hacia arriba al final del capítulo -> Actualizar progreso visual
                             val progress = (dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(progress)
-                            if (dy >= thresholdPx) {
-                                triggered = true
-                                onPullProgress(0f)
-                                onGoForward()
-                            }
                         } else if (dy < 0 && !wv.canScrollVertically(-1)) {
-                            // Arrastre hacia abajo al inicio del capítulo -> Retroceder al capítulo anterior
+                            // Arrastre hacia abajo al inicio del capítulo -> Actualizar progreso visual
                             val progress = (-dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(-progress)
-                            if (-dy >= thresholdPx) {
-                                triggered = true
-                                onPullProgress(0f)
-                                onGoBackward()
-                            }
                         } else {
                             onPullProgress(0f)
                         }
                     } else {
                         // En contenido paginado por columnas:
                         if (dy > 0 && !canAdvancePage) {
-                            // Está en la última página del capítulo y arrastra hacia arriba -> Pull a siguiente capítulo
                             val progress = (dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(progress)
-                            if (dy >= thresholdPx) {
-                                triggered = true
-                                onPullProgress(0f)
-                                onGoForward()
-                            }
                         } else if (dy < 0 && !canRetreatPage) {
-                            // Está en la primera página del capítulo y arrastra hacia abajo -> Pull a capítulo anterior
                             val progress = (-dy / thresholdPx).coerceIn(0f, 1f)
                             onPullProgress(-progress)
-                            if (-dy >= thresholdPx) {
-                                triggered = true
-                                onPullProgress(0f)
-                                onGoBackward()
-                            }
                         } else {
                             onPullProgress(0f)
                         }
@@ -155,28 +133,33 @@ class ChapterScrollDetector(
                 val density = wv.context.resources.displayMetrics.density
                 val absDx = kotlin.math.abs(dx)
                 val absDy = kotlin.math.abs(dy)
-                val minSwipeDistance = 22f * density
-                val isFlick = dt < 350 && (absDx > 15f * density || absDy > 15f * density)
+                val minSwipeDistance = 24f * density
+                val isFlick = dt < 350 && (absDx > 18f * density)
 
-                val wasHorizontal = isHorizontalSwipe || (absDx > absDy && (absDx >= minSwipeDistance || isFlick))
+                val wasHorizontal = isHorizontalSwipe || (absDx > absDy * 1.35f && (absDx >= minSwipeDistance || isFlick))
 
-                if (!triggered) {
+                if (wasHorizontal) {
+                    // Swipe horizontal predominante -> Avanzar o retroceder página dentro del capítulo actual
+                    onClearSelection()
+                    if (dx > 0) {
+                        onPageForward?.invoke(wv)
+                    } else {
+                        onPageBackward?.invoke(wv)
+                    }
+                } else if (isVerticalDrag) {
                     val hasVerticalScroll = wv.canScrollVertically(1) || wv.canScrollVertically(-1)
-
-                    if (wasHorizontal) {
-                        // Swipe horizontal predominante -> Avanzar o retroceder página dentro del capítulo actual
-                        triggered = true
-                        onClearSelection()
-                        if (dx > 0) {
-                            onPageForward?.invoke(wv)
-                        } else {
-                            onPageBackward?.invoke(wv)
+                    if (hasVerticalScroll) {
+                        if (dy >= thresholdPx && !wv.canScrollVertically(1)) {
+                            onGoForward()
+                        } else if (-dy >= thresholdPx && !wv.canScrollVertically(-1)) {
+                            onGoBackward()
                         }
-                        onPullProgress(0f)
-                        isHorizontalSwipe = false
-                        isVerticalDrag = false
-                        triggered = false
-                        return@OnTouchListener true
+                    } else {
+                        if (dy >= thresholdPx && !canAdvancePage) {
+                            onGoForward()
+                        } else if (-dy >= thresholdPx && !canRetreatPage) {
+                            onGoBackward()
+                        }
                     }
                 }
 

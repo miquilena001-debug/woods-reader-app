@@ -20,6 +20,7 @@ import java.io.File
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.example.woodsreader.core.pipeline.EpubPackageSanitizer
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 
@@ -102,7 +103,11 @@ class BookMetadataExtractor @Inject constructor(
                     return@withTimeout extractFallbackMetadata(source, filePath, fileName, fileSize, fileHash, format)
                 }
 
-                val publication = publicationOpener.get().open(asset, allowUserInteraction = false).getOrNull()
+                val sanitizedAsset = EpubPackageSanitizer.transformAsset(asset)
+                val publication = publicationOpener.get().open(
+                    asset = sanitizedAsset,
+                    allowUserInteraction = false
+                ).getOrNull()
                 if (publication == null) {
                     Log.w(TAG, "Failed to open publication for $fileName — using fallback extractor")
                     return@withTimeout extractFallbackMetadata(source, filePath, fileName, fileSize, fileHash, format)

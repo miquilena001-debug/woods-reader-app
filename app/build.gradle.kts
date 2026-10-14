@@ -1,4 +1,6 @@
 
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -27,10 +29,10 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "com.example.woodsreader"
-        minSdk = 33
+        minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 10
+        versionName = "1.0.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // arm64 para rendimiento, armeabi-v7a para compatibilidad total
         ndk {
@@ -44,11 +46,45 @@ android {
 
     // NDK r27b obligatorio para Android 15 (alineación de páginas 16KB)
     ndkVersion = "27.2.12479018"
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use(keystoreProperties::load)
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+        create("release") {
+            val keyPath = keystoreProperties.getProperty("storeFile", "keystore/woodsreader.jks")
+            val keyFile = rootProject.file(keyPath)
+            if (keyFile.exists()) {
+                storeFile = keyFile
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: throw GradleException("Missing storePassword in keystore.properties")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: throw GradleException("Missing keyAlias in keystore.properties")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: throw GradleException("Missing keyPassword in keystore.properties")
+            } else {
+                throw GradleException("Release keystore not found: ${keyFile.absolutePath}")
+            }
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             buildConfigField("long", "BUILD_TIME_MILLIS", "${System.currentTimeMillis()}L")
             buildConfigField("long", "BETA_EXPIRATION_DAYS", "45L")
             proguardFiles(
@@ -185,11 +221,10 @@ dependencies {
     implementation(files("libs/sherpa-onnx.aar"))
     implementation(libs.commons.compress)
     implementation(libs.okhttp)
+    // ── Concurrency — Alineación de concurrent-futures para lint/tests ────────
+    implementation("androidx.concurrent:concurrent-futures:1.2.0")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
 
-
-
-
-    // ── Tests ─────────────────────────────────────────────────────────────────
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockk)
@@ -201,5 +236,3 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
-
-

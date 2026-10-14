@@ -193,6 +193,16 @@ fun ReaderScreen(
         navigator?.currentLocator ?: flowOf(null)
     }.collectAsStateWithLifecycle(initialValue = null)
 
+    LaunchedEffect(currentLocator) {
+        currentLocator?.let { loc ->
+            viewModel.onLocatorChanged(loc)
+        }
+    }
+
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+        viewModel.saveCurrentProgressBeforeExit()
+    }
+
     var showHighlightMenu by remember { mutableStateOf<Selection?>(null) }
     var initialSearchQuery by remember { mutableStateOf("") }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -401,6 +411,7 @@ fun ReaderScreen(
 
     // Sin esto, cualquier recomposiciÃƒÂ³n dispara submitPreferences() innecesariamente.
     val isRtl by viewModel.isRtl.collectAsStateWithLifecycle()
+    val showEpubCoverPage by viewModel.showEpubCoverPage.collectAsStateWithLifecycle()
     val epubPreferences = remember(userPreferences, isRtl) {
         userPreferences.toEpubPreferences().let { prefs ->
             if (isRtl) prefs.copy(readingProgression = org.readium.r2.navigator.preferences.ReadingProgression.RTL)
@@ -606,7 +617,11 @@ fun ReaderScreen(
         if (nav is EpubNavigatorFragment) {
             val pubView = nav.safePublicationView
             val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
-            if (activeWv != null && activeWv.canScrollVertically(1)) {
+            if (userPreferences.scrollMode == ScrollMode.PAGINATED ||
+                userPreferences.scrollMode == ScrollMode.CONTINUOUS_HORIZONTAL
+            ) {
+                performPageForward(nav)
+            } else if (activeWv != null && activeWv.canScrollVertically(1)) {
                 if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
                     scope.launch {
                         pageTurnState.turnPage(
@@ -666,7 +681,11 @@ fun ReaderScreen(
             val pubView = nav.safePublicationView
             val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
             val canGoBack = activeWv != null && (activeWv.canScrollVertically(-1) || activeWv.scrollY > 20)
-            if (canGoBack) {
+            if (userPreferences.scrollMode == ScrollMode.PAGINATED ||
+                userPreferences.scrollMode == ScrollMode.CONTINUOUS_HORIZONTAL
+            ) {
+                performPageBackward(nav)
+            } else if (canGoBack) {
                 if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
                     scope.launch {
                         pageTurnState.turnPage(
@@ -849,9 +868,23 @@ fun ReaderScreen(
                             }
                             val containerId = this.readerFragmentContainer.id
                             if (fm != null && fm.findFragmentById(containerId) == null) {
-                                val initialLocator = state.initialLocatorJson?.let {
-                                    try { org.readium.r2.shared.publication.Locator.fromJSON(org.json.JSONObject(it)) } catch (_: Exception) { null }
-                                }
+                                val initialLocator = state.initialLocator
+                                    ?: state.initialLocatorJson?.let {
+                                        try { org.readium.r2.shared.publication.Locator.fromJSON(org.json.JSONObject(it)) } catch (_: Exception) { null }
+                                    }
+                                    ?: state.book.fallbackLocatorHref?.let { href ->
+                                        state.publication.readingOrder.find { it.href.toString() == href }?.let { link ->
+                                            state.publication.locatorFromLink(link)
+                                        }
+                                    }
+                                    ?: if (state.book.format.name == "PDF" && (state.book.fallbackLocatorPosition ?: 0) > 0) {
+                                        val link = state.publication.readingOrder.firstOrNull()
+                                        if (link != null) {
+                                            state.publication.locatorFromLink(link)?.copy(
+                                                locations = org.readium.r2.shared.publication.Locator.Locations(position = state.book.fallbackLocatorPosition)
+                                            )
+                                        } else null
+                                    } else null
                                 
                                 val magnetProperties = RsProperties()
 
@@ -1676,6 +1709,16 @@ fun ReaderScreen(
                 onUnlock = { isTtsScreenLocked = false }
             )
         }
+
+        successState
+            ?.takeIf { showEpubCoverPage && it.book.format.name == "EPUB" }
+            ?.let { state ->
+                EpubCoverPage(
+                    book = state.book,
+                    publication = state.publication,
+                    onDismiss = { viewModel.dismissEpubCoverPage() }
+                )
+            }
     }
 }
 }
@@ -1789,8 +1832,6 @@ fun FootnoteSheet(
         }
     }
 }
-
-
 
 
 

@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.woodsreader.data.database.BookEntity
+import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 
 // ── Shared Enums ─────────────────────────────────────────────────────
@@ -22,7 +23,8 @@ sealed class ReaderUiState {
     data class Success(
         val book: BookEntity,
         val publication: Publication,
-        val initialLocatorJson: String?
+        val initialLocatorJson: String?,
+        val initialLocator: Locator? = null
     ) : ReaderUiState()
     data class Error(val message: String) : ReaderUiState()
 }

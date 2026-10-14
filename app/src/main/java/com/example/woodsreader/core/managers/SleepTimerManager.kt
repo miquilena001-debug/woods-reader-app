@@ -42,11 +42,11 @@ class SleepTimerManager @Inject constructor(
         _sleepTimerRemaining.value = durationMs
 
         sleepTimerJob = scope.launch {
-            val endTime = timeProvider.currentTimeMillis() + durationMs
+            val endTime = timeProvider.elapsedRealtime() + durationMs
             
             try {
-                while (isActive && timeProvider.currentTimeMillis() < endTime) {
-                    val remaining = endTime - timeProvider.currentTimeMillis()
+                while (isActive && timeProvider.elapsedRealtime() < endTime) {
+                    val remaining = endTime - timeProvider.elapsedRealtime()
                     _sleepTimerRemaining.value = remaining.coerceAtLeast(0)
 
                     // Smooth speed ramp down to 0.5x in the last 20 seconds
@@ -56,8 +56,12 @@ class SleepTimerManager @Inject constructor(
                         onSpeedChange(targetSpeed.coerceAtLeast(0.5f))
                     }
 
-                    // Adaptive polling delay to save CPU
-                    val delayTime = if (remaining <= 20000L) 1000L else 5000L
+                    // Adaptive polling delay to save CPU, hitting 20s threshold and expiration accurately
+                    val delayTime = when {
+                        remaining <= 1000L -> remaining.coerceAtLeast(50L)
+                        remaining <= 20000L -> minOf(1000L, remaining)
+                        else -> minOf(5000L, remaining - 20000L)
+                    }
                     delay(delayTime)
                 }
                 

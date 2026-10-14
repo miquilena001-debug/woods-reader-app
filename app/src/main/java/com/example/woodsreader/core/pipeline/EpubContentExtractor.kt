@@ -34,11 +34,7 @@ class EpubContentExtractor @Inject constructor() {
 
         for (element in candidateElements) {
             if (element in processedElements) continue
-
-            val parentFigure = element.parents().firstOrNull { it.tagName().equals("figure", ignoreCase = true) }
-            if (parentFigure != null && parentFigure in processedElements) {
-                continue
-            }
+            if (element.parents().any { it in processedElements }) continue
 
             val tag = element.tagName().lowercase(Locale.ROOT)
             when (tag) {
@@ -85,6 +81,27 @@ class EpubContentExtractor @Inject constructor() {
                 }
 
                 "h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "li" -> {
+                    val hasChildBlocks = element.children().select("h1, h2, h3, h4, h5, h6, p, figure, img, blockquote, li").isNotEmpty()
+                    if (hasChildBlocks) {
+                        // Elementos contenedores como blockquote o li que alojan párrafos u otros bloques
+                        // no deben extraerse en bloque con .text() para no duplicar el contenido de sus hijos.
+                        val directText = element.ownText().trim()
+                        if (directText.isNotBlank()) {
+                            rawBlocks.add(
+                                RawDocumentBlock(
+                                    id = "$resourceHref-blk-${orderIndex++}",
+                                    text = directText,
+                                    isImage = false,
+                                    pageIndex = pageIndex,
+                                    orderIndex = rawBlocks.size,
+                                    fontSize = 12f
+                                )
+                            )
+                        }
+                        // Sus hijos serán procesados como sus propios bloques individuales
+                        continue
+                    }
+
                     processedElements.add(element)
                     val text = element.text().trim()
                     if (text.isNotBlank()) {

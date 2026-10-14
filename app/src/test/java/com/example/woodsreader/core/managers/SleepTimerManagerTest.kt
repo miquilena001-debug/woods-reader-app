@@ -22,6 +22,7 @@ class SleepTimerManagerTest {
         val manager = SleepTimerManager(
             timeProvider = object : TimeProvider {
                 override fun currentTimeMillis() = testScheduler.currentTime
+                override fun elapsedRealtime() = testScheduler.currentTime
                 override fun currentDateString() = ""
             }
         )
@@ -60,6 +61,7 @@ class SleepTimerManagerTest {
         val manager = SleepTimerManager(
             timeProvider = object : TimeProvider {
                 override fun currentTimeMillis() = testScheduler.currentTime
+                override fun elapsedRealtime() = testScheduler.currentTime
                 override fun currentDateString() = ""
             }
         )

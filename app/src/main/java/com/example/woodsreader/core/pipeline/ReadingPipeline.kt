@@ -33,7 +33,8 @@ class ReadingPipeline @Inject constructor(
         rawBlocks: List<RawDocumentBlock>,
         rules: List<WordExclusionRule> = emptyList(),
         announceImages: Boolean = true,
-        stripNoiseFromDisplay: Boolean = true
+        stripNoiseFromDisplay: Boolean = true,
+        knownRepetitiveHeadersFooters: Set<String> = emptySet()
     ): ProcessedDocument {
         if (rawBlocks.isEmpty()) {
             return ProcessedDocument(
@@ -45,7 +46,8 @@ class ReadingPipeline @Inject constructor(
 
         // 1. Detectar encabezados y pies recurrentes entre páginas
         val pageTopsAndBottoms = extractPageBoundaries(rawBlocks)
-        val repetitiveHeadersFooters = noiseClassifier.detectRepetitiveHeadersFooters(pageTopsAndBottoms)
+        val detected = noiseClassifier.detectRepetitiveHeadersFooters(pageTopsAndBottoms)
+        val repetitiveHeadersFooters = knownRepetitiveHeadersFooters + detected
 
         val displayBlocks = mutableListOf<ReadingBlock>()
         val narrationUnits = mutableListOf<TtsNarrationUnit>()

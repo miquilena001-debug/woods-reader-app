@@ -109,7 +109,7 @@ class ReaderViewModelTest {
             scrollMode = com.example.woodsreader.model.ScrollMode.PAGINATED
         )
         val epubPaginated = paginatedPrefs.toEpubPreferences()
-        assertEquals(true, epubPaginated.scroll)
+        assertEquals(false, epubPaginated.scroll)
 
         val verticalPrefs = com.example.woodsreader.data.datastore.UserPreferences(
             scrollMode = com.example.woodsreader.model.ScrollMode.CONTINUOUS_VERTICAL
@@ -121,7 +121,7 @@ class ReaderViewModelTest {
             scrollMode = com.example.woodsreader.model.ScrollMode.CONTINUOUS_HORIZONTAL
         )
         val epubHorizontal = horizontalPrefs.toEpubPreferences()
-        assertEquals(true, epubHorizontal.scroll)
+        assertEquals(false, epubHorizontal.scroll)
     }
 
     @Test
@@ -180,5 +180,4 @@ class ReaderViewModelTest {
         assertTrue(regexRule.isRegex)
     }
 }
-
 

@@ -58,6 +58,7 @@ import org.readium.r2.navigator.preferences.TextAlign
 import org.readium.r2.navigator.preferences.Theme
 
 import org.readium.r2.shared.util.AbsoluteUrl
+import com.example.woodsreader.core.pipeline.EpubPackageSanitizer
 import org.readium.r2.shared.util.mediatype.MediaType
 
 import org.readium.r2.shared.ExperimentalReadiumApi
@@ -70,6 +71,8 @@ import org.readium.r2.shared.publication.services.positions
 import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.util.asset.AssetRetriever
 
+import com.example.woodsreader.service.CoverExtractor
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.streamer.PublicationOpener
 import java.io.File
 
@@ -99,7 +102,8 @@ class ReaderViewModel @Inject constructor(
     private val readingProgressManager: ReadingProgressManager,
     private val sleepTimer: SleepTimer,
     private val pdfBookViewSynchronizer: PdfBookViewSynchronizer,
-    private val sherpaModelManager: SherpaModelManager
+    private val sherpaModelManager: SherpaModelManager,
+    private val coverExtractor: CoverExtractor
 ) : ViewModel() {
 
         companion object {
@@ -113,11 +117,27 @@ class ReaderViewModel @Inject constructor(
     val bookId: String = checkNotNull(savedStateHandle.get<String>("bookId"))
     var publication: Publication? = null
 
+    private var navigatorLocatorJob: Job? = null
+    private var lastSavedLocatorJson: String? = null
+    private var lastSaveTimeMs: Long = 0L
+
     var navigator: Navigator? = null
         set(value) {
             field = value
             epubFormatManager.updateNavigator(value)
+            observeNavigator(value)
         }
+
+    private fun observeNavigator(nav: Navigator?) {
+        navigatorLocatorJob?.cancel()
+        if (nav is VisualNavigator) {
+            navigatorLocatorJob = viewModelScope.launch {
+                nav.currentLocator.collect { loc ->
+                    onLocatorChanged(loc)
+                }
+            }
+        }
+    }
 
     private val _viewState = MutableStateFlow(ReaderViewState())
     val viewState: StateFlow<ReaderViewState> = _viewState.asStateFlow()
@@ -152,6 +172,8 @@ class ReaderViewModel @Inject constructor(
     private val _globalProgress = MutableStateFlow(0f)
 
     val globalProgress = _globalProgress.asStateFlow()
+    private val _showEpubCoverPage = MutableStateFlow(false)
+    val showEpubCoverPage = _showEpubCoverPage.asStateFlow()
     val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     val currentTtsPage = pdfReflowManager.currentTtsPage
@@ -291,15 +313,17 @@ class ReaderViewModel @Inject constructor(
                 publication?.close()
                 publication = null
 
-                val book = withContext(Dispatchers.IO) {
+                val loadedBook = withContext(Dispatchers.IO) {
                     bookRepository.getBook(bookId)
                 }
-                if (book == null) {
+                if (loadedBook == null) {
                     Log.e(TAG, "loadBook: Book not found for id $bookId")
                     _uiState.value = ReaderUiState.Error("Libro no encontrado en la base de datos")
                     return@launch
                 }
+                var book: BookEntity = loadedBook
 
+                _showEpubCoverPage.value = book.format.name == "EPUB"
                 _uiState.value = ReaderUiState.InitialLoading(book)
 
                 val uri = resolveBookUri(book)
@@ -325,7 +349,10 @@ class ReaderViewModel @Inject constructor(
                         Log.e(TAG, "loadBook: assetRetriever returned null for $uri")
                         return@withContext null
                     }
-                    publicationOpener.open(asset, allowUserInteraction = false).getOrNull()
+                    publicationOpener.open(
+                        asset = EpubPackageSanitizer.transformAsset(asset),
+                        allowUserInteraction = false
+                    ).getOrNull()
                 }
 
                 if (pub == null) {
@@ -336,6 +363,30 @@ class ReaderViewModel @Inject constructor(
 
                 publication = pub
 
+                // Asegurar que la portada exista en disco para EpubCoverPage y la biblioteca
+                if (book.coverCachePath.isNullOrBlank() || !File(book.coverCachePath).exists()) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val newCover = coverExtractor.extractCover(
+                                source = uri,
+                                format = book.format,
+                                fileHash = book.fileHash,
+                                title = book.title,
+                                author = book.author,
+                                publication = pub
+                            )
+                            if (newCover != null) {
+                                book = book.copy(coverCachePath = newCover)
+                                bookRepository.updateCoverPath(book.id, newCover)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "No se pudo extraer portada durante carga de ${book.title}", e)
+                        }
+                    }
+                }
+
+                // Perfección M-8.3: Calcular y garantizar posiciones antes de declarar el lector listo
+                positionsJob?.cancel()
                 positionsJob = viewModelScope.launch(Dispatchers.IO) {
                     val byReadingOrder = try {
                         pub.positionsByReadingOrder()
@@ -343,14 +394,22 @@ class ReaderViewModel @Inject constructor(
                         Log.w(TAG, "Error calculating positions", e)
                         emptyList()
                     }
-                    totalPositions = byReadingOrder.sumOf { it.size }
-                    positionsByResource = byReadingOrder
+                    val resolvedPositions = if (byReadingOrder.isEmpty() || byReadingOrder.all { it.isEmpty() }) {
+                        pub.readingOrder.mapNotNull { link ->
+                            pub.locatorFromLink(link)?.let { listOf(it) }
+                        }
+                    } else {
+                        byReadingOrder
+                    }
+                    totalPositions = resolvedPositions.sumOf { it.size }
+                    positionsByResource = resolvedPositions
                     resourceIndexCache = pub.readingOrder.mapIndexed { index, link ->
                         link.href.toString() to index
                     }.toMap()
                 }
+                positionsJob?.join()
 
-                if (book.format.name == "PDF") {
+                val initialLocator = if (book.format.name == "PDF") {
                     val physicalPath = if (book.filePath.startsWith("/")) {
                         book.filePath
                     } else {
@@ -362,17 +421,19 @@ class ReaderViewModel @Inject constructor(
                     val initialPage = book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
                     lastKnownReflowPage = initialPage
                     pdfReflowManager.setReflowMode(enabled = true, scope = viewModelScope, initialPosition = initialPage)
+                    null
                 } else {
                     pdfReflowManager.setReflowMode(enabled = false, scope = viewModelScope)
-                    val initialLocator = validateAndRestoreLocator(
+                    val loc = validateAndRestoreLocator(
                         publication = pub,
                         cfiJson = book.currentLocatorJson,
                         fallbackHref = book.fallbackLocatorHref,
                         fallbackPosition = book.fallbackLocatorPosition
                     )
                     viewModelScope.launch {
-                        epubFormatManager.initNavigator(pub, initialLocator, viewModelScope, navigator)
+                        epubFormatManager.initNavigator(pub, loc, viewModelScope, navigator)
                     }
+                    loc
                 }
 
                 withContext(Dispatchers.IO) {
@@ -383,7 +444,8 @@ class ReaderViewModel @Inject constructor(
                 _uiState.value = ReaderUiState.Success(
                     book = book,
                     publication = pub,
-                    initialLocatorJson = book.currentLocatorJson
+                    initialLocatorJson = initialLocator?.toJSON()?.toString(),
+                    initialLocator = initialLocator
                 )
                 Log.d(TAG, "loadBook: Successfully loaded ${book.title}")
             } catch (e: Exception) {
@@ -702,6 +764,7 @@ class ReaderViewModel @Inject constructor(
     private var lastTtsDbSaveTime = 0L
 
     private fun onTtsLocatorChanged(locator: Locator) {
+        if (_showEpubCoverPage.value) return
         updateChapterMetadata(locator)
         val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
         val totalProgression = locator.locations.totalProgression ?: 0.0
@@ -761,7 +824,44 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    fun onLocatorChanged(locator: Locator) {
+        if (_showEpubCoverPage.value) return
+        if (isPdfBook && !isReflowMode.value) {
+            val page = locator.locations.position ?: 1
+            lastKnownReflowPage = page
+            val totalPages = totalPositions.takeIf { it > 0 }
+                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
+                ?: publication?.readingOrder?.size?.takeIf { it > 0 }
+                ?: 1
+            _globalProgress.value = (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
+
+            val now = System.currentTimeMillis()
+            if (now - lastSaveTimeMs > 800L) {
+                lastSaveTimeMs = now
+                viewModelScope.launch(Dispatchers.IO) {
+                    bookRepository.updateReadingProgressWithFallback(
+                        bookId = bookId,
+                        progress = _globalProgress.value,
+                        locatorJson = locator.toJSON().toString(),
+                        fallbackHref = locator.href.toString(),
+                        fallbackPosition = page
+                    )
+                }
+            }
+            return
+        }
+
+        if (!isPdfBook) {
+            val locJson = locator.toJSON().toString()
+            if (locJson != lastSavedLocatorJson) {
+                lastSavedLocatorJson = locJson
+                saveProgress(locator)
+            }
+        }
+    }
+
     fun saveProgress(locator: Locator) {
+        if (_showEpubCoverPage.value) return
         if (readingSessionManager.currentSessionMode == ReadingMode.MANUAL) {
 
             val currentProg = locator.locations.totalProgression ?: 0.0
@@ -847,7 +947,9 @@ class ReaderViewModel @Inject constructor(
 
         updateChapterMetadata(locator)
 
-        val totalProg = (locator.locations.totalProgression ?: 0.0).toFloat()
+        val calculatedProg = _globalProgress.value
+        val locProg = (locator.locations.totalProgression ?: 0.0).toFloat()
+        val totalProg = if (calculatedProg > 0f) calculatedProg else locProg
         val locJson = locator.toJSON().toString()
         val fHref = locator.href.toString()
         val fPos = locator.locations.position ?: 0
@@ -950,7 +1052,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun seekToGlobalProgress(percent: Float, navigator: Navigator?) {
-        if (isReflowMode.value || isPdfBook) {
+        if (isReflowMode.value) {
             val totalPages = pdfReflowManager.reflowState.value.totalPages
             if (totalPages > 0) {
                 val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
@@ -961,8 +1063,40 @@ class ReaderViewModel @Inject constructor(
             }
         }
 
+        if (isPdfBook && !isReflowMode.value) {
+            val nav = navigator as? VisualNavigator
+            val pub = publication
+            val totalPages = totalPositions.takeIf { it > 0 }
+                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
+                ?: pub?.readingOrder?.size?.takeIf { it > 0 }
+                ?: 1
+            val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
+            lastKnownReflowPage = targetPage
+            if (nav != null && pub != null) {
+                val readingOrderLink = pub.readingOrder.firstOrNull()
+                if (readingOrderLink != null) {
+                    pub.locatorFromLink(readingOrderLink)?.let { base ->
+                        nav.go(base.copy(locations = Locator.Locations(position = targetPage)), animated = false)
+                    }
+                }
+            }
+            _globalProgress.value = percent
+            return
+        }
+
         val nav = navigator as? VisualNavigator ?: return
-        if (totalPositions <= 0 || positionsByResource.isEmpty()) return
+        if (totalPositions <= 0 || positionsByResource.isEmpty()) {
+            val pub = publication
+            val links = pub?.readingOrder ?: emptyList()
+            if (pub != null && links.isNotEmpty()) {
+                val targetIdx = (percent * links.size).toInt().coerceIn(0, links.size - 1)
+                pub.locatorFromLink(links[targetIdx])?.let { loc ->
+                    nav.go(loc, animated = false)
+                }
+                _globalProgress.value = percent
+            }
+            return
+        }
 
         val targetIdx = (percent * totalPositions).toInt().coerceIn(0, totalPositions - 1)
         var accumulated = 0
@@ -981,6 +1115,7 @@ class ReaderViewModel @Inject constructor(
 
         if (targetResourceIdx in positionsByResource.indices && targetPosInResource in positionsByResource[targetResourceIdx].indices) {
             nav.go(positionsByResource[targetResourceIdx][targetPosInResource], animated = false)
+            _globalProgress.value = percent
         }
     }
 
@@ -1020,7 +1155,13 @@ class ReaderViewModel @Inject constructor(
         if (isPdfBook) {
             val toc = pub.tableOfContents
             if (toc.isNotEmpty()) {
-                val currentPage = lastKnownReflowPage.takeIf { it > 0 } ?: (nav.currentLocator.value.locations.position ?: 1)
+                val currentPage = if (isReflowMode.value) {
+                    lastKnownReflowPage.takeIf { it > 0 } ?: 1
+                } else {
+                    val visualPage = (nav.currentLocator.value.locations.position ?: lastKnownReflowPage)
+                    lastKnownReflowPage = visualPage
+                    visualPage.takeIf { it > 0 } ?: 1
+                }
                 val nextLink = toc.mapNotNull { link ->
                     val page = link.href.toString().let { href ->
                         Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
@@ -1115,7 +1256,13 @@ class ReaderViewModel @Inject constructor(
         if (isPdfBook) {
             val toc = pub.tableOfContents
             if (toc.isNotEmpty()) {
-                val currentPage = lastKnownReflowPage.takeIf { it > 0 } ?: (nav.currentLocator.value.locations.position ?: 1)
+                val currentPage = if (isReflowMode.value) {
+                    lastKnownReflowPage.takeIf { it > 0 } ?: 1
+                } else {
+                    val visualPage = (nav.currentLocator.value.locations.position ?: lastKnownReflowPage)
+                    lastKnownReflowPage = visualPage
+                    visualPage.takeIf { it > 0 } ?: 1
+                }
                 val prevLink = toc.mapNotNull { link ->
                     val page = link.href.toString().let { href ->
                         Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
@@ -1651,13 +1798,42 @@ class ReaderViewModel @Inject constructor(
             timeRemaining = (remainingInResource * 0.8).toInt().coerceAtLeast(1)
         }
 
-        _chapterInfo.value = ChapterInfo(
-            title = locator.title,
+        val resolvedTitle = locator.title?.takeIf { it.isNotBlank() }
+            ?: publication?.let { pub -> resolveChapterTitle(pub, resourceHref) }
 
+        _chapterInfo.value = ChapterInfo(
+            title = resolvedTitle,
             progress = prog,
             timeRemainingMinutes = timeRemaining
-
         )
+    }
+
+    private fun resolveChapterTitle(pub: Publication, resourceHref: String): String? {
+        val normalized = EpubPackageSanitizer.normalizeResourcePath(resourceHref)
+        val fileName = normalized.substringAfterLast('/')
+
+        fun findInLinks(links: List<Link>): String? {
+            for (link in links) {
+                val linkNorm = EpubPackageSanitizer.normalizeResourcePath(link.href.toString())
+                if (linkNorm == normalized ||
+                    linkNorm.endsWith("/$normalized") ||
+                    normalized.endsWith("/$linkNorm") ||
+                    fileName.equals(linkNorm.substringAfterLast('/'), ignoreCase = true)
+                ) {
+                    val title = link.title?.trim()?.takeIf { it.isNotEmpty() }
+                    if (title != null) return title
+                }
+                val child = findInLinks(link.children)
+                if (child != null) return child
+            }
+            return null
+        }
+
+        return findInLinks(pub.tableOfContents)
+            ?: findInLinks(pub.readingOrder)
+            ?: pub.readingOrder.indexOfFirst { it.href.toString() == resourceHref }
+                .takeIf { it >= 0 }
+                ?.let { idx -> pub.tableOfContents.getOrNull(idx)?.title?.trim()?.takeIf { it.isNotEmpty() } }
     }
 
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Misc ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
@@ -1696,7 +1872,8 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun saveCurrentProgressBeforeExit() {
-        if (isReflowMode.value || isPdfBook) {
+        if (_showEpubCoverPage.value) return
+        if (isReflowMode.value) {
             val page = lastKnownReflowPage.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
             val totalPages = pdfReflowManager.reflowState.value.totalPages
@@ -1711,12 +1888,36 @@ class ReaderViewModel @Inject constructor(
                     fallbackPosition = page
                 )
             }
+        } else if (isPdfBook) {
+            val nav = navigator as? VisualNavigator
+            val navLoc = nav?.currentLocator?.value
+            val page = navLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
+            lastKnownReflowPage = page
+            val totalPages = totalPositions.takeIf { it > 0 }
+                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
+                ?: publication?.readingOrder?.size?.takeIf { it > 0 }
+                ?: 1
+            val progress = (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
+
+            CoroutineScope(Dispatchers.IO).launch {
+                bookRepository.updateReadingProgressWithFallback(
+                    bookId = bookId,
+                    progress = progress,
+                    locatorJson = navLoc?.toJSON()?.toString() ?: "",
+                    fallbackHref = navLoc?.href?.toString() ?: "",
+                    fallbackPosition = page
+                )
+            }
         } else {
             val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value
             if (currentLocator != null) {
                 saveProgress(currentLocator)
             }
         }
+    }
+
+    fun dismissEpubCoverPage() {
+        _showEpubCoverPage.value = false
     }
 
     override fun onCleared() {
@@ -1732,6 +1933,8 @@ class ReaderViewModel @Inject constructor(
 
         positionsJob?.cancel()
         positionsJob = null
+        navigatorLocatorJob?.cancel()
+        navigatorLocatorJob = null
         publication?.close()
         publication = null
         navigator = null
@@ -1762,4 +1965,3 @@ data class ReaderViewState(
     val isPdfBookViewActive: Boolean = false,
     val pdfBookViewBlockIndex: Int = 0
 )
-

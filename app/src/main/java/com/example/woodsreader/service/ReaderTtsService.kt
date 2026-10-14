@@ -299,6 +299,11 @@ class ReaderTtsService : MediaSessionService() {
             } catch (e: Exception) {
                 android.util.Log.w("ReaderTtsService", "Error closing old TTS navigator", e)
             }
+            mediaSession?.let {
+                removeSession(it)
+                it.release()
+                mediaSession = null
+            }
 
             val engineProvider = com.example.woodsreader.core.tts.SherpaTtsEngineProvider(
                 context = applicationContext,
@@ -398,12 +403,12 @@ class ReaderTtsService : MediaSessionService() {
     // ── MediaSession setup ────────────────────────────────────────────────────
     @AndroidOptIn(UnstableApi::class)
     private fun setupMediaSession(navigator: TtsNavigator<*, *, *, *>?) {
-        if (navigator == null) return
         mediaSession?.let {
             removeSession(it)
             it.release()
             mediaSession = null
         }
+        if (navigator == null) return
 
         val pendingIntent = PendingIntent.getActivity(
             this, 0,

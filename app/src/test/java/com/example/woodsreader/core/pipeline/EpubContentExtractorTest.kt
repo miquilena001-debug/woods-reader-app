@@ -147,4 +147,28 @@ class EpubContentExtractorTest {
         assertFalse(ttsTexts.any { it.contains("— 1 —") })
         assertFalse(ttsTexts.any { it.contains("ISBN") })
     }
+
+    @Test
+    fun `extractBlocks does not duplicate text in blockquote or li containing paragraphs`() {
+        val html = """
+            <html>
+            <body>
+                <blockquote>
+                    <p>Cita dentro de párrafo.</p>
+                </blockquote>
+                <ul>
+                    <li><p>Elemento de lista con párrafo.</p></li>
+                    <li>Elemento simple sin párrafo.</li>
+                </ul>
+            </body>
+            </html>
+        """.trimIndent()
+
+        val blocks = extractor.extractBlocks(html, "quotes.xhtml", pageIndex = 1)
+
+        assertEquals(3, blocks.size)
+        assertEquals("Cita dentro de párrafo.", blocks[0].text)
+        assertEquals("Elemento de lista con párrafo.", blocks[1].text)
+        assertEquals("Elemento simple sin párrafo.", blocks[2].text)
+    }
 }
