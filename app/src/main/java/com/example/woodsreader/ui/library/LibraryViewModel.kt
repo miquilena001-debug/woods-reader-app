@@ -109,6 +109,9 @@ class LibraryViewModel @Inject constructor(
     val finishedCount: StateFlow<Int> = bookRepository.getCompletedBooksCount()
         .stateIn(viewModelScope, SharingStarted.Lazily, 0)
 
+    val inProgressCount: StateFlow<Int> = bookRepository.getInProgressBooksCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     val userPreferences = preferencesRepository.userPreferencesFlow
         .stateIn(viewModelScope, SharingStarted.Lazily, null)
 

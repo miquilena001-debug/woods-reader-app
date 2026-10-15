@@ -26,10 +26,10 @@ fun ReaderBottomBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                Brush.verticalGradient(
+                brush = Brush.verticalGradient(
                     colors = listOf(
-                        HiddenForest.Surface.copy(alpha = 0.95f),
-                        HiddenForest.SurfaceVariant.copy(alpha = 0.98f)
+                        Color(0xFF0E1F16).copy(alpha = 0.78f),
+                        Color(0xFF0A140F).copy(alpha = 0.65f)
                     )
                 )
             )
@@ -38,8 +38,8 @@ fun ReaderBottomBar(
     ) {
         Column {
             HorizontalDivider(
-                color = HiddenForest.Outline.copy(alpha = 0.25f),
-                thickness = 0.5.dp
+                color = Color.White.copy(alpha = 0.18f),
+                thickness = 1.dp
             )
             Row(
                 modifier = Modifier

@@ -307,6 +307,7 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value = ReaderUiState.Loading
             try {
+                stopTts()
                 // Liberar inmediatamente cualquier publicación previa y cancelar cálculo de posiciones
                 positionsJob?.cancel()
                 positionsJob = null
@@ -1356,12 +1357,27 @@ class ReaderViewModel @Inject constructor(
 
     fun getLocatorForPdfPage(page: Int): Locator? {
         val pub = publication ?: return null
-        if (totalPositions > 0 && positionsByResource.isNotEmpty()) {
+        val totalPages = pdfReflowManager.reflowState.value.totalPages.takeIf { it > 1 }
+            ?: totalPositions.takeIf { it > 1 }
+            ?: pub.readingOrder.size.takeIf { it > 1 }
+            ?: 1
+        val prog = ((page - 1).toDouble() / totalPages.toDouble()).coerceIn(0.0, 1.0)
+
+        if (totalPositions > 1 && positionsByResource.isNotEmpty()) {
             var count = 0
             for (sublist in positionsByResource) {
                 if (page - 1 < count + sublist.size) {
                     val loc = sublist.getOrNull(page - 1 - count)
-                    if (loc != null) return loc
+                    if (loc != null) {
+                        return loc.copy(
+                            locations = loc.locations.copy(
+                                fragments = listOf("page=$page"),
+                                position = page,
+                                progression = loc.locations.progression ?: prog,
+                                totalProgression = loc.locations.totalProgression ?: prog
+                            )
+                        )
+                    }
                 }
                 count += sublist.size
             }
@@ -1370,8 +1386,10 @@ class ReaderViewModel @Inject constructor(
         val link = pub.readingOrder.getOrNull(targetIdx) ?: pub.readingOrder.firstOrNull() ?: return null
         return pub.locatorFromLink(link)?.copy(
             locations = Locator.Locations(
+                fragments = listOf("page=$page"),
                 position = page,
-                progression = if (totalPositions > 0) (page - 1).toDouble() / totalPositions else null
+                progression = prog,
+                totalProgression = prog
             )
         )
     }
@@ -1473,28 +1491,27 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun playTts(locator: Locator) {
-        // Al iniciar nuevo TTS, limpiar el lastTtsLocator
         _lastTtsLocator.value = null
         switchSessionMode(ReadingMode.TTS)
         if (isReflowMode.value || isPdfBook) {
             viewModelScope.launch {
-                val targetPage = locator.locations.position ?: 1
-                val elements = pdfReflowManager.reflowElements.value
-                // Buscar si la página destino ya está cargada en los elementos
-                var targetIndex = elements.indexOfFirst { it.pageNumber == targetPage }
+                val targetPage = locator.locations.position ?: lastKnownReflowPage.coerceAtLeast(1)
+                var readable = pdfReflowManager.reflowState.value.items.filter {
+                    it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text
+                }
+                var targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }
 
-                // Si no está cargada, cargar páginas desde targetPage
                 if (targetIndex == -1) {
                     pdfReflowManager.loadReflowPages(fromPage = targetPage, isInitial = true)
-                    val newElements = pdfReflowManager.reflowElements.value
-                    targetIndex = newElements.indexOfFirst { it.pageNumber == targetPage }.coerceAtLeast(0)
+                    readable = pdfReflowManager.reflowState.value.items.filter {
+                        it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text
+                    }
+                    targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }.coerceAtLeast(0)
                 }
 
-                // Intentar refinar la búsqueda si el localizador contiene un fragmento de texto seleccionado
                 val snippet = locator.text.highlight?.trim()
                 if (!snippet.isNullOrBlank()) {
-                    val searchElements = pdfReflowManager.reflowElements.value
-                    val refinedIndex = searchElements.indexOfFirst { item ->
+                    val refinedIndex = readable.indexOfFirst { item ->
                         val content = when (item) {
                             is ReflowItem.Text -> item.element.locator.text.highlight ?: ""
                             is ReflowItem.Header -> item.content
@@ -1514,7 +1531,7 @@ class ReaderViewModel @Inject constructor(
                     pitch = userPreferences.value.ttsPitch,
                     languageCode = userPreferences.value.ttsLanguage,
                     voiceName = userPreferences.value.ttsVoiceName,
-                    startIndex = targetIndex
+                    startIndex = targetIndex.coerceAtLeast(0)
                 )
             }
         } else {
@@ -1950,6 +1967,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        stopTts()
         saveCurrentProgressBeforeExit()
         stopActiveSession()
         cancelSleepTimer()

@@ -168,9 +168,15 @@ class EpubFormatManager @Inject constructor(
         navigator: Navigator?,
         bookId: String? = null
     ) {
+        hasEverStartedTts = false
+        ttsUserStopped = false
+        _ttsState.value = TtsState.IDLE
+        _currentTtsSentence.value = ""
+        _currentTtsRange.value = null
+        _currentTtsLocator.value = null
         currentPublication = pub
-        currentNavigator = navigator ?: currentNavigator
         currentScope = scope
+        currentNavigator = navigator ?: currentNavigator
         currentBookId = bookId
         invalidateCache()
         _currentProcessedDocument.value = null
@@ -180,6 +186,15 @@ class EpubFormatManager @Inject constructor(
         if (startHref != null) {
             processResource(startHref, bookId = bookId)
         }
+        if (ttsService == null) {
+            Log.w(TAG, "initNavigator: service not bound yet, awaiting...")
+            if (!awaitServiceBinding()) {
+                Log.e(TAG, "initNavigator: service binding failed, TTS unavailable")
+                return
+            }
+        }
+        ttsService?.initNavigator(pub, initialLocator)
+        observeServiceFlows(scope)
     }
 
     suspend fun processResource(
@@ -364,7 +379,7 @@ class EpubFormatManager @Inject constructor(
         ttsUserStopped = true
         hasEverStartedTts = false
         ttsService?.stop()
-        _ttsState.value = TtsState.STOPPED
+        _ttsState.value = TtsState.IDLE
         _currentTtsSentence.value = ""
         _currentTtsRange.value = null
         _currentTtsLocator.value = null
@@ -469,16 +484,21 @@ class EpubFormatManager @Inject constructor(
     fun onCleared(context: Context) {
         serviceFlowJob?.cancel()
         serviceFlowJob = null
+        stopTts()
+        ttsUserStopped = false
         try { context.unbindService(serviceConnection) } catch (_: Exception) {}
         try { context.stopService(Intent(context, ReaderTtsService::class.java)) } catch (_: Exception) {}
         ttsService = null
+        _isServiceBound.value = false
         currentPublication = null
         currentNavigator = null
         currentBookId = null
         invalidateCache()
         _currentProcessedDocument.value = null
         _currentTtsLocator.value = null
+        _currentTtsRange.value = null
         _currentTtsSentence.value = ""
+        _ttsState.value = TtsState.IDLE
         onTtsStateChanged = null
         onLocatorChanged = null
     }

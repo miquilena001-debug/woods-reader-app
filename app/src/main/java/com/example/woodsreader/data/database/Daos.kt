@@ -130,8 +130,11 @@ interface BookDao {
     suspend fun count(): Int
 
     // Estadísticas
-    @Query("SELECT COUNT(*) FROM books WHERE readingStatus = 'COMPLETED'")
+    @Query("SELECT COUNT(*) FROM books WHERE readingStatus = 'COMPLETED' OR readingProgressPercent >= 0.99")
     fun getCompletedBooksCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM books WHERE (readingStatus = 'IN_PROGRESS' OR readingProgressPercent > 0) AND readingProgressPercent < 0.99 AND readingStatus != 'COMPLETED'")
+    fun getInProgressBooksCount(): Flow<Int>
 
     @Query("SELECT SUM(totalReadingTimeMs) FROM books")
     fun getTotalReadingTimeMs(): Flow<Long?>

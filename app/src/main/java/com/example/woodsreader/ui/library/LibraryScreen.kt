@@ -92,7 +92,7 @@ fun LibraryScreen(
         uri?.let { viewModel.onFolderSelected(it) }
     }
 
-    val readingCount   = books.itemCount  // aproximaciÃƒÂ³n; idealmente desde VM
+    val readingCount by viewModel.inProgressCount.collectAsStateWithLifecycle(initialValue = 0)
 
     // << CHANGE: ConfiguraciÃƒÂ³n del efecto Shimmer nativo (pulso de alpha)
 
@@ -129,7 +129,7 @@ fun LibraryScreen(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 32.dp)
+            contentPadding = PaddingValues(bottom = 100.dp)
         ) {
             // Ã¢â€â‚¬Ã¢â€â‚¬ Header Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             item {
@@ -219,7 +219,9 @@ fun LibraryScreen(
                             bookId   = book.id,
                             title    = book.title,
                             author   = book.author.ifBlank { "Desconocido" },
-                            progress = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100),
+                            progress = if (book.readingProgressPercent > 0f) {
+                                (book.readingProgressPercent * 100).roundToInt().coerceIn(1, 100)
+                            } else 0,
                             chapter  = "",
                             coverPath = book.coverCachePath,
                             onClick  = { onBookClick(book.id) },

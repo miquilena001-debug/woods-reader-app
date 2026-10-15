@@ -127,15 +127,18 @@ class PdfReflowManager @Inject constructor(
         if (enabled) {
             lastLoadedPage = -1
             firstLoadedPage = -1
-            _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) } // -1 = Abriendo archivo
+            _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = -1) }
             _reflowElements.value = emptyList()
             _ttsNarrationUnits.value = emptyList()
             scope.launch {
                 loadReflowPages(fromPage = initialPosition, isInitial = true)
             }
         } else {
-            pauseReflowTts()
-            closeDocument()
+            if (isReflowTtsRunning || _ttsState.value == TtsState.PLAYING) {
+                pauseReflowTts()
+            } else {
+                _ttsState.value = TtsState.IDLE
+            }
             _reflowState.update { it.copy(isLoading = false) }
         }
     }
@@ -168,7 +171,9 @@ class PdfReflowManager @Inject constructor(
     fun jumpToPage(scope: CoroutineScope, page: Int) {
         preloadJob?.cancel()
         preloadJob = null
-        pauseReflowTts()
+        if (isReflowTtsRunning || _ttsState.value == TtsState.PLAYING) {
+            pauseReflowTts()
+        }
         lastLoadedPage = -1
         firstLoadedPage = -1
         _reflowState.update { it.copy(items = emptyList(), isLoading = true, currentLoadingPage = page) }
@@ -291,7 +296,7 @@ class PdfReflowManager @Inject constructor(
                     if (isInitial) {
                         preloadJob?.cancel()
                         preloadJob = managerScope.launch {
-                            loadRangeInBackground(document, targetPage + 1, minOf(total, targetPage + 2), append = true)
+                            loadRangeInBackground(document, targetPage + 1, minOf(total, targetPage + 2), append = true, anchorPage = targetPage)
                         }
                     }
 
@@ -306,7 +311,13 @@ class PdfReflowManager @Inject constructor(
         }
     }
 
-    private suspend fun loadRangeInBackground(document: PDDocument, start: Int, end: Int, append: Boolean) {
+    private suspend fun loadRangeInBackground(
+        document: PDDocument,
+        start: Int,
+        end: Int,
+        append: Boolean,
+        anchorPage: Int = start
+    ) {
         if (start > end) return
         if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return
         val range = if (append) start..end else (end downTo start)
@@ -329,7 +340,7 @@ class PdfReflowManager @Inject constructor(
                         if (!_isReflowMode.value || currentDocument == null || document !== currentDocument) return@update current
                         if (current.items.any { it.pageNumber == pIdx }) return@update current
                         val newList = if (append) current.items + pageItems else pageItems + current.items
-                        val evicted = evictFarPages(newList, pIdx)
+                        val evicted = evictFarPages(newList, anchorPage)
                         current.copy(items = evicted)
                     }
                     if (_isReflowMode.value && currentDocument != null && document === currentDocument) {
@@ -547,17 +558,20 @@ class PdfReflowManager @Inject constructor(
         lastPitch = pitch
         lastLanguageCode = languageCode
         lastVoiceName = voiceName
+
         val locale = languageCode?.let { java.util.Locale.forLanguageTag(it) } ?: java.util.Locale.getDefault()
         if (!ttsManager.initialize(locale, voiceName)) return
         registerNoisyReceiver()
 
-        // Iterar directamente sobre los elementos legibles de reflowState.items
-        // para que ttsActiveBlockIndex coincida exactamente 1:1 con readableItems de la UI
+        if (_reflowState.value.items.isEmpty()) {
+            loadReflowPages(fromPage = _currentTtsPage.value.coerceAtLeast(1), isInitial = true)
+        }
+
         val currentItems = _reflowState.value.items
         val readableItems = currentItems.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
 
         if (readableItems.isEmpty()) {
-            _ttsState.value = TtsState.STOPPED
+            _ttsState.value = TtsState.IDLE
             return
         }
         val safeStartIndex = startIndex.coerceIn(0, readableItems.size - 1)
@@ -577,15 +591,31 @@ class PdfReflowManager @Inject constructor(
         reflowTtsJob?.cancel()
         reflowTtsJob = scope.launch {
             var i = safeStartIndex
+            var lastPlayedId: String? = null
+
             while (isActive && isReflowTtsRunning && !ttsUserStopped) {
-                val currentReadable = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+                var currentReadable = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+
+                if (lastPlayedId != null) {
+                    val prevIdx = currentReadable.indexOfFirst { it.id.isNotEmpty() && it.id == lastPlayedId }
+                    if (prevIdx != -1) {
+                        i = prevIdx + 1
+                    }
+                }
+
                 if (i >= currentReadable.size) {
                     val state = _reflowState.value
-                    if (state.totalPages > 0 && lastLoadedPage < state.totalPages && !isCurrentlyLoading) {
-                        loadNextPage(scope)
-                        delay(600)
-                        val updated = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
-                        if (i < updated.size) continue
+                    val nextPageToLoad = if (lastLoadedPage > 0) lastLoadedPage + 1 else (_currentTtsPage.value + 1)
+                    if (state.totalPages == 0 || nextPageToLoad <= state.totalPages) {
+                        loadReflowPages(fromPage = nextPageToLoad, isInitial = false, prepend = false)
+                        currentReadable = _reflowState.value.items.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+                        if (lastPlayedId != null) {
+                            val prevIdx = currentReadable.indexOfFirst { it.id.isNotEmpty() && it.id == lastPlayedId }
+                            if (prevIdx != -1) {
+                                i = prevIdx + 1
+                            }
+                        }
+                        if (i < currentReadable.size) continue
                     }
                     break
                 }
@@ -593,6 +623,7 @@ class PdfReflowManager @Inject constructor(
                 _ttsActiveBlockIndex.value = i
 
                 val item = currentReadable[i]
+                lastPlayedId = item.id
                 val text = when (item) {
                     is ReflowItem.Header -> item.content
                     is ReflowItem.Paragraph -> item.content
@@ -601,7 +632,7 @@ class PdfReflowManager @Inject constructor(
                 }
                 val pageNum = item.pageNumber
 
-                // Si nos acercamos al final de los items cargados, precargar siguiente página con antelación
+                // Precargar siguiente página con antelación cuando quedan pocos bloques
                 if (i >= currentReadable.size - 2) {
                     val state = _reflowState.value
                     if (state.totalPages > 0 && lastLoadedPage < state.totalPages && !isCurrentlyLoading) {
@@ -621,13 +652,17 @@ class PdfReflowManager @Inject constructor(
                             } catch (_: Exception) { break }
                         }
                     }
+                } else {
+                    i++
                 }
 
-                i++
+                if (lastPlayedId.isNullOrEmpty()) {
+                    i++
+                }
             }
             if (isActive && !ttsUserStopped) {
                 _currentTtsSentence.value = ""
-                _ttsState.value = TtsState.STOPPED
+                _ttsState.value = TtsState.IDLE
                 isReflowTtsRunning = false
                 unregisterNoisyReceiver()
             }
@@ -635,20 +670,23 @@ class PdfReflowManager @Inject constructor(
     }
 
     private fun splitSentences(text: String): List<String> {
-        val trimmed = text.trim()
+        val trimmed = text.replace('\u00A0', ' ').trim()
         if (trimmed.length < 50) return listOf(trimmed)
-        val pattern = Regex("""(?<=[.!?…])\s+(?=[«"—\p{Lu}\p{Lt}])""")
+        val pattern = Regex("""(?<=[.!?\u2026])[\s\u00A0]+(?=[\u00AB"\u201C\u2014\u2013\u00BF\u00A1\p{Lu}\p{Lt}])""")
         val parts = trimmed.split(pattern).map { it.trim() }.filter { it.isNotEmpty() }
         return if (parts.isNotEmpty()) parts else listOf(trimmed)
     }
 
     fun pauseReflowTts() {
+        val wasRunning = isReflowTtsRunning || _ttsState.value == TtsState.PLAYING
         ttsUserStopped = true
         isReflowTtsRunning = false
         reflowTtsJob?.cancel()
         reflowTtsJob = null
         ttsManager.stop()
-        _ttsState.value = TtsState.PAUSED
+        if (wasRunning) {
+            _ttsState.value = TtsState.PAUSED
+        }
         unregisterNoisyReceiver()
     }
 
@@ -660,7 +698,7 @@ class PdfReflowManager @Inject constructor(
         ttsManager.stop()
         _currentTtsSentence.value = ""
         _ttsActiveBlockIndex.value = -1
-        _ttsState.value = TtsState.STOPPED
+        _ttsState.value = TtsState.IDLE
         unregisterNoisyReceiver()
     }
 
@@ -710,8 +748,7 @@ class PdfReflowManager @Inject constructor(
     fun onCleared() {
         preloadJob?.cancel()
         preloadJob = null
-        reflowTtsJob?.cancel()
-        reflowTtsJob = null
+        stopReflowTts()
         closeDocument()
         unregisterNoisyReceiver()
         _isReflowMode.value = false
@@ -719,14 +756,15 @@ class PdfReflowManager @Inject constructor(
         _reflowElements.value = emptyList()
         _reflowState.value = ReflowState()
         _ttsNarrationUnits.value = emptyList()
+        _currentTtsPage.value = 1
         currentBookFilePath = null
-        onWordsProcessed = null
-        pageBoundariesMap.clear()
-        knownRepetitiveHeadersFooters = emptySet()
         currentBookId = null
         lastPitch = null
         lastLanguageCode = null
         lastVoiceName = null
+        onWordsProcessed = null
+        pageBoundariesMap.clear()
+        knownRepetitiveHeadersFooters = emptySet()
     }
 }
 

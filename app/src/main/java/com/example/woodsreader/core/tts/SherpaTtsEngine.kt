@@ -26,7 +26,7 @@ import com.example.woodsreader.data.datastore.UserPreferencesRepository
  */
 @OptIn(ExperimentalReadiumApi::class)
 class SherpaTtsEngine(
-    private val delegate: AndroidTtsEngine,
+    private val delegate: TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>,
     private val ttsManager: TtsManager,
     private val userPreferencesRepository: UserPreferencesRepository
 ) : TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> {

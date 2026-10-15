@@ -262,30 +262,76 @@ class TtsManager @Inject constructor(
         val chunks = mutableListOf<SpeechChunk>()
         val currentText = StringBuilder()
         var inDialogue = false
+        var dialogueStartedByDash = false
         var i = 0
-        
+
+        fun flushCurrent() {
+            val content = currentText.toString().trim()
+            if (content.isNotEmpty()) {
+                chunks.add(SpeechChunk(content, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
+                currentText.clear()
+            }
+        }
+
         while (i < text.length) {
             val char = text[i]
-            // Detectar guiones de diálogo (em-dash, en-dash) y comillas
-            if (char == '—' || char == '–' || char == '"' || char == '«' || char == '»' || char == '“' || char == '”') {
-                val content = currentText.toString().trim()
-                if (content.isNotEmpty()) {
-                    chunks.add(SpeechChunk(content, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
-                    currentText.clear()
+            when (char) {
+                '\n', '\r' -> {
+                    flushCurrent()
+                    // En español un salto de párrafo cierra el turno de diálogo abierto por raya o comillas
+                    inDialogue = false
+                    dialogueStartedByDash = false
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 350L))
                 }
-                inDialogue = !inDialogue
-                chunks.add(SpeechChunk("", ChunkType.PAUSE, 200L)) // Silencio al cambiar de hablante
-            } else {
-                currentText.append(char)
+                // Comillas de apertura explícitas: siempre inician diálogo
+                '\u00AB', '\u201C' -> {
+                    flushCurrent()
+                    inDialogue = true
+                    dialogueStartedByDash = false
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
+                }
+                // Comillas de cierre explícitas: siempre cierran diálogo
+                '\u00BB', '\u201D' -> {
+                    flushCurrent()
+                    inDialogue = false
+                    dialogueStartedByDash = false
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
+                }
+                // Comilla recta doble: alterna estado de diálogo dentro del mismo párrafo
+                '"' -> {
+                    flushCurrent()
+                    inDialogue = !inDialogue
+                    dialogueStartedByDash = false
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
+                }
+                // Raya de diálogo (em-dash — o en-dash –)
+                '\u2014', '\u2013' -> {
+                    val prevChar = if (i > 0) text[i - 1] else '\n'
+                    val nextChar = if (i + 1 < text.length) text[i + 1] else ' '
+                    val isEndOfClauseDash = nextChar == '.' || nextChar == ',' || nextChar == ';' ||
+                            nextChar == ':' || nextChar == '!' || nextChar == '?'
+
+                    flushCurrent()
+                    if (prevChar == '\n' || prevChar == '\r' || i == 0) {
+                        // Raya al inicio de párrafo: inicia diálogo
+                        inDialogue = true
+                        dialogueStartedByDash = true
+                    } else if (dialogueStartedByDash && isEndOfClauseDash) {
+                        // Raya que cierra un inciso del narrador (ej. "—dijo Juan—. ¡Vamos!")
+                        inDialogue = true
+                    } else {
+                        inDialogue = !inDialogue
+                    }
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 200L))
+                }
+                else -> {
+                    currentText.append(char)
+                }
             }
             i++
         }
-        
-        val finalContent = currentText.toString().trim()
-        if (finalContent.isNotEmpty()) {
-            chunks.add(SpeechChunk(finalContent, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
-        }
-        
+
+        flushCurrent()
         return chunks
     }
 

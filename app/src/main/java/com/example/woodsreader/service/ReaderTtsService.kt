@@ -78,8 +78,8 @@ class ReaderTtsService : MediaSessionService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private var _isEngineWarmed = false
-    private var dummyTts: android.speech.tts.TextToSpeech? = null
+
+
 
     // Usamos el tipo genérico completo compatible con SherpaTtsEngineProvider
     private val _ttsNavigator = MutableStateFlow<TtsNavigator<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>?>(null)
@@ -251,7 +251,6 @@ class ReaderTtsService : MediaSessionService() {
     override fun onDestroy() {
         _ttsNavigator.value?.close()
         mediaSession?.run { release(); mediaSession = null }
-        dummyTts?.stop(); dummyTts?.shutdown(); dummyTts = null
         serviceScope.coroutineContext.cancelChildren()
         serviceScope.cancel()
         super.onDestroy()
@@ -259,12 +258,7 @@ class ReaderTtsService : MediaSessionService() {
 
     // ── Engine warm-up ────────────────────────────────────────────────────────
     fun preWarmEngine() {
-        if (_isEngineWarmed) return
-        serviceScope.launch(Dispatchers.Main) {
-            dummyTts = android.speech.tts.TextToSpeech(applicationContext) { status ->
-                if (status == android.speech.tts.TextToSpeech.SUCCESS) _isEngineWarmed = true
-            }
-        }
+        serviceScope.launch { ttsManager.initialize() }
     }
 
     // ── Preferencias TTS ─────────────────────────────────────────────────────
@@ -289,6 +283,9 @@ class ReaderTtsService : MediaSessionService() {
 
     // ── Inicialización del Navigator ─────────────────────────────────────────
     fun initNavigator(pub: Publication, initialLocator: Locator? = null) {
+        pendingPlayOnReady = false
+        _playbackState.value = null
+        _currentLocator.value = null
         preWarmEngine()
         updateMediaMetadata(pub)
 
@@ -462,6 +459,8 @@ class ReaderTtsService : MediaSessionService() {
     fun stop() {
         pendingPlayOnReady = false
         _ttsNavigator.value?.pause()
+        _playbackState.value = null
+        _currentLocator.value = null
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {}

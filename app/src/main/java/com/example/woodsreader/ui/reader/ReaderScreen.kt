@@ -1,7 +1,11 @@
 package com.example.woodsreader.ui.reader
 
+import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.util.Log
 import android.view.ActionMode
 import android.view.Menu
@@ -159,6 +163,29 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val showControls by viewModel.showControls.collectAsStateWithLifecycle()
+
+    val view = LocalView.current
+    LaunchedEffect(showControls) {
+        val window = (view.context as? Activity)?.window ?: return@LaunchedEffect
+        val insetsController = WindowCompat.getInsetsController(window, view)
+        insetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (showControls) {
+            insetsController.show(WindowInsetsCompat.Type.statusBars())
+        } else {
+            insetsController.hide(WindowInsetsCompat.Type.statusBars())
+        }
+    }
+
+    DisposableEffect(view) {
+        onDispose {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                WindowCompat.getInsetsController(window, view)
+                    .show(WindowInsetsCompat.Type.statusBars())
+            }
+        }
+    }
     val isReflowMode by viewModel.isReflowMode.collectAsStateWithLifecycle()
     var showMasterMenu by remember { mutableStateOf(false) }
     
@@ -212,7 +239,6 @@ fun ReaderScreen(
     var isTtsScreenLocked by remember { mutableStateOf(false) }
     val isTtsPlaying = ttsState == TtsState.PLAYING
     if (isTtsPlaying || isTtsScreenLocked) {
-        val view = LocalView.current
         DisposableEffect(view) {
             view.keepScreenOn = true
             onDispose {
@@ -222,6 +248,7 @@ fun ReaderScreen(
     }
 
     androidx.activity.compose.BackHandler {
+        viewModel.stopTts()
         viewModel.saveCurrentProgressBeforeExit()
         onNavigateUp()
     }
@@ -412,7 +439,7 @@ fun ReaderScreen(
     val isRtl by viewModel.isRtl.collectAsStateWithLifecycle()
     val showEpubCoverPage by viewModel.showEpubCoverPage.collectAsStateWithLifecycle()
     val epubPreferences = remember(userPreferences, isRtl) {
-        userPreferences.toEpubPreferences().let { prefs ->
+        userPreferences.copy(scrollMode = ScrollMode.CONTINUOUS_VERTICAL).toEpubPreferences().let { prefs ->
             if (isRtl) prefs.copy(readingProgression = org.readium.r2.navigator.preferences.ReadingProgression.RTL)
             else prefs
         }
@@ -495,7 +522,7 @@ fun ReaderScreen(
                 }
 
                 val cssSelector = locator.locations.otherLocations["cssSelector"] as? String
-                val isPaginated = userPreferences.scrollMode == ScrollMode.PAGINATED
+                val isPaginated = false
 
                 // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
                 val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
@@ -571,17 +598,21 @@ fun ReaderScreen(
 
     // Sincronización automática de página para PDF Original (modo no reflow)
     var lastNavigatedPdfPage by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(currentTtsPage, ttsState, isReflowMode, isPdf, navigatorState.value) {
+    LaunchedEffect(currentTtsPage, ttsState, isReflowMode, isPdf, navigatorState.value, userPreferences.ttsAutoScroll) {
         if (isPdf && !isReflowMode && ttsState == TtsState.PLAYING && currentTtsPage > 0) {
             val nav = navigatorState.value ?: return@LaunchedEffect
-            val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
-            if (!isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll) {
-                if (lastNavigatedPdfPage != currentTtsPage) {
-                    lastNavigatedPdfPage = currentTtsPage
-                    val loc = viewModel.getLocatorForPdfPage(currentTtsPage)
-                    if (loc != null && nav is VisualNavigator) {
-                        nav.go(loc, animated = false)
-                    }
+            if (!userPreferences.ttsAutoScroll) return@LaunchedEffect
+
+            // Si el usuario acaba de tocar la pantalla (ej. al pulsar Play), esperar brevemente en vez de descartar el salto de página
+            while (isUserInteracting || (System.currentTimeMillis() - lastInteractionTime) < 1200L) {
+                delay(250L)
+            }
+
+            if (lastNavigatedPdfPage != currentTtsPage) {
+                lastNavigatedPdfPage = currentTtsPage
+                val loc = viewModel.getLocatorForPdfPage(currentTtsPage)
+                if (loc != null && nav is VisualNavigator) {
+                    nav.go(loc, animated = false)
                 }
             }
         } else if (ttsState != TtsState.PLAYING) {
@@ -616,11 +647,7 @@ fun ReaderScreen(
         if (nav is EpubNavigatorFragment) {
             val pubView = nav.safePublicationView
             val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
-            if (userPreferences.scrollMode == ScrollMode.PAGINATED ||
-                userPreferences.scrollMode == ScrollMode.CONTINUOUS_HORIZONTAL
-            ) {
-                performPageForward(nav)
-            } else if (activeWv != null && activeWv.canScrollVertically(1)) {
+            if (activeWv != null && activeWv.canScrollVertically(1)) {
                 if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
                     scope.launch {
                         pageTurnState.turnPage(
@@ -680,11 +707,7 @@ fun ReaderScreen(
             val pubView = nav.safePublicationView
             val activeWv = directWv ?: pubView?.let { findActiveWebView(it) }
             val canGoBack = activeWv != null && (activeWv.canScrollVertically(-1) || activeWv.scrollY > 20)
-            if (userPreferences.scrollMode == ScrollMode.PAGINATED ||
-                userPreferences.scrollMode == ScrollMode.CONTINUOUS_HORIZONTAL
-            ) {
-                performPageBackward(nav)
-            } else if (canGoBack) {
+            if (canGoBack) {
                 if (userPreferences.pageTurnAnimation && userPreferences.pageTurnStyle != PageTurnStyle.NONE && pubView != null) {
                     scope.launch {
                         pageTurnState.turnPage(
@@ -783,6 +806,8 @@ fun ReaderScreen(
             detector.detach()
         }
     }
+
+
 
 
     Box(
@@ -992,6 +1017,7 @@ fun ReaderScreen(
                     isReflowMode = isReflowMode,
                     onToggleReflow = { viewModel.toggleReflowMode() },
                     onBack = {
+                        viewModel.stopTts()
                         viewModel.saveCurrentProgressBeforeExit()
                         onNavigateUp()
                     },
@@ -1831,8 +1857,5 @@ fun FootnoteSheet(
         }
     }
 }
-
-
-
 
 

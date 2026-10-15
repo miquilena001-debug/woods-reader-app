@@ -45,12 +45,20 @@ fun ReaderTopBar(
     onMenuClick: () -> Unit
 ) {
     Surface(
-        color = HiddenForest.Surface.copy(alpha = 0.88f),
+        color = Color.Transparent,
         modifier = Modifier
             .fillMaxWidth()
             .hazeChild(
                 state = hazeState,
                 style = ReaderDesign.GlassStyle
+            )
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0E1F16).copy(alpha = 0.78f),
+                        Color(0xFF0A140F).copy(alpha = 0.62f)
+                    )
+                )
             )
             // Borde de cristal (Efecto Rim Light en la parte superior e inferior)
             .border(
@@ -68,10 +76,11 @@ fun ReaderTopBar(
         Column {
             Row(
                 modifier = Modifier
-                    .height(64.dp)
-                    .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp, max = 56.dp)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,

@@ -86,7 +86,7 @@ android {
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             buildConfigField("long", "BUILD_TIME_MILLIS", "${System.currentTimeMillis()}L")
-            buildConfigField("long", "BETA_EXPIRATION_DAYS", "45L")
+            buildConfigField("long", "BETA_EXPIRATION_DAYS", "0L")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -259,6 +259,7 @@ class BookRepository @Inject constructor(
     // ── Analytics / Stats ─────────────────────────────────────────────────────
 
     fun getCompletedBooksCount(): Flow<Int>           = bookDao.getCompletedBooksCount()
+    fun getInProgressBooksCount(): Flow<Int>          = bookDao.getInProgressBooksCount()
     fun getTotalReadingTimeMs(): Flow<Long?>          = bookDao.getTotalReadingTimeMs()
     fun getUniqueReadingDays(): Flow<List<String>>    = sessionDao.getUniqueReadingDays(0L)
     fun getWeeklyWords(sevenDaysAgo: Long): Flow<List<DailyWordCount>> =

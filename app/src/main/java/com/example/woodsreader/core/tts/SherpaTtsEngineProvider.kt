@@ -70,7 +70,7 @@ class SherpaTtsEngineProvider(
 
         return delegateResult.map { androidEngine ->
             SherpaTtsEngine(
-                delegate = androidEngine as AndroidTtsEngine,
+                delegate = androidEngine,
                 ttsManager = ttsManager,
                 userPreferencesRepository = userPreferencesRepository
             )

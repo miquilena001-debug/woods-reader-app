@@ -324,7 +324,6 @@ class MainActivity : FragmentActivity() {
     private fun scheduleBackgroundSync() {
         val constraints = Constraints.Builder()
             .setRequiresBatteryNotLow(true)
-            .setRequiresDeviceIdle(true) // Solo escanea cuando no se usa el móvil
             .build()
 
         val syncRequest = PeriodicWorkRequestBuilder<LibrarySyncWorker>(
@@ -384,6 +383,7 @@ fun MainLayout(
 
     androidx.compose.material3.Scaffold(
         containerColor = com.example.woodsreader.ui.theme.HiddenForest.Background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showBottomBar) {
                 com.example.woodsreader.ui.library.WoodsBottomNavigation(
@@ -408,11 +408,11 @@ fun MainLayout(
                 )
             }
         }
-    ) { padding ->
+    ) { _ ->
         LectorNavHost(
             hasCompletedOnboarding = hasCompletedOnboarding,
             navController = navController,
-            modifier = Modifier.padding(padding)
+            modifier = Modifier.fillMaxSize()
         )
     }
 }

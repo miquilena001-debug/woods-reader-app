@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -114,7 +115,9 @@ fun WoodsBookCard(
                 onLongClick = onLongClick
             )
             .semantics {
-                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
+                val pct = if (book.readingProgressPercent > 0f) {
+                    (book.readingProgressPercent * 100).roundToInt().coerceIn(1, 100)
+                } else 0
                 role = Role.Button
                 contentDescription = "Libro: ${book.title}, por ${book.author}. " +
                         "Formato: ${book.format.name}. " +
@@ -235,9 +238,9 @@ fun WoodsBookCard(
                 overflow = TextOverflow.Ellipsis
             )
             if (book.readingProgressPercent > 0f) {
-                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
+                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(1, 100)
                 Spacer(modifier = Modifier.height(6.dp))
-                WoodsProgressBar(progress = book.readingProgressPercent)
+                WoodsProgressBar(progress = book.readingProgressPercent.coerceAtLeast(0.02f))
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "$pct%",
@@ -698,7 +701,7 @@ private fun RecentBookRow(book: BookEntity, rank: Int, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
             if (book.readingProgressPercent > 0f) {
-                WoodsProgressBar(progress = book.readingProgressPercent)
+                WoodsProgressBar(progress = book.readingProgressPercent.coerceAtLeast(0.02f))
             }
         }
 
@@ -719,7 +722,7 @@ private fun RecentBookRow(book: BookEntity, rank: Int, onClick: () -> Unit) {
                 )
             }
             if (book.readingProgressPercent > 0f) {
-                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
+                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(1, 100)
                 Text(
                     text = "$pct%",
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -783,16 +786,32 @@ fun WoodsBottomNavigation(
         androidx.compose.foundation.layout.Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .shadow(
+                    elevation = 20.dp,
+                    shape = RoundedCornerShape(32.dp),
+                    ambientColor = Color.Black.copy(alpha = 0.6f),
+                    spotColor = HiddenForest.Accent.copy(alpha = 0.25f)
+                )
                 .clip(RoundedCornerShape(32.dp))
                 .background(
-                    Brush.verticalGradient(
+                    brush = Brush.verticalGradient(
                         colors = listOf(
-                            HiddenForest.SurfaceVariant.copy(alpha = 0.85f),
-                            Color(0xCC050705)
+                            Color(0xFF1A3326).copy(alpha = 0.55f),
+                            Color(0xFF0A1610).copy(alpha = 0.72f)
                         )
                     )
                 )
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(32.dp))
+                .border(
+                    width = 1.dp,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.30f),
+                            HiddenForest.Accent.copy(alpha = 0.25f),
+                            Color.White.copy(alpha = 0.05f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(32.dp)
+                )
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -800,17 +819,37 @@ fun WoodsBottomNavigation(
             navItems.forEachIndexed { index, (route, icon, label) ->
                 val isActive = currentRoute == route
                 val isCenter = index == 2
+                val itemShape = RoundedCornerShape(22.dp)
 
                 Box(
                     modifier = Modifier
                         .weight(if (isCenter) 1.2f else 1f)
                         .padding(horizontal = 2.dp)
-                        .clip(RoundedCornerShape(if (isCenter) 24.dp else 16.dp))
-                        .background(
-                            when {
-                                isCenter -> androidx.compose.ui.graphics.SolidColor(HiddenForest.Accent)
-                                isActive -> androidx.compose.ui.graphics.SolidColor(HiddenForest.Accent.copy(alpha = 0.15f))
-                                else -> androidx.compose.ui.graphics.SolidColor(Color.Transparent)
+                        .clip(itemShape)
+                        .then(
+                            if (isCenter || isActive) {
+                                Modifier
+                                    .background(
+                                        brush = Brush.verticalGradient(
+                                            colors = listOf(
+                                                HiddenForest.Accent.copy(alpha = if (isCenter) 0.45f else 0.38f),
+                                                HiddenForest.Accent.copy(alpha = if (isCenter) 0.22f else 0.16f)
+                                            )
+                                        ),
+                                        shape = itemShape
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.35f),
+                                                HiddenForest.Accent.copy(alpha = 0.55f)
+                                            )
+                                        ),
+                                        shape = itemShape
+                                    )
+                            } else {
+                                Modifier
                             }
                         )
                         .then(
@@ -837,8 +876,8 @@ fun WoodsBottomNavigation(
                             imageVector = icon,
                             contentDescription = label,
                             tint = when {
-                                isCenter -> Color.White
-                                isActive -> HiddenForest.Accent
+                                isCenter -> Color(0xFFE8FFF2)
+                                isActive -> Color(0xFFE8FFF2)
                                 else -> HiddenForest.TextLow
                             },
                             modifier = Modifier.size(if (isCenter) 26.dp else 22.dp)
@@ -849,7 +888,7 @@ fun WoodsBottomNavigation(
                             Text(
                                 text = "Historial",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.sp),
-                                color = Color.White.copy(alpha = 0.65f)
+                                color = Color(0xFFE8FFF2).copy(alpha = 0.85f)
                             )
                         } else {
                             Spacer(modifier = Modifier.height(2.dp))
@@ -859,7 +898,7 @@ fun WoodsBottomNavigation(
                                     fontSize = 9.sp,
                                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
                                 ),
-                                color = if (isActive) HiddenForest.Accent else HiddenForest.TextLow
+                                color = if (isActive) Color(0xFFE8FFF2) else HiddenForest.TextLow
                             )
                         }
                     }
