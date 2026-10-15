@@ -31,6 +31,8 @@ import com.example.woodsreader.data.model.HighlightColor
 import com.example.woodsreader.data.model.toArgb
 import com.example.woodsreader.ui.theme.HiddenForest
 import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeChild
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,12 +84,13 @@ fun ReaderNotesTab(
         
         // Convert Bookmarks
         bookmarks.forEach { bm ->
+            val (headerBadge, fallbackDisplay) = bookmarkDisplay(bm)
             list.add(
                 UnifiedNote(
                     id = bm.id,
                     type = NoteType.BOOKMARK,
-                    title = "Marcador",
-                    content = bm.label.ifEmpty { "Sin descripción" },
+                    title = headerBadge,
+                    content = bm.label.ifBlank { fallbackDisplay },
                     timestamp = bm.createdAt,
                     originalBookmark = bm
                 )
@@ -173,6 +176,33 @@ fun ReaderNotesTab(
     }
 }
 
+private fun bookmarkDisplay(bookmark: BookmarkEntity): Pair<String, String> {
+    val jsonObj = runCatching { JSONObject(bookmark.locatorJson) }.getOrNull()
+    val locationsObj = jsonObj?.optJSONObject("locations")
+    val position = locationsObj?.optInt("position", 0) ?: 0
+    val progress = locationsObj?.optDouble("totalProgression", -1.0) ?: -1.0
+    val locatorTitle = jsonObj?.optString("title", "").orEmpty()
+    val textObj = jsonObj?.optJSONObject("text")
+    val highlightText = textObj?.optString("highlight", "")?.takeIf { it.isNotBlank() }
+        ?: textObj?.optString("after", "")?.take(100)
+        ?: ""
+
+    val headerBadge = buildString {
+        append("MARCADOR")
+        if (position > 0) append(" · PÁGINA $position")
+        if (progress >= 0.0) {
+            append(" · ${String.format(Locale.US, "%.1f%%", progress * 100.0)}")
+        }
+    }
+    val fallbackDisplay = when {
+        highlightText.isNotBlank() -> "\"${highlightText.trim()}\""
+        locatorTitle.isNotBlank() -> locatorTitle
+        position > 0 -> "Marcador en la página $position"
+        else -> "Posición guardada en el libro"
+    }
+    return headerBadge to fallbackDisplay
+}
+
 @Composable
 fun ReaderUnifiedNoteItem(
     hazeState: HazeState,
@@ -180,11 +210,15 @@ fun ReaderUnifiedNoteItem(
     onNoteClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
-    ReaderCrystalCard(
-        hazeState = hazeState,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
+            .hazeChild(state = hazeState, style = ReaderDesign.GlassStyle)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xFF162B20).copy(alpha = 0.92f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
             .clickable { onNoteClick() }
+            .padding(16.dp)
     ) {
         Row(
             modifier = Modifier.height(IntrinsicSize.Min),

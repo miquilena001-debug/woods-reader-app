@@ -192,6 +192,7 @@ fun ReaderScreen(
     val userPreferences by viewModel.userPreferences.collectAsStateWithLifecycle()
     val highlights by viewModel.highlights.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
+    val isCurrentPageBookmarked by viewModel.isCurrentPageBookmarked.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
     val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED || ttsState == TtsState.LOADING
     val isLoadingTtsModel by viewModel.isLoadingTtsModel.collectAsStateWithLifecycle()
@@ -376,6 +377,13 @@ fun ReaderScreen(
         }
     }
 
+    LaunchedEffect(showHighlightMenu) {
+        if (showHighlightMenu != null) {
+            activeActionMode?.finish()
+            activeActionMode = null
+        }
+    }
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
@@ -438,6 +446,9 @@ fun ReaderScreen(
     // Sin esto, cualquier recomposiciÃƒÂ³n dispara submitPreferences() innecesariamente.
     val isRtl by viewModel.isRtl.collectAsStateWithLifecycle()
     val showEpubCoverPage by viewModel.showEpubCoverPage.collectAsStateWithLifecycle()
+    LaunchedEffect(showEpubCoverPage) {
+        if (showEpubCoverPage) viewModel.dismissEpubCoverPage()
+    }
     val epubPreferences = remember(userPreferences, isRtl) {
         userPreferences.copy(scrollMode = ScrollMode.CONTINUOUS_VERTICAL).toEpubPreferences().let { prefs ->
             if (isRtl) prefs.copy(readingProgression = org.readium.r2.navigator.preferences.ReadingProgression.RTL)
@@ -1196,6 +1207,7 @@ fun ReaderScreen(
                 isReflowAvailable = (uiState as? ReaderUiState.Success)?.book?.format?.name == "PDF",
                 isReflowMode = isReflowMode,
                 currentScrollMode = userPreferences.scrollMode,
+                isCurrentPageBookmarked = isCurrentPageBookmarked,
                 onOptionClick = { option ->
                     showMasterMenu = false
                     when (option.type) {
@@ -1208,7 +1220,7 @@ fun ReaderScreen(
                             showAudioSheet = true
                         }
                         MasterMenuOptionType.BOOKMARK -> {
-                            currentLocator?.let { viewModel.addBookmark(it) } 
+                            viewModel.addBookmark(currentLocator)
                         }
                         MasterMenuOptionType.SCROLL_MODE -> {
                             viewModel.toggleScrollMode()
@@ -1256,10 +1268,12 @@ fun ReaderScreen(
                 onHighlightClick = { hl ->
                     val loc = hl.toLocator()
                     if (loc != null) viewModel.goToLocator(navigator, loc)
+                    showAudioSheet = false
                 },
                 onBookmarkClick = { bm ->
                     val loc = bm.toLocator()
                     if (loc != null) viewModel.goToLocator(navigator, loc)
+                    showAudioSheet = false
                 },
                 onDeleteHighlight = { viewModel.deleteHighlight(it) },
                 onDeleteBookmark = { viewModel.deleteBookmark(it) },
@@ -1735,15 +1749,6 @@ fun ReaderScreen(
             )
         }
 
-        successState
-            ?.takeIf { showEpubCoverPage && it.book.format.name == "EPUB" }
-            ?.let { state ->
-                EpubCoverPage(
-                    book = state.book,
-                    publication = state.publication,
-                    onDismiss = { viewModel.dismissEpubCoverPage() }
-                )
-            }
     }
 }
 }
@@ -1857,5 +1862,3 @@ fun FootnoteSheet(
         }
     }
 }
-
-

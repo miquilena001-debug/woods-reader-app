@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -79,7 +80,7 @@ fun ReaderControlBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = HiddenForest.Surface.copy(alpha = 0.75f),
+        containerColor = Color.Transparent,
         dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
         shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
         modifier = Modifier
@@ -93,6 +94,15 @@ fun ReaderControlBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF102018).copy(alpha = 0.96f),
+                            Color(0xFF08110C).copy(alpha = 0.98f)
+                        )
+                    )
+                )
                 .padding(bottom = 24.dp)
         ) {
             // ── TAB SELECTOR ─────────────────────────────────────────────────────
@@ -778,4 +788,3 @@ private fun ScrollModeCard(
         )
     }
 }
-

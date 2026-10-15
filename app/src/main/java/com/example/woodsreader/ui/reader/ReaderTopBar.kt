@@ -55,8 +55,8 @@ fun ReaderTopBar(
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0E1F16).copy(alpha = 0.78f),
-                        Color(0xFF0A140F).copy(alpha = 0.62f)
+                        Color(0xFF0A140F).copy(alpha = 0.92f),
+                        Color(0xFF0A140F).copy(alpha = 0.86f)
                     )
                 )
             )
@@ -211,4 +211,3 @@ fun ReaderTopBar(
     }
 }
 }
-

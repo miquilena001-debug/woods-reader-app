@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -41,6 +42,7 @@ fun ReaderSideMenu(
     isReflowAvailable: Boolean,
     isReflowMode: Boolean = false,
     currentScrollMode: ScrollMode = ScrollMode.PAGINATED,
+    isCurrentPageBookmarked: Boolean = false,
     onOptionClick: (MasterMenuOption) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -61,22 +63,22 @@ fun ReaderSideMenu(
                 .padding(end = 16.dp)
                 .width(200.dp)
                 .heightIn(max = 500.dp) // Limitar altura máxima para que no ocupe todo
+                .shadow(16.dp, RoundedCornerShape(32.dp))
                 .clip(RoundedCornerShape(32.dp))
                 .hazeChild(
                     state = hazeState,
                     style = ReaderDesign.GlassStyle
                 )
-                .background(HiddenForest.Surface.copy(alpha = 0.75f))
-                // Borde de "Espejo/Cristal" (Reflejo en el borde superior izquierdo)
-                .border(
-                    width = 1.dp,
-                    brush = Brush.linearGradient(
-                        0.0f to Color.White.copy(alpha = 0.25f),
-                        0.5f to Color.Transparent,
-                        1.0f to Color.White.copy(alpha = 0.05f)
-                    ),
-                    shape = RoundedCornerShape(32.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF13261C).copy(alpha = 0.95f),
+                            Color(0xFF0A140F).copy(alpha = 0.97f)
+                        )
+                    )
                 )
+                // Borde de "Espejo/Cristal" (Reflejo en el borde superior izquierdo)
+                .border(1.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(32.dp))
                 .padding(vertical = 24.dp, horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -88,7 +90,7 @@ fun ReaderSideMenu(
                 modifier = Modifier.padding(bottom = 20.dp)
             )
 
-            val options = remember(isReflowAvailable, currentScrollMode, isReflowMode) {
+            val options = remember(isReflowAvailable, currentScrollMode, isReflowMode, isCurrentPageBookmarked) {
                 buildList {
                     add(MasterMenuOption("Narrar", Icons.AutoMirrored.Filled.VolumeUp, MasterMenuOptionType.TTS))
                     add(MasterMenuOption("Índice", Icons.Default.Menu, MasterMenuOptionType.TOC))
@@ -99,7 +101,14 @@ fun ReaderSideMenu(
                         add(MasterMenuOption(reflowLabel, reflowIcon, MasterMenuOptionType.REFLOW))
                     }
                     add(MasterMenuOption("Ajustes", Icons.Default.Settings, MasterMenuOptionType.SETTINGS))
-                    add(MasterMenuOption("Marcador", Icons.Default.BookmarkBorder, MasterMenuOptionType.BOOKMARK))
+                    add(
+                        MasterMenuOption(
+                            label = if (isCurrentPageBookmarked) "Marcador guardado" else "Marcador",
+                            icon = if (isCurrentPageBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            type = MasterMenuOptionType.BOOKMARK,
+                            isSelected = isCurrentPageBookmarked
+                        )
+                    )
                 }
             }
 
@@ -154,12 +163,13 @@ private fun SideMenuTile(
             }
             .clip(RoundedCornerShape(20.dp))
             .background(
-                if (isPressed) HiddenForest.Accent.copy(alpha = 0.15f) 
+                if (isPressed) HiddenForest.Accent.copy(alpha = 0.15f)
+                else if (option.isSelected) HiddenForest.Accent.copy(alpha = 0.18f)
                 else HiddenForest.SurfaceVariant.copy(alpha = 0.4f)
             )
             .border(
                 width = 1.dp,
-                color = if (isPressed) HiddenForest.Accent.copy(0.3f) else Color.Transparent,
+                color = if (isPressed || option.isSelected) HiddenForest.Accent.copy(0.4f) else Color.Transparent,
                 shape = RoundedCornerShape(20.dp)
             )
             .clickable(
@@ -185,7 +195,7 @@ private fun SideMenuTile(
             Icon(
                 imageVector = option.icon,
                 contentDescription = option.label,
-                tint = HiddenForest.Accent,
+                tint = if (option.isSelected) HiddenForest.Accent else HiddenForest.TextSecondary,
                 modifier = Modifier.size(22.dp)
             )
         }
@@ -207,7 +217,8 @@ private fun SideMenuTile(
 data class MasterMenuOption(
     val label: String,
     val icon: ImageVector,
-    val type: MasterMenuOptionType
+    val type: MasterMenuOptionType,
+    val isSelected: Boolean = false
 )
 
 enum class MasterMenuOptionType {

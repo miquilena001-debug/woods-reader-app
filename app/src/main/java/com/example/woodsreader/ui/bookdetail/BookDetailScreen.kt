@@ -244,8 +244,8 @@ private fun CoverHeroSection(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to Color(0x88080B08),
-                        0.5f to Color(0xCC080B08),
+                        0f to HiddenForest.Background.copy(alpha = 0.35f),
+                        0.65f to HiddenForest.Background.copy(alpha = 0.85f),
                         1f to HiddenForest.Background
                     )
                 )
@@ -283,8 +283,9 @@ private fun CoverHeroSection(
                 Text(
                     text = book.title,
                     style = MaterialTheme.typography.titleLarge.copy(
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        lineHeight = 28.sp
+                        lineHeight = 26.sp
                     ),
                     color = HiddenForest.Text,
                     maxLines = 3,
@@ -300,8 +301,16 @@ private fun CoverHeroSection(
 
                 // Progress pill
                 if (book.readingProgressPercent > 0f) {
-                    val pct = (book.readingProgressPercent * 100).roundToInt()
-                    LinearProgressIndicatorPill(progress = book.readingProgressPercent, pct = pct)
+                    val progressPct = (book.readingProgressPercent * 100f).coerceIn(0f, 100f)
+                    val progressLabel = when {
+                        progressPct <= 0f -> "0%"
+                        progressPct < 1f -> String.format(Locale.US, "%.1f%%", progressPct)
+                        else -> "${progressPct.roundToInt()}%"
+                    }
+                    LinearProgressIndicatorPill(
+                        progress = book.readingProgressPercent.coerceAtLeast(0.02f),
+                        progressLabel = progressLabel
+                    )
                 }
             }
         }
@@ -309,7 +318,7 @@ private fun CoverHeroSection(
 }
 
 @Composable
-private fun LinearProgressIndicatorPill(progress: Float, pct: Int) {
+private fun LinearProgressIndicatorPill(progress: Float, progressLabel: String) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -321,7 +330,7 @@ private fun LinearProgressIndicatorPill(progress: Float, pct: Int) {
                 color = HiddenForest.TextLow
             )
             Text(
-                text = "$pct%",
+                text = progressLabel,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = HiddenForest.Accent
             )
@@ -418,6 +427,15 @@ private fun MetadataSection(
             .padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        val displayStatus = if (
+            book.readingStatus == ReadingStatus.NOT_STARTED &&
+            (book.readingProgressPercent > 0f || book.totalReadingTimeMs > 0L)
+        ) {
+            ReadingStatus.IN_PROGRESS
+        } else {
+            book.readingStatus
+        }
+
         // Status + Rating row
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -425,7 +443,7 @@ private fun MetadataSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             ReadingStatusSelector(
-                current = book.readingStatus,
+                current = displayStatus,
                 onSelect = onUpdateStatus
             )
             StarRating(

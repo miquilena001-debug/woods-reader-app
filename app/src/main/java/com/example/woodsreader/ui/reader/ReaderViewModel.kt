@@ -63,6 +63,7 @@ import org.readium.r2.shared.util.mediatype.MediaType
 
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
+import org.json.JSONObject
 
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.content.*
@@ -198,6 +199,9 @@ class ReaderViewModel @Inject constructor(
     val reflowState = pdfReflowManager.reflowState
     val isLoadingMoreReflow = pdfReflowManager.isLoadingMoreReflow
     private var lastKnownReflowPage: Int = 1
+    private var currentBookmarkLocator: Locator? = null
+    private val _isCurrentPageBookmarked = MutableStateFlow(false)
+    val isCurrentPageBookmarked = _isCurrentPageBookmarked.asStateFlow()
 
         val highlights = bookRepository.getHighlights(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val bookmarks = bookRepository.getBookmarks(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -236,6 +240,12 @@ class ReaderViewModel @Inject constructor(
     // Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     init {
+        viewModelScope.launch {
+            bookmarks.collect {
+                refreshCurrentBookmarkState()
+            }
+        }
+
         // Sincronizar preferencias de TTS almacenadas
         viewModelScope.launch {
             userPreferencesRepository.userPreferencesFlow.collect { prefs ->
@@ -739,9 +749,67 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun addBookmark(locator: Locator) = viewModelScope.launch {
-        bookRepository.saveBookmark(BookmarkEntity(bookId = bookId, locatorJson = locator.toJSON().toString()))
+    fun addBookmark(locator: Locator?, label: String? = null) = viewModelScope.launch {
+        val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value ?: locator
+        val page = if (isReflowMode.value || isPdfBook) {
+            lastKnownReflowPage
+        } else {
+            currentLocator?.locations?.position ?: 1
+        }
+        val bookmarkLocator = currentLocator?.let {
+            if (isReflowMode.value || isPdfBook) {
+                it.copy(locations = it.locations.copy(position = page))
+            } else {
+                it
+            }
+        } ?: return@launch
+        currentBookmarkLocator = bookmarkLocator
+        refreshCurrentBookmarkState()
+        if (_isCurrentPageBookmarked.value) return@launch
 
+        val chapter = _chapterInfo.value.title?.takeIf { it.isNotBlank() }
+            ?: bookmarkLocator.title?.takeIf { it.isNotBlank() }
+            ?: ""
+        val progressPct = String.format(Locale.US, "%.1f%%", (_globalProgress.value * 100f).coerceIn(0f, 100f))
+        val snippet = bookmarkLocator.text.highlight?.trim()?.takeIf { it.isNotBlank() }
+            ?: bookmarkLocator.text.after?.trim()?.take(120)?.takeIf { it.isNotBlank() }
+            ?: if (isReflowMode.value || isPdfBook) {
+                pdfReflowManager.reflowState.value.items.firstOrNull { item ->
+                    item.pageNumber == page && (item is ReflowItem.Paragraph || item is ReflowItem.Header)
+                }?.let { item ->
+                    when (item) {
+                        is ReflowItem.Paragraph -> item.content
+                        is ReflowItem.Header -> item.content
+                        else -> null
+                    }?.trim()?.take(120)
+                }
+            } else {
+                null
+            }
+
+        val autoLabel = buildString {
+            if (chapter.isNotBlank()) append(chapter)
+            if (page > 0) {
+                if (isNotEmpty()) append(" · ")
+                append("Página $page")
+            }
+            if (progressPct.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append("($progressPct)")
+            }
+            if (!snippet.isNullOrBlank()) {
+                if (isNotEmpty()) append("\n")
+                append("\"${snippet.take(110).trim()}\"")
+            }
+        }.ifBlank { "Página ${page.coerceAtLeast(1)} ($progressPct)" }
+
+        bookRepository.saveBookmark(
+            BookmarkEntity(
+                bookId = bookId,
+                locatorJson = bookmarkLocator.toJSON().toString(),
+                label = label?.takeIf { it.isNotBlank() } ?: autoLabel
+            )
+        )
     }
 
     fun deleteBookmark(bookmark: BookmarkEntity) = viewModelScope.launch { bookRepository.deleteBookmark(bookmark) }
@@ -850,6 +918,11 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun onLocatorChanged(locator: Locator) {
+        currentBookmarkLocator = locator
+        if (isPdfBook && !isReflowMode.value) {
+            lastKnownReflowPage = locator.locations.position ?: 1
+        }
+        refreshCurrentBookmarkState()
         if (_showEpubCoverPage.value) return
         if (isPdfBook && !isReflowMode.value) {
             val page = locator.locations.position ?: 1
@@ -1764,12 +1837,20 @@ class ReaderViewModel @Inject constructor(
             }
             if (pageNumber > 0) {
                 lastKnownReflowPage = pageNumber
+                val locator = (navigator as? VisualNavigator)?.currentLocator?.value
+                if (locator != null) {
+                    currentBookmarkLocator = locator.copy(
+                        locations = locator.locations.copy(position = pageNumber)
+                    )
+                    refreshCurrentBookmarkState()
+                }
             }
             if (!isScrolling && pageNumber > 0) {
                 val pageKey = "pdf_reflow#$pageNumber"
                 if (!readingSessionManager.pagesRead.value.contains(pageKey)) {
                     readingSessionManager.addPageRead(pageKey)
                 }
+
                 recordActivity()
                 viewModelScope.launch(Dispatchers.IO) {
                     bookRepository.updateReadingProgressWithFallback(
@@ -1780,6 +1861,27 @@ class ReaderViewModel @Inject constructor(
                         fallbackPosition = pageNumber
                     )
                 }
+            }
+        }
+    }
+
+    private fun refreshCurrentBookmarkState() {
+        val locator = currentBookmarkLocator ?: return
+        val position = if (isReflowMode.value || isPdfBook) lastKnownReflowPage else locator.locations.position ?: 0
+        _isCurrentPageBookmarked.value = bookmarks.value.any { bookmark ->
+            val savedLocator = runCatching {
+                Locator.fromJSON(JSONObject(bookmark.locatorJson))
+            }.getOrNull() ?: return@any false
+            if (savedLocator.href.toString() != locator.href.toString()) {
+                return@any false
+            }
+            val savedPosition = savedLocator.locations.position ?: 0
+            if (position > 0 && savedPosition > 0) {
+                savedPosition == position
+            } else {
+                val currentProgress = locator.locations.totalProgression
+                val savedProgress = savedLocator.locations.totalProgression
+                currentProgress != null && savedProgress != null && abs(currentProgress - savedProgress) < 0.002
             }
         }
     }

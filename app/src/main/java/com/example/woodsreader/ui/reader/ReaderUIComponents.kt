@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 import dev.chrisbanes.haze.HazeStyle
@@ -195,14 +196,24 @@ fun HighlightColorMenu(
                     style = ReaderDesign.GlassStyle
                 )
                 .clip(RoundedCornerShape(28.dp))
-                .background(HiddenForest.Surface.copy(alpha = 0.8f))
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xFF14261D).copy(alpha = 0.95f),
+                            Color(0xFF0A140F).copy(alpha = 0.97f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(24.dp)
+                )
                 .border(
                     width = 1.dp,
                     brush = Brush.verticalGradient(
-                        0.0f to Color.White.copy(alpha = 0.2f),
-                        1.0f to Color.Transparent
+                        colors = listOf(
+                            Color.White.copy(alpha = 0.22f),
+                            HiddenForest.Accent.copy(alpha = 0.30f)
+                        )
                     ),
-                    shape = RoundedCornerShape(28.dp)
+                    shape = RoundedCornerShape(24.dp)
                 )
                 .padding(24.dp)
         ) {
@@ -214,26 +225,37 @@ fun HighlightColorMenu(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     HighlightColor.entries.forEach { colorEnum ->
                         Column(
+                            modifier = Modifier.width(52.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
                                     .background(Color(colorEnum.toArgb()))
-                                    .border(2.dp, Color.White.copy(0.2f), CircleShape)
+                                    .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
                                     .clickable { onColorSelected(colorEnum) }
                             )
                             Text(
-                                text = colorEnum.name.lowercase().replaceFirstChar { it.uppercase() },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = HiddenForest.TextLow
+                                text = when (colorEnum) {
+                                    HighlightColor.YELLOW -> "Amarillo"
+                                    HighlightColor.GREEN -> "Verde"
+                                    HighlightColor.BLUE -> "Azul"
+                                    HighlightColor.PINK -> "Rosa"
+                                    HighlightColor.RED -> "Rojo"
+                                },
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                color = HiddenForest.TextLow,
+                                maxLines = 1
                             )
                         }
                     }
@@ -258,17 +280,19 @@ fun HighlightColorMenu(
                                     .padding(vertical = 8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
+                                ActionIconCircle(
                                     imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = "Narrar",
-                                    tint = HiddenForest.Accent,
-                                    modifier = Modifier.size(24.dp)
+                                    contentDescription = "Narrar"
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Narrar",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.Text
+                                    color = HiddenForest.Text,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -282,17 +306,19 @@ fun HighlightColorMenu(
                                     .padding(vertical = 8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
+                                ActionIconCircle(
                                     imageVector = Icons.Default.Search,
-                                    contentDescription = "Buscar",
-                                    tint = HiddenForest.Accent,
-                                    modifier = Modifier.size(24.dp)
+                                    contentDescription = "Buscar"
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Buscar",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.Text
+                                    color = HiddenForest.Text,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -306,17 +332,19 @@ fun HighlightColorMenu(
                                     .padding(vertical = 8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
+                                ActionIconCircle(
                                     imageVector = Icons.Default.Translate,
-                                    contentDescription = "Traducir",
-                                    tint = HiddenForest.Accent,
-                                    modifier = Modifier.size(24.dp)
+                                    contentDescription = "Traducir"
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Traducir",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.Text
+                                    color = HiddenForest.Text,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -330,17 +358,19 @@ fun HighlightColorMenu(
                                     .padding(vertical = 8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
+                                ActionIconCircle(
                                     imageVector = Icons.Default.Book,
-                                    contentDescription = "Diccionario",
-                                    tint = HiddenForest.Accent,
-                                    modifier = Modifier.size(24.dp)
+                                    contentDescription = "Diccionario"
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Definición",
+                                    text = "Definir",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.Text
+                                    color = HiddenForest.Text,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -354,17 +384,19 @@ fun HighlightColorMenu(
                                     .padding(vertical = 8.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Icon(
+                                ActionIconCircle(
                                     imageVector = Icons.AutoMirrored.Filled.VolumeOff,
-                                    contentDescription = "Ignorar en TTS",
-                                    tint = HiddenForest.Accent,
-                                    modifier = Modifier.size(24.dp)
+                                    contentDescription = "Ignorar en TTS"
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Ignorar",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.Text
+                                    color = HiddenForest.Text,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -373,4 +405,25 @@ fun HighlightColorMenu(
             }
     }
 }
+}
+
+@Composable
+private fun ActionIconCircle(
+    imageVector: ImageVector,
+    contentDescription: String
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(HiddenForest.Accent.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = imageVector,
+            contentDescription = contentDescription,
+            tint = HiddenForest.Accent,
+            modifier = Modifier.size(20.dp)
+        )
+    }
 }
