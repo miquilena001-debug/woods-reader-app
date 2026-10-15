@@ -145,11 +145,15 @@ data class CollectionEntity(
 
 // ── TtsRuleEntity ─────────────────────────────────────────────────────────────
 @Immutable
-@Entity(tableName = "tts_rules")
+@Entity(
+    tableName = "tts_rules",
+    indices = [Index("bookId")]
+)
 data class TtsRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val pattern: String,
     val replacement: String,
     val isRegex: Boolean = false,
-    val isEnabled: Boolean = true
+    val isEnabled: Boolean = true,
+    val bookId: String? = null
 )

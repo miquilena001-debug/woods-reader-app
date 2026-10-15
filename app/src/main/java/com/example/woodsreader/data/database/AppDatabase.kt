@@ -23,7 +23,7 @@ import androidx.room.TypeConverters
         ReadingStatsEntity::class,
         TtsRuleEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(AppTypeConverters::class)
@@ -34,6 +34,8 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_3_4 = com.example.woodsreader.data.database.migration.MIGRATION_3_4
         val MIGRATION_4_5 = com.example.woodsreader.data.database.migration.MIGRATION_4_5
         val MIGRATION_5_6 = com.example.woodsreader.data.database.migration.MIGRATION_5_6
+        val MIGRATION_6_7 = com.example.woodsreader.data.database.migration.MIGRATION_6_7
+        val MIGRATION_7_8 = com.example.woodsreader.data.database.migration.MIGRATION_7_8
     }
 
     abstract fun bookDao(): BookDao

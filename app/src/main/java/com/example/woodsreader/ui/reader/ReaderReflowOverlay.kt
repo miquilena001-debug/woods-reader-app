@@ -120,17 +120,40 @@ fun ReaderReflowOverlay(
         }
     }
 
-    // Detección de carga incremental hacia adelante (evita auto-desplazamiento infinito hacia atrás)
+    // Compensar posición de scroll cuando se prependen elementos de una página anterior
+    var previousItemCount by remember { mutableIntStateOf(items.size) }
+    var previousFirstPage by remember { mutableIntStateOf(items.firstOrNull()?.pageNumber ?: -1) }
+
+    LaunchedEffect(items.size, items.firstOrNull()?.pageNumber) {
+        val currentFirstPage = items.firstOrNull()?.pageNumber ?: -1
+        if (previousItemCount > 0 && items.size > previousItemCount && currentFirstPage != -1 && currentFirstPage < previousFirstPage) {
+            val addedCount = items.size - previousItemCount
+            listState.scrollToItem(
+                index = listState.firstVisibleItemIndex + addedCount,
+                scrollOffset = listState.firstVisibleItemScrollOffset
+            )
+        }
+        previousItemCount = items.size
+        previousFirstPage = currentFirstPage
+    }
+
+    // Detección de carga incremental hacia adelante y hacia atrás
     LaunchedEffect(listState, isLoadingMore) {
-        snapshotFlow { listState.layoutInfo.visibleItemsInfo }
-            .collect { visibleItems ->
-                if (visibleItems.isNotEmpty() && !isLoadingMore && items.isNotEmpty()) {
-                    val lastVisibleIndex = visibleItems.last().index
-                    if (lastVisibleIndex >= items.size - 3) {
-                        onLoadMore()
-                    }
+        snapshotFlow {
+            Triple(
+                listState.layoutInfo.visibleItemsInfo.firstOrNull()?.index,
+                listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index,
+                listState.canScrollBackward
+            )
+        }.collect { (firstIdx, lastIdx, canScrollBack) ->
+            if (!isLoadingMore && items.isNotEmpty()) {
+                if (lastIdx != null && lastIdx >= items.size - 3) {
+                    onLoadMore()
+                } else if (firstIdx != null && firstIdx <= 1 && !canScrollBack && (items.firstOrNull()?.pageNumber ?: 1) > 1) {
+                    onLoadPrevious()
                 }
             }
+        }
     }
 
     var zoomedImageBytes by remember { mutableStateOf<ByteArray?>(null) }

@@ -388,7 +388,6 @@ fun ReaderScreen(
             }
             fragmentManager.fragmentFactory = androidx.fragment.app.FragmentFactory()
             navigatorState.value = null
-            System.gc()
         }
     }
 

@@ -27,13 +27,14 @@ class WordExclusionEngine @Inject constructor() {
      * Aplica la lista de reglas sobre el texto recibido.
      * Si una palabra es eliminada (replacement vacío), normaliza los espacios resultantes.
      */
-    fun filterText(text: String, rules: List<WordExclusionRule>): String {
+    fun filterText(text: String, rules: List<WordExclusionRule>, currentBookId: String? = null): String {
         if (text.isBlank() || rules.isEmpty()) return text
 
-        var processed = text
+        var processed = text.replace('\u00A0', ' ')
 
         for (rule in rules) {
-            val target = rule.target.trim()
+            if (rule.bookId != null && currentBookId != null && rule.bookId != currentBookId) continue
+            val target = rule.target.replace('\u00A0', ' ').trim()
             if (target.isEmpty()) continue
 
             processed = if (rule.isRegex) {
@@ -45,7 +46,7 @@ class WordExclusionEngine @Inject constructor() {
 
         // Colapsar espacios múltiples resultantes de eliminaciones
         return processed
-            .replace(Regex("""[ \t]+"""), " ")
+            .replace(Regex("""[ \t\u00A0]+"""), " ")
             .replace(Regex("""\s+([.,;:!?])"""), "$1")
             .trim()
     }

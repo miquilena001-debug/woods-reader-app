@@ -112,17 +112,18 @@ class ReadingPipeline @Inject constructor(
             val filteredText = wordExclusionEngine.filterText(raw.text, rules)
             if (filteredText.isBlank()) continue
 
-            // 4. Formatear tipográficamente para español
-            val formattedText = spanishTextFormatter.formatParagraph(filteredText)
+            // 4. Normalizar tipografía (para TTS y conteo) y ligar preposiciones (solo para UI)
+            val normalizedText = spanishTextFormatter.normalizeTypography(filteredText)
+            val displayFormattedText = spanishTextFormatter.bindOrphanPrepositions(normalizedText)
 
-            // Contabilizar palabras
-            totalWordsProcessed += formattedText.split(Regex("""\s+""")).size
+            // Contabilizar palabras sobre texto normalizado sin \u00A0
+            totalWordsProcessed += normalizedText.split(Regex("""\s+""")).count { it.isNotBlank() }
 
             // 5. Determinar si es título o párrafo estándar
-            val block = if (isLikelyHeading(raw.fontSize, formattedText)) {
+            val block = if (isLikelyHeading(raw.fontSize, normalizedText)) {
                 ReadingBlock.Heading(
                     id = raw.id,
-                    text = formattedText,
+                    text = displayFormattedText,
                     level = calculateHeadingLevel(raw.fontSize),
                     pageIndex = raw.pageIndex,
                     orderIndex = raw.orderIndex
@@ -130,7 +131,7 @@ class ReadingPipeline @Inject constructor(
             } else {
                 ReadingBlock.Paragraph(
                     id = raw.id,
-                    text = formattedText,
+                    text = displayFormattedText,
                     pageIndex = raw.pageIndex,
                     orderIndex = raw.orderIndex
                 )
@@ -141,7 +142,7 @@ class ReadingPipeline @Inject constructor(
                 TtsNarrationUnit(
                     id = "tts-${block.id}",
                     blockId = block.id,
-                    textToSpeak = formattedText,
+                    textToSpeak = normalizedText,
                     pageIndex = block.pageIndex,
                     isAnnouncement = false
                 )

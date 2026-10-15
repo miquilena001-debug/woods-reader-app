@@ -50,6 +50,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.FastOutSlowInEasing
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.ui.theme.HiddenForest
+import kotlin.math.roundToInt
 
 /** Helper to create a premium shimmer gradient brush in Compose */
 @Composable
@@ -113,11 +114,12 @@ fun WoodsBookCard(
                 onLongClick = onLongClick
             )
             .semantics {
+                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
                 role = Role.Button
                 contentDescription = "Libro: ${book.title}, por ${book.author}. " +
                         "Formato: ${book.format.name}. " +
-                        "Progreso: ${book.readingProgressPercent.toInt()}%. " +
-                        if (book.readingProgressPercent >= 100) "Terminado" else ""
+                        "Progreso: $pct%. " +
+                        if (book.readingProgressPercent >= 0.99f) "Terminado" else ""
                 onClick { onClick(); true }
             }
     ) {
@@ -176,7 +178,7 @@ fun WoodsBookCard(
 
             // Badge de estado
             when {
-                book.readingProgressPercent >= 100 -> {
+                book.readingProgressPercent >= 0.99f -> {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -187,12 +189,12 @@ fun WoodsBookCard(
                             .padding(horizontal = 5.dp, vertical = 1.dp)
                     ) {
                         Text(
-                            "✓", fontSize = 8.sp,
+                            "\u2713", fontSize = 8.sp,
                             color = HiddenForest.Accent, fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                book.readingProgressPercent == 0.0f -> {
+                book.readingProgressPercent <= 0.0f -> {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopStart)
@@ -232,12 +234,13 @@ fun WoodsBookCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            if (book.readingProgressPercent > 0) {
+            if (book.readingProgressPercent > 0f) {
+                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
                 Spacer(modifier = Modifier.height(6.dp))
-                WoodsProgressBar(progress = book.readingProgressPercent.toFloat() / 100f)
+                WoodsProgressBar(progress = book.readingProgressPercent)
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${book.readingProgressPercent.toInt()}%",
+                    text = "$pct%",
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
                     color = HiddenForest.TextLow,
                     modifier = Modifier.align(Alignment.End)
@@ -695,7 +698,7 @@ private fun RecentBookRow(book: BookEntity, rank: Int, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
             if (book.readingProgressPercent > 0f) {
-                WoodsProgressBar(progress = book.readingProgressPercent / 100f)
+                WoodsProgressBar(progress = book.readingProgressPercent)
             }
         }
 
@@ -716,8 +719,9 @@ private fun RecentBookRow(book: BookEntity, rank: Int, onClick: () -> Unit) {
                 )
             }
             if (book.readingProgressPercent > 0f) {
+                val pct = (book.readingProgressPercent * 100).roundToInt().coerceIn(0, 100)
                 Text(
-                    text = "${book.readingProgressPercent.toInt()}%",
+                    text = "$pct%",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Bold,
                         fontSize = 10.sp

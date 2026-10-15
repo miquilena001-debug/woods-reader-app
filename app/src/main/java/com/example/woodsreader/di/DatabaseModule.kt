@@ -44,7 +44,8 @@ object DatabaseModule {
             com.example.woodsreader.data.database.migration.MIGRATION_3_4,
             com.example.woodsreader.data.database.migration.MIGRATION_4_5,
             com.example.woodsreader.data.database.migration.MIGRATION_5_6,
-            MIGRATION_6_7
+            com.example.woodsreader.data.database.migration.MIGRATION_6_7,
+            com.example.woodsreader.data.database.migration.MIGRATION_7_8
         )
         // .fallbackToDestructiveMigration() // REMOVIDO: Protección estricta de datos (Parte 4)
         .build()
@@ -69,11 +70,4 @@ object DatabaseModule {
 
     @Provides
     fun provideTtsRuleDao(db: AppDatabase): TtsRuleDao = db.ttsRuleDao()
-}
-
-val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
-    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-        db.execSQL("CREATE INDEX IF NOT EXISTS `index_books_title` ON `books` (`title`)")
-        db.execSQL("CREATE INDEX IF NOT EXISTS `index_books_author` ON `books` (`author`)")
-    }
 }

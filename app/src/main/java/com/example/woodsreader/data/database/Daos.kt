@@ -238,13 +238,12 @@ interface ReadingSessionDao {
     @Query("SELECT * FROM reading_sessions WHERE startAt >= :startOfDayMs ORDER BY startAt DESC")
     fun todaySessions(startOfDayMs: Long): Flow<List<ReadingSessionEntity>>
 
-    // << CHANGE: Añadido filtro por timestamp para optimizar la obtención de días únicos
-    @Query("SELECT DISTINCT DATE(startAt/1000, 'unixepoch') FROM reading_sessions WHERE startAt >= :sinceMs ORDER BY startAt DESC")
+    @Query("SELECT DISTINCT DATE(startAt/1000, 'unixepoch', 'localtime') FROM reading_sessions WHERE startAt >= :sinceMs ORDER BY startAt DESC")
     fun getUniqueReadingDays(sinceMs: Long): Flow<List<String>>
 
     // Devuelve la suma de progreso por día para los últimos 7 días
     @Query("""
-        SELECT CAST(strftime('%w', startAt / 1000, 'unixepoch') AS INTEGER) as dayOfWeek,
+        SELECT CAST(strftime('%w', startAt / 1000, 'unixepoch', 'localtime') AS INTEGER) as dayOfWeek,
                SUM(wordsRead) as totalWords
         FROM reading_sessions
         WHERE startAt >= :sevenDaysAgo
@@ -254,7 +253,7 @@ interface ReadingSessionDao {
     fun getPagesPerDayLastWeek(sevenDaysAgo: Long): Flow<List<DailyWordCount>>
 
     @Query("""
-        SELECT DISTINCT date(startAt / 1000, 'unixepoch') as sessionDate
+        SELECT DISTINCT date(startAt / 1000, 'unixepoch', 'localtime') as sessionDate
         FROM reading_sessions
         WHERE startAt >= :twentyEightDaysAgo
         ORDER BY sessionDate ASC
@@ -275,7 +274,7 @@ interface ReadingSessionDao {
             SELECT SUM(wordsRead) as dailyTotal 
             FROM reading_sessions 
             WHERE startAt >= :sinceMs 
-            GROUP BY date(startAt / 1000, 'unixepoch')
+            GROUP BY date(startAt / 1000, 'unixepoch', 'localtime')
         )
     """)
     fun getAverageWordsPerDay(sinceMs: Long): Flow<Double?>
@@ -430,6 +429,9 @@ interface TtsRuleDao {
 
     @Query("SELECT * FROM tts_rules WHERE isEnabled = 1")
     suspend fun getActiveRules(): List<TtsRuleEntity>
+
+    @Query("SELECT * FROM tts_rules WHERE isEnabled = 1 AND (bookId IS NULL OR bookId = :bookId)")
+    suspend fun getActiveRulesForBook(bookId: String?): List<TtsRuleEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(rule: TtsRuleEntity)

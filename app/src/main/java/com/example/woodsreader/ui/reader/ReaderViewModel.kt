@@ -19,7 +19,7 @@ import com.example.woodsreader.data.database.BookmarkEntity
 
 import com.example.woodsreader.data.database.HighlightEntity
 import com.example.woodsreader.data.database.ReadingSessionEntity
-
+import com.example.woodsreader.data.database.TtsRuleEntity
 import com.example.woodsreader.data.database.ReadingStatsEntity
 import com.example.woodsreader.data.datastore.UserPreferences
 
@@ -409,13 +409,15 @@ class ReaderViewModel @Inject constructor(
                 }
                 positionsJob?.join()
 
+                ttsManager.setCurrentBookId(book.id)
+
                 val initialLocator = if (book.format.name == "PDF") {
                     val physicalPath = if (book.filePath.startsWith("/")) {
                         book.filePath
                     } else {
                         uri.path ?: book.filePath
                     }
-                    pdfReflowManager.initialize(physicalPath) { words ->
+                    pdfReflowManager.initialize(physicalPath, book.id) { words ->
                         recordActivity()
                     }
                     val initialPage = book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
@@ -431,10 +433,15 @@ class ReaderViewModel @Inject constructor(
                         fallbackPosition = book.fallbackLocatorPosition
                     )
                     viewModelScope.launch {
-                        epubFormatManager.initNavigator(pub, loc, viewModelScope, navigator)
+                        epubFormatManager.initNavigator(pub, loc, viewModelScope, navigator, book.id)
                     }
                     loc
                 }
+
+                lastRecordedProgression = initialLocator?.locations?.totalProgression
+                    ?: book.readingProgressPercent.toDouble()
+                _globalProgress.value = book.readingProgressPercent.coerceIn(0f, 1f)
+                startNewSession(ReadingMode.MANUAL, initialLocator)
 
                 withContext(Dispatchers.IO) {
                     bookRepository.markOpened(book.id)
@@ -560,7 +567,9 @@ class ReaderViewModel @Inject constructor(
     fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
         val locator = (navigator as? VisualNavigator)?.currentLocator?.value ?: initialLocator
         readingSessionManager.startNewSession(viewModelScope, bookId, mode, locator)
-        lastRecordedProgression = locator?.locations?.totalProgression ?: 0.0
+        locator?.locations?.totalProgression?.let {
+            lastRecordedProgression = it
+        }
         lastTtsSentence = null
     }
 
@@ -736,12 +745,21 @@ class ReaderViewModel @Inject constructor(
 
     fun deleteBookmark(bookmark: BookmarkEntity) = viewModelScope.launch { bookRepository.deleteBookmark(bookmark) }
 
-    fun saveTtsRule(rule: com.example.woodsreader.data.database.TtsRuleEntity) = viewModelScope.launch {
+    fun saveTtsRule(rule: TtsRuleEntity) = viewModelScope.launch {
         bookRepository.saveTtsRule(rule)
+        epubFormatManager.invalidateCache()
     }
 
-    fun deleteTtsRule(rule: com.example.woodsreader.data.database.TtsRuleEntity) = viewModelScope.launch {
+    fun addTtsRule(pattern: String, replacement: String, isRegex: Boolean) = viewModelScope.launch {
+        if (pattern.isNotBlank()) {
+            bookRepository.saveTtsRule(TtsRuleEntity(pattern = pattern.trim(), replacement = replacement.trim(), isRegex = isRegex))
+            epubFormatManager.invalidateCache()
+        }
+    }
+
+    fun deleteTtsRule(rule: TtsRuleEntity) = viewModelScope.launch {
         bookRepository.deleteTtsRule(rule)
+        epubFormatManager.invalidateCache()
     }
 
     fun addWordExclusionRule(
@@ -749,7 +767,13 @@ class ReaderViewModel @Inject constructor(
         isExactMatch: Boolean = true,
         applyToAllBooks: Boolean = true
     ) = viewModelScope.launch {
-        bookRepository.addWordExclusionRule(pattern, isExactMatch, applyToAllBooks)
+        bookRepository.addWordExclusionRule(
+            pattern = pattern,
+            isExactMatch = isExactMatch,
+            applyToAllBooks = applyToAllBooks,
+            bookId = if (applyToAllBooks) null else bookId
+        )
+        epubFormatManager.invalidateCache()
     }
 
     fun updateTtsVoiceName(voiceName: String?) = viewModelScope.launch {
@@ -1725,6 +1749,11 @@ class ReaderViewModel @Inject constructor(
                 lastKnownReflowPage = pageNumber
             }
             if (!isScrolling && pageNumber > 0) {
+                val pageKey = "pdf_reflow#$pageNumber"
+                if (!readingSessionManager.pagesRead.value.contains(pageKey)) {
+                    readingSessionManager.addPageRead(pageKey)
+                }
+                recordActivity()
                 viewModelScope.launch(Dispatchers.IO) {
                     bookRepository.updateReadingProgressWithFallback(
                         bookId = bookId,
@@ -1929,7 +1958,8 @@ class ReaderViewModel @Inject constructor(
         epubFormatManager.onCleared(context)
 
         super.onCleared()
-        ttsManager.shutdown()
+        ttsManager.stop()
+        ttsManager.setCurrentBookId(null)
 
         positionsJob?.cancel()
         positionsJob = null

@@ -39,7 +39,9 @@ class SpanishTextFormatter @Inject constructor() {
             builder.append(word)
 
             if (i < words.size - 1) {
-                val cleanWord = word.lowercase().trimEnd('.', ',', ';', ':', '!', '?', ')', '»', '"')
+                val cleanWord = word.lowercase().trimStart(
+                    '\u00BF', '\u00A1', '(', '\u00AB', '"', '\u201C', '\u2014', '\u2013', '-'
+                )
                 if (ORPHAN_WORDS.contains(cleanWord)) {
                     builder.append(NON_BREAKING_SPACE)
                 } else {
@@ -51,18 +53,14 @@ class SpanishTextFormatter @Inject constructor() {
         return builder.toString()
     }
 
-    /**
-     * Normaliza comillas angulares latinas (« »), guiones largos de diálogo (—)
-     * y signos dobles españoles de interrogación y exclamación (¿ ?, ¡ !).
-     */
     fun normalizeTypography(text: String): String {
         return text
-            .replace(Regex("""--"""), "—")
-            .replace(Regex("""¿\s+"""), "¿")
-            .replace(Regex("""¡\s+"""), "¡")
-            .replace(Regex("""«\s+"""), "«")
-            .replace(Regex("""\s+»"""), "»")
-            .replace(Regex("""\s+"""), " ")
+            .replace(Regex("""--"""), "\u2014")
+            .replace(Regex("""\u00BF\s+"""), "\u00BF")
+            .replace(Regex("""\u00A1\s+"""), "\u00A1")
+            .replace(Regex("""\u00AB\s+"""), "\u00AB")
+            .replace(Regex("""\s+\u00BB"""), "\u00BB")
+            .replace(Regex("""[\s\u00A0]+"""), " ")
             .trim()
     }
 

@@ -326,6 +326,40 @@ class BookScannerService @Inject constructor(
                         val existingCoverMissing = book.coverCachePath?.let { !File(it).exists() } ?: true
                         val resolvedCover = enriched.coverCachePath ?: if (existingCoverMissing) null else book.coverCachePath
 
+                        // Check if another book entry already owns this real SHA-256 hash
+                        val existingWithHash = if (hash.isNotEmpty() && !hash.startsWith("pending-")) {
+                            repository.getBookByHash(hash)
+                        } else null
+
+                        if (existingWithHash != null && existingWithHash.id != book.id) {
+                            val duplicateIsAhead = book.readingProgressPercent > existingWithHash.readingProgressPercent
+                            val mergedStatus = when {
+                                existingWithHash.readingStatus == com.example.woodsreader.data.model.ReadingStatus.ABANDONED ->
+                                    com.example.woodsreader.data.model.ReadingStatus.ABANDONED
+                                existingWithHash.readingStatus == com.example.woodsreader.data.model.ReadingStatus.COMPLETED ->
+                                    com.example.woodsreader.data.model.ReadingStatus.COMPLETED
+                                duplicateIsAhead -> book.readingStatus
+                                else -> existingWithHash.readingStatus
+                            }
+                            val mergedCanonical = existingWithHash.copy(
+                                readingProgressPercent = maxOf(existingWithHash.readingProgressPercent, book.readingProgressPercent),
+                                readingStatus = mergedStatus,
+                                currentLocatorJson = if (duplicateIsAhead) book.currentLocatorJson else existingWithHash.currentLocatorJson,
+                                fallbackLocatorHref = if (duplicateIsAhead) book.fallbackLocatorHref else existingWithHash.fallbackLocatorHref,
+                                fallbackLocatorPosition = if (duplicateIsAhead) book.fallbackLocatorPosition else existingWithHash.fallbackLocatorPosition,
+                                totalReadingTimeMs = existingWithHash.totalReadingTimeMs + book.totalReadingTimeMs,
+                                lastOpenedAt = maxOf(existingWithHash.lastOpenedAt ?: 0L, book.lastOpenedAt ?: 0L).takeIf { it > 0L },
+                                userRating = existingWithHash.userRating ?: book.userRating,
+                                userNotes = existingWithHash.userNotes.ifBlank { book.userNotes },
+                                collectionId = existingWithHash.collectionId ?: book.collectionId,
+                                coverCachePath = existingWithHash.coverCachePath ?: resolvedCover
+                            )
+                            repository.upsertBook(mergedCanonical)
+                            repository.deleteBookById(book.id)
+                            Log.d(TAG, "DeepEnrich: merged and removed duplicate ${book.filePath} (canonical=${existingWithHash.id})")
+                            continue
+                        }
+
                         // Update only fields that improved over fallback
                         val updated = book.copy(
                             title = if (enriched.title.isNotBlank()) enriched.title else book.title,

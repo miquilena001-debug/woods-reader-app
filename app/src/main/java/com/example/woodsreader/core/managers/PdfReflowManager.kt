@@ -41,7 +41,8 @@ class PdfReflowManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ttsManager: TtsManager,
     private val readingPipeline: ReadingPipeline,
-    private val noiseClassifier: NoiseClassifier
+    private val noiseClassifier: NoiseClassifier,
+    private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao
 ) {
     companion object {
         private const val TAG = "PdfReflowManager"
@@ -103,10 +104,19 @@ class PdfReflowManager @Inject constructor(
     var ttsUserStopped = false
 
     private var currentBookFilePath: String? = null
+    private var currentBookId: String? = null
     private var onWordsProcessed: ((Long) -> Unit)? = null
+    private var lastPitch: Float? = null
+    private var lastLanguageCode: String? = null
+    private var lastVoiceName: String? = null
 
-    fun initialize(filePath: String, onWordsProcessedCallback: (Long) -> Unit) {
+    fun initialize(
+        filePath: String,
+        bookId: String? = null,
+        onWordsProcessedCallback: (Long) -> Unit
+    ) {
         currentBookFilePath = filePath
+        currentBookId = bookId
         onWordsProcessed = onWordsProcessedCallback
     }
 
@@ -332,7 +342,7 @@ class PdfReflowManager @Inject constructor(
         }
     }
 
-    private fun processSinglePage(document: PDDocument, pageIndex: Int, targetList: MutableList<ReflowItem>) {
+    private suspend fun processSinglePage(document: PDDocument, pageIndex: Int, targetList: MutableList<ReflowItem>) {
         try {
             val page = document.getPage(pageIndex - 1)
             
@@ -365,9 +375,24 @@ class PdfReflowManager @Inject constructor(
             pageBoundariesMap[pageIndex] = Pair(lineInfos.firstOrNull()?.text, lineInfos.lastOrNull()?.text)
             updateRepetitiveHeadersFooters()
 
-            // 3. Pasar por ReadingPipeline: filtro de ruido, formato tipografico, TTS units
+            // 3. Pasar por ReadingPipeline: filtro de ruido, reglas activas del libro, formato tipografico, TTS units
+            val activeRules = try {
+                ttsRuleDao.getActiveRulesForBook(currentBookId).map {
+                    com.example.woodsreader.core.pipeline.WordExclusionRule(
+                        id = it.id.toString(),
+                        target = it.pattern,
+                        replacement = it.replacement,
+                        isRegex = it.isRegex,
+                        bookId = it.bookId
+                    )
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+
             val processed = readingPipeline.process(
                 rawBlocks = rawBlocks,
+                rules = activeRules,
                 stripNoiseFromDisplay = true,
                 knownRepetitiveHeadersFooters = knownRepetitiveHeadersFooters
             )
@@ -519,6 +544,9 @@ class PdfReflowManager @Inject constructor(
         voiceName: String? = null,
         startIndex: Int = _ttsActiveBlockIndex.value.coerceAtLeast(0)
     ) {
+        lastPitch = pitch
+        lastLanguageCode = languageCode
+        lastVoiceName = voiceName
         val locale = languageCode?.let { java.util.Locale.forLanguageTag(it) } ?: java.util.Locale.getDefault()
         if (!ttsManager.initialize(locale, voiceName)) return
         registerNoisyReceiver()
@@ -641,7 +669,16 @@ class PdfReflowManager @Inject constructor(
         if (isReflowTtsRunning) {
             val idx = _ttsActiveBlockIndex.value
             pauseReflowTts()
-            scope.launch { playReflowTts(scope, speed = speed, startIndex = idx) }
+            scope.launch {
+                playReflowTts(
+                    scope = scope,
+                    speed = speed,
+                    pitch = lastPitch,
+                    languageCode = lastLanguageCode,
+                    voiceName = lastVoiceName,
+                    startIndex = idx
+                )
+            }
         }
     }
 
@@ -686,6 +723,10 @@ class PdfReflowManager @Inject constructor(
         onWordsProcessed = null
         pageBoundariesMap.clear()
         knownRepetitiveHeadersFooters = emptySet()
+        currentBookId = null
+        lastPitch = null
+        lastLanguageCode = null
+        lastVoiceName = null
     }
 }
 

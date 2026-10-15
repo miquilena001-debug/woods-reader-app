@@ -29,10 +29,26 @@ import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import javax.inject.Inject
+import com.example.woodsreader.data.database.TtsRuleDao
+import com.example.woodsreader.data.database.TtsRuleEntity
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.StateFlow
+import javax.inject.Singleton
 
+private object NoOpTtsRuleDao : TtsRuleDao {
+    override fun getAllRulesFlow(): Flow<List<TtsRuleEntity>> = emptyFlow()
+    override suspend fun getActiveRules(): List<TtsRuleEntity> = emptyList()
+    override suspend fun getActiveRulesForBook(bookId: String?): List<TtsRuleEntity> = emptyList()
+    override suspend fun insert(rule: TtsRuleEntity) {}
+    override suspend fun delete(rule: TtsRuleEntity) {}
+}
+
+@Singleton
 class EpubFormatManager @Inject constructor(
     private val readingPipeline: ReadingPipeline,
-    private val epubContentExtractor: EpubContentExtractor
+    private val epubContentExtractor: EpubContentExtractor,
+    private val ttsRuleDao: TtsRuleDao
 ) {
 
     // Constructor secundario sin anotación para tests unitarios
@@ -43,7 +59,8 @@ class EpubFormatManager @Inject constructor(
             wordExclusionEngine = com.example.woodsreader.core.pipeline.WordExclusionEngine(),
             spanishTextFormatter = com.example.woodsreader.core.pipeline.SpanishTextFormatter()
         ),
-        epubContentExtractor = EpubContentExtractor()
+        epubContentExtractor = EpubContentExtractor(),
+        ttsRuleDao = NoOpTtsRuleDao
     )
     
     companion object {
@@ -54,15 +71,26 @@ class EpubFormatManager @Inject constructor(
     private var ttsService: ReaderTtsService? = null
     private var currentPublication: Publication? = null
     private var currentScope: CoroutineScope? = null
-    private var navigator: Navigator? = null
-    
+    private var currentNavigator: Navigator? = null
+    @Volatile
+    private var currentBookId: String? = null
+    @Volatile
+    private var lastProcessedHref: String? = null
+    @Volatile
+    private var cacheGeneration: Int = 0
+
+    fun invalidateCache() {
+        cacheGeneration++
+        lastProcessedHref = null
+    }
+
     private val _isServiceBound = MutableStateFlow(false)
     val isServiceBound = _isServiceBound.asStateFlow()
 
     private var serviceFlowJob: Job? = null
 
     private val _currentTtsSentence = MutableStateFlow("")
-    val currentTtsSentence = _currentTtsSentence.asStateFlow()
+    val currentTtsSentence: StateFlow<String> = _currentTtsSentence.asStateFlow()
 
     private val _currentTtsLocator = MutableStateFlow<Locator?>(null)
     val currentTtsLocator = _currentTtsLocator.asStateFlow()
@@ -71,20 +99,19 @@ class EpubFormatManager @Inject constructor(
     val currentTtsRange = _currentTtsRange.asStateFlow()
 
     private val _ttsState = MutableStateFlow(TtsState.IDLE)
-    val ttsState = _ttsState.asStateFlow()
+    val ttsState: StateFlow<TtsState> = _ttsState.asStateFlow()
 
     var ttsUserStopped = false
     private var hasEverStartedTts = false
 
-    private var lastProcessedHref: String? = null
     private val _currentProcessedDocument = MutableStateFlow<ProcessedDocument?>(null)
-    val currentProcessedDocument = _currentProcessedDocument.asStateFlow()
+    val currentProcessedDocument: StateFlow<ProcessedDocument?> = _currentProcessedDocument.asStateFlow()
     
     private var onTtsStateChanged: ((ReadingMode, String) -> Unit)? = null
     private var onLocatorChanged: ((Locator) -> Unit)? = null
 
     fun updateNavigator(nav: Navigator?) {
-        this.navigator = nav
+        currentNavigator = nav
     }
 
     private var pendingSpeed: Float? = null
@@ -134,32 +161,37 @@ class EpubFormatManager @Inject constructor(
         }
     }
 
-    suspend fun initNavigator(pub: Publication, initialLocator: Locator?, scope: CoroutineScope, navigator: Navigator?) {
-        this.currentPublication = pub
-        this.currentScope = scope
-        this.navigator = navigator ?: this.navigator
-        if (initialLocator != null) {
-            processResource(initialLocator.href.toString())
+    suspend fun initNavigator(
+        pub: Publication,
+        initialLocator: Locator?,
+        scope: CoroutineScope,
+        navigator: Navigator?,
+        bookId: String? = null
+    ) {
+        currentPublication = pub
+        currentNavigator = navigator ?: currentNavigator
+        currentScope = scope
+        currentBookId = bookId
+        invalidateCache()
+        _currentProcessedDocument.value = null
+
+        val startHref = initialLocator?.href?.toString()
+            ?: pub.readingOrder.firstOrNull()?.href?.toString()
+        if (startHref != null) {
+            processResource(startHref, bookId = bookId)
         }
-        if (ttsService == null) {
-            Log.w(TAG, "initNavigator: service not bound yet, awaiting...")
-            if (!awaitServiceBinding()) {
-                Log.e(TAG, "initNavigator: service binding failed, TTS unavailable")
-                return
-            }
-        }
-        ttsService?.initNavigator(pub, initialLocator)
-        observeServiceFlows(scope)
     }
 
     suspend fun processResource(
         href: String,
+        bookId: String? = currentBookId,
         rules: List<WordExclusionRule> = emptyList()
     ): ProcessedDocument? = withContext(Dispatchers.Default) {
         if (href.isBlank()) return@withContext null
+        val startGeneration = cacheGeneration
         val targetRes = href.substringAfterLast('/').substringBefore('#')
         val lastRes = lastProcessedHref?.substringAfterLast('/')?.substringBefore('#')
-        if (targetRes.isNotEmpty() && targetRes == lastRes && _currentProcessedDocument.value != null) {
+        if (targetRes.isNotEmpty() && targetRes == lastRes && _currentProcessedDocument.value != null && rules.isEmpty()) {
             return@withContext _currentProcessedDocument.value
         }
         val pub = currentPublication ?: return@withContext null
@@ -177,10 +209,30 @@ class EpubFormatManager @Inject constructor(
             null
         } ?: return@withContext null
 
+        val effectiveRules = if (rules.isNotEmpty()) {
+            rules
+        } else {
+            try {
+                ttsRuleDao.getActiveRulesForBook(bookId).map {
+                    WordExclusionRule(
+                        id = it.id.toString(),
+                        target = it.pattern,
+                        replacement = it.replacement,
+                        isRegex = it.isRegex,
+                        bookId = it.bookId
+                    )
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
         val rawBlocks = epubContentExtractor.extractBlocks(html, href)
-        val processed = readingPipeline.process(rawBlocks, rules = rules, announceImages = true)
-        lastProcessedHref = href
-        _currentProcessedDocument.value = processed
+        val processed = readingPipeline.process(rawBlocks, rules = effectiveRules, announceImages = true)
+        if (startGeneration == cacheGeneration) {
+            lastProcessedHref = href
+            _currentProcessedDocument.value = processed
+        }
         processed
     }
 
@@ -256,9 +308,9 @@ class EpubFormatManager @Inject constructor(
         publication: Publication? = null
     ) {
         ttsUserStopped = false
-        if (navigator != null) this.navigator = navigator
-        if (publication != null) this.currentPublication = publication
-        if (scope != null) this.currentScope = scope
+        if (navigator != null) currentNavigator = navigator
+        if (publication != null) currentPublication = publication
+        if (scope != null) currentScope = scope
 
         // Arrancar el servicio en primer plano JUSTO ANTES de empezar a reproducir.
         val intent = Intent(context, ReaderTtsService::class.java)
@@ -271,7 +323,7 @@ class EpubFormatManager @Inject constructor(
         val service = ttsService
         if (service == null) {
             Log.w(TAG, "playTts: service not bound yet, awaiting binding before playback")
-            val targetScope = this.currentScope ?: CoroutineScope(Dispatchers.Main)
+            val targetScope = currentScope ?: CoroutineScope(Dispatchers.Main)
             targetScope.launch {
                 if (awaitServiceBinding()) {
                     executePlay(locator)
@@ -294,7 +346,7 @@ class EpubFormatManager @Inject constructor(
             service.initNavigator(pub, locator)
             currentScope?.let { observeServiceFlows(it) }
         }
-        val visualNavigator = navigator as? VisualNavigator
+        val visualNavigator = currentNavigator as? VisualNavigator
         val currentRes = visualNavigator?.currentLocator?.value?.href?.toString()?.substringAfterLast('/')?.substringBefore('#')
         val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
         if (!currentRes.isNullOrEmpty() && !targetRes.isNullOrEmpty() && currentRes != targetRes) {
@@ -421,8 +473,9 @@ class EpubFormatManager @Inject constructor(
         try { context.stopService(Intent(context, ReaderTtsService::class.java)) } catch (_: Exception) {}
         ttsService = null
         currentPublication = null
-        currentScope = null
-        navigator = null
+        currentNavigator = null
+        currentBookId = null
+        invalidateCache()
         _currentProcessedDocument.value = null
         _currentTtsLocator.value = null
         _currentTtsSentence.value = ""

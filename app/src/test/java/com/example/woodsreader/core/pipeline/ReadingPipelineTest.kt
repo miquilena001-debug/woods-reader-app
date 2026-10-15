@@ -58,8 +58,9 @@ class ReadingPipelineTest {
         assertFalse(result.ttsNarrationUnits.any { it.textToSpeak.contains("ISBN") })
         assertFalse(result.ttsNarrationUnits.any { it.textToSpeak == "Don Quijote de la Mancha" })
 
-        // 5. Verificar que el contenido real sí llegó al TTS
-        assertTrue(result.ttsNarrationUnits.any { it.textToSpeak.contains("En\u00A0un\u00A0lugar") })
+        // 5. Verificar que el contenido real sí llegó al TTS (sin \u00A0) y a displayBlocks (con \u00A0)
+        assertTrue(result.displayBlocks.any { it is ReadingBlock.Paragraph && it.text.contains("En\u00A0un\u00A0lugar") })
+        assertTrue(result.ttsNarrationUnits.any { it.textToSpeak.contains("En un lugar") })
         assertTrue(result.ttsNarrationUnits.any { it.textToSpeak.contains("Vivía") })
     }
 

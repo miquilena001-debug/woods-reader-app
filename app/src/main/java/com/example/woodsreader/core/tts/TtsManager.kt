@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import javax.inject.Inject
@@ -69,6 +70,12 @@ class TtsManager @Inject constructor(
 
     private var basePitch: Float = 1.0f
     private var baseRate: Float = 1.0f
+    @Volatile
+    private var currentBookId: String? = null
+
+    fun setCurrentBookId(bookId: String?) {
+        currentBookId = bookId
+    }
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ Estructuras de apoyo para el Orquestador Contextual Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     private enum class ChunkType { NARRATOR, DIALOGUE, PAUSE }
@@ -127,7 +134,12 @@ class TtsManager @Inject constructor(
                 }
                 cont.resume(isReady) { }
             }
-            cont.invokeOnCancellation { shutdown() }
+            cont.invokeOnCancellation {
+                tts?.stop()
+                tts?.shutdown()
+                tts = null
+                isReady = false
+            }
         }
     }
 
@@ -149,7 +161,7 @@ class TtsManager @Inject constructor(
 
         
         val activeRules = try {
-            ttsRuleDao.getActiveRules()
+            ttsRuleDao.getActiveRulesForBook(currentBookId)
         } catch (_: Exception) {
             emptyList()
         }
@@ -478,11 +490,20 @@ class TtsManager @Inject constructor(
     }
 
     private fun abandonAudioFocus() {
-        try {
-            activeAudioTrack?.stop()
-            activeAudioTrack?.release()
-        } catch (_: Exception) {}
+        val track = activeAudioTrack
         activeAudioTrack = null
+        if (track != null) {
+            try {
+                if (track.state == AudioTrack.STATE_INITIALIZED) {
+                    track.pause()
+                    track.flush()
+                    track.stop()
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { track.release() } catch (_: Exception) {}
+            }
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
@@ -495,43 +516,22 @@ class TtsManager @Inject constructor(
     fun stop() {
         isSpeakingCancelled = true
         tts?.stop()
-        val track = activeAudioTrack
-        if (track != null && track.state == AudioTrack.STATE_INITIALIZED) {
-            try {
-                // Rampa de volumen rÃƒÂ¡pida (Fade-out de 100ms) para evitar clicks
-                val steps = 5
-                val delayTime = 20L
-                for (i in steps downTo 0) {
-                    val vol = i.toFloat() / steps
-                    track.setVolume(vol)
-                    Thread.sleep(delayTime) // TODO: refactor stop() to be suspend and use delay() instead of blocking
-                }
-                track.stop()
-                track.flush()
-                track.release()
-            } catch (_: Exception) {
-                try { track.release() } catch (_: Exception) {}
-            }
-        }
-        activeAudioTrack = null
         abandonAudioFocus()
     }
 
-    fun shutdown() { 
+    fun shutdown() {
+        isSpeakingCancelled = true
         tts?.stop()
         tts?.shutdown()
-        try {
-            activeAudioTrack?.stop()
-            activeAudioTrack?.flush()
-            activeAudioTrack?.release()
-        } catch (_: Exception) {}
-        activeAudioTrack = null
-        offlineTts = null
-        abandonAudioFocus()
         tts = null
-        isReady = false 
+        isReady = false
+        abandonAudioFocus()
         try {
-            ttsScope.cancel()
+            offlineTts?.release()
+        } catch (_: Exception) {}
+        offlineTts = null
+        try {
+            ttsScope.coroutineContext.cancelChildren()
         } catch (_: Exception) {}
     }
 
@@ -833,7 +833,7 @@ class TtsManager @Inject constructor(
             }
             val timeoutMs = remainingMs + 500L
 
-            while (track.playbackHeadPosition < totalFramesWritten.get() && currentCoroutineContext().isActive) {
+            while (!isSpeakingCancelled && activeAudioTrack == track && track.playbackHeadPosition < totalFramesWritten.get() && currentCoroutineContext().isActive) {
                 if (System.currentTimeMillis() - startWaitTime > timeoutMs) {
                     break
                 }
@@ -882,7 +882,7 @@ class TtsManager @Inject constructor(
             try {
                 val chunkSize = 4096
                 var offset = 0
-                while (offset < samples.size && currentCoroutineContext().isActive) {
+                while (!isSpeakingCancelled && offset < samples.size && currentCoroutineContext().isActive) {
                     if (track.state != AudioTrack.STATE_INITIALIZED || activeAudioTrack != track) {
                         break
                     }
@@ -904,8 +904,9 @@ class TtsManager @Inject constructor(
     }
 
     private suspend fun speakWithSherpa(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null) = coroutineScope {
+        isSpeakingCancelled = false
         val activeRules = try {
-            ttsRuleDao.getActiveRules()
+            ttsRuleDao.getActiveRulesForBook(currentBookId)
         } catch (_: Exception) {
             emptyList()
         }
@@ -1021,7 +1022,7 @@ class TtsManager @Inject constructor(
                 }
                 val timeoutMs = remainingMs + 600L
 
-                while (track.playbackHeadPosition < totalFramesWritten.get() && currentCoroutineContext().isActive) {
+                while (!isSpeakingCancelled && activeAudioTrack == track && track.playbackHeadPosition < totalFramesWritten.get() && currentCoroutineContext().isActive) {
                     if (System.currentTimeMillis() - startWaitTime > timeoutMs) {
                         break
                     }

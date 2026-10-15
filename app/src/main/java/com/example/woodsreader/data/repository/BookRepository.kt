@@ -61,9 +61,27 @@ class BookRepository @Inject constructor(
     fun getAllBooks(pageSize: Int = DEFAULT_PAGE_SIZE): Flow<PagingData<BookEntity>> =
         paged(pageSize) { bookDao.getAll() }
 
+    private fun buildFtsMatchQuery(rawQuery: String, target: String = "ALL"): String {
+        val reservedOperators = setOf("AND", "OR", "NOT")
+        val tokens = rawQuery
+            .replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
+            .trim()
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() && it.uppercase() !in reservedOperators }
+        if (tokens.isEmpty()) return ""
+        val prefix = when (target) {
+            "TITLE" -> "title:"
+            "AUTHOR" -> "author:"
+            "DESCRIPTION" -> "description:"
+            else -> ""
+        }
+        return tokens.joinToString(" ") { "$prefix$it*" }
+    }
+
     fun searchBooks(query: String, pageSize: Int = DEFAULT_PAGE_SIZE): Flow<PagingData<BookEntity>> {
-        val sanitized = query.trim().replace('"', ' ')
-        return paged(pageSize) { bookDao.searchBooks("$sanitized*") }
+        val matchQuery = buildFtsMatchQuery(query)
+        if (matchQuery.isEmpty()) return getAllBooks(pageSize)
+        return paged(pageSize) { bookDao.searchBooks(matchQuery) }
     }
 
     fun searchAndFilterBooks(
@@ -78,15 +96,9 @@ class BookRepository @Inject constructor(
         val formatParam = format.takeIf { it != null && it != "ALL" }
         val statusParam = status.takeIf { it != null && it != "ALL" }
         val collectionParam = collectionId.takeIf { it != null && it != "ALL" }
-        val trimmed = query.trim().replace('"', ' ')
+        val matchQuery = buildFtsMatchQuery(query, target)
         
-        return if (trimmed.isNotEmpty()) {
-            val matchQuery = when (target) {
-                "TITLE" -> "title:$trimmed*"
-                "AUTHOR" -> "author:$trimmed*"
-                "DESCRIPTION" -> "description:$trimmed*"
-                else -> "$trimmed*"
-            }
+        return if (matchQuery.isNotEmpty()) {
             paged(pageSize) {
                 val args = mutableListOf<Any>()
                 var sql = "SELECT books.* FROM books INNER JOIN books_fts ON books.rowid = books_fts.rowid WHERE books_fts MATCH ?"
@@ -300,13 +312,15 @@ class BookRepository @Inject constructor(
     suspend fun addWordExclusionRule(
         pattern: String,
         isExactMatch: Boolean = true,
-        applyToAllBooks: Boolean = true
+        applyToAllBooks: Boolean = true,
+        bookId: String? = null
     ): TtsRuleEntity {
         val rule = TtsRuleEntity(
             pattern = pattern.trim(),
             replacement = "",
             isRegex = !isExactMatch,
-            isEnabled = true
+            isEnabled = true,
+            bookId = if (applyToAllBooks) null else bookId
         )
         ttsRuleDao.insert(rule)
         return rule
