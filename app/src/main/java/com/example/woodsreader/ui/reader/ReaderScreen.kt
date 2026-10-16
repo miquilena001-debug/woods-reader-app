@@ -200,6 +200,8 @@ fun ReaderScreen(
     val isLoadingTtsModel by viewModel.isLoadingTtsModel.collectAsStateWithLifecycle()
     val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
     val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+    val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
+    val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
     
     val interactionSource = remember { MutableInteractionSource() }
@@ -1081,6 +1083,7 @@ fun ReaderScreen(
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     } catch (_: Exception) {}
                 },
+                onSpeakSnippet = { viewModel.speakSnippet(it) },
                 onDismiss = {
                     lookupState = LookupResult.Idle
                     clearActiveSelection()
@@ -1430,6 +1433,13 @@ fun ReaderScreen(
                     viewModel.playTtsFromLast()
                     showTtsMacroWindow = false
                 },
+                selectedSherpaVoice = selectedSherpaVoice,
+                onSelectSherpaVoice = { viewModel.selectOrDownloadSherpaVoice(it) },
+                isSherpaVoiceDownloaded = { viewModel.isSherpaVoiceDownloaded(it) },
+                onDeleteSherpaVoice = { viewModel.deleteSherpaVoiceFromReader(it) },
+                audioExportState = audioExportState,
+                onExportChapterAudio = { viewModel.exportCurrentChapterToAudio() },
+                onResetAudioExportState = { viewModel.resetAudioExportState() },
                 onDismiss = { showTtsMacroWindow = false }
             )
         }

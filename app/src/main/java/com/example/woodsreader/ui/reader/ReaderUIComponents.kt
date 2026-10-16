@@ -209,6 +209,7 @@ fun HighlightColorMenu(
     onDictionary: (() -> Unit)? = null,
     onIgnoreTts: (() -> Unit)? = null,
     onErrorOpenBrowser: (() -> Unit)? = null,
+    onSpeakSnippet: ((String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val words = remember(selectedText) {
@@ -555,31 +556,59 @@ fun HighlightColorMenu(
                                                 color = HiddenForest.Accent
                                             )
                                             Row(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(8.dp))
-                                                    .background(HiddenForest.Accent.copy(alpha = 0.15f))
-                                                    .clickable {
-                                                        clipboardManager.setText(AnnotatedString(state.primaryResult))
-                                                        Toast.makeText(context, "Copiado al portapapeles", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.ContentCopy,
-                                                    contentDescription = "Copiar",
-                                                    tint = HiddenForest.Accent,
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                                Text(
-                                                    text = "Copiar",
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.SemiBold
-                                                    ),
-                                                    color = HiddenForest.Accent
-                                                )
+                                                if (onSpeakSnippet != null) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .background(HiddenForest.Accent.copy(alpha = 0.15f))
+                                                            .clickable { onSpeakSnippet(state.primaryResult) }
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                                            contentDescription = "Escuchar",
+                                                            tint = HiddenForest.Accent,
+                                                            modifier = Modifier.size(12.dp)
+                                                        )
+                                                        Text(
+                                                            text = "🔊",
+                                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Row(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(HiddenForest.Accent.copy(alpha = 0.15f))
+                                                        .clickable {
+                                                            clipboardManager.setText(AnnotatedString(state.primaryResult))
+                                                            Toast.makeText(context, "Copiado al portapapeles", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.ContentCopy,
+                                                        contentDescription = "Copiar",
+                                                        tint = HiddenForest.Accent,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Text(
+                                                        text = "Copiar",
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        ),
+                                                        color = HiddenForest.Accent
+                                                    )
+                                                }
                                             }
                                         }
 

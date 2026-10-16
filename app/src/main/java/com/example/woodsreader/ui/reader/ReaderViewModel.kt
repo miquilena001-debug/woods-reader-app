@@ -257,6 +257,42 @@ class ReaderViewModel @Inject constructor(
     val audioExportState = chapterAudioExporter.exportState
     val selectedSherpaVoice = sherpaModelManager.selectedVoice
 
+    fun isSherpaVoiceDownloaded(option: com.example.woodsreader.core.tts.SherpaVoiceOption): Boolean =
+        sherpaModelManager.isVoiceDownloaded(option)
+
+    fun selectOrDownloadSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
+        viewModelScope.launch {
+            if (sherpaModelManager.isVoiceDownloaded(option)) {
+                ttsManager.switchSherpaVoice(option)
+            } else {
+                sherpaModelManager.selectVoiceOption(option)
+                val res = sherpaModelManager.downloadAndExtractModel()
+                if (res.isSuccess) {
+                    ttsManager.switchSherpaVoice(option)
+                }
+            }
+        }
+    }
+
+    fun deleteSherpaVoiceFromReader(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
+        viewModelScope.launch {
+            ttsManager.stop()
+            sherpaModelManager.selectVoiceOption(option)
+            sherpaModelManager.deleteModel()
+            ttsManager.resetSherpa()
+        }
+    }
+
+    fun resetAudioExportState() {
+        chapterAudioExporter.resetState()
+    }
+
+    fun speakSnippet(text: String) {
+        viewModelScope.launch {
+            ttsManager.speak(text)
+        }
+    }
+
     fun switchSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
         viewModelScope.launch {
             ttsManager.switchSherpaVoice(option)
@@ -276,8 +312,10 @@ class ReaderViewModel @Inject constructor(
                     }
                 }
             } else {
-                epubFormatManager.currentProcessedDocument.value?.ttsNarrationUnits?.map { it.textToSpeak }
-                    ?: emptyList()
+                val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
+                val doc = epubFormatManager.currentProcessedDocument.value
+                    ?: if (currentHref.isNotBlank()) epubFormatManager.processResource(currentHref, book.id) else null
+                doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
             }
             chapterAudioExporter.exportTextToWav(
                 bookTitle = book.title,

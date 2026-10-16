@@ -29,6 +29,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
+import com.example.woodsreader.core.tts.SherpaVoiceOption
 import com.example.woodsreader.core.tts.TtsManager
 import java.io.File
 import javax.inject.Inject
@@ -133,6 +134,35 @@ class SettingsViewModel @Inject constructor(
     }
 
     val sherpaDownloadState = sherpaModelManager.downloadState
+    val selectedSherpaVoice = sherpaModelManager.selectedVoice
+
+    fun isVoiceDownloaded(option: SherpaVoiceOption): Boolean {
+        return sherpaModelManager.isVoiceDownloaded(option)
+    }
+
+    fun selectAndActivateSherpaVoice(option: SherpaVoiceOption) {
+        viewModelScope.launch {
+            ttsManager.switchSherpaVoice(option)
+        }
+    }
+
+    fun downloadSherpaVoice(option: SherpaVoiceOption) {
+        viewModelScope.launch {
+            sherpaModelManager.selectVoiceOption(option)
+            sherpaModelManager.downloadAndExtractModel()
+            ttsManager.switchSherpaVoice(option)
+        }
+    }
+
+    fun deleteSherpaVoice(option: SherpaVoiceOption) {
+        viewModelScope.launch {
+            ttsManager.stop()
+            sherpaModelManager.selectVoiceOption(option)
+            sherpaModelManager.deleteModel()
+            ttsManager.resetSherpa()
+        }
+    }
+
     private val _showSherpaDownloadDialog = MutableStateFlow(false)
     val showSherpaDownloadDialog = _showSherpaDownloadDialog.asStateFlow()
 

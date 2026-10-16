@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.woodsreader.ui.library.WoodsBadge
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.core.tts.SherpaDownloadState
+import com.example.woodsreader.core.tts.SherpaVoiceOption
 import java.util.Locale
 
 @Composable
@@ -40,6 +41,7 @@ fun SettingsScreen(
     val progress    by viewModel.scanProgress.collectAsStateWithLifecycle("")
     val storageSizes by viewModel.storageSizes.collectAsStateWithLifecycle()
     val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+    val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
     val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
     val isBusy = isScanning || isEnriching
@@ -198,13 +200,111 @@ fun SettingsScreen(
                         }
 
                         if (prefs.useSherpaTts) {
-                            SettingsActionRow(
-                                icon = Icons.Default.Info,
-                                title = "Modelo TTS Activo",
-                                subtitle = "vits-piper-es_ES-davefx-medium (es_ES)",
-                                enabled = false,
-                                onClick = {}
+                            Text(
+                                text = "Catálogo de Voces IA (Sherpa ONNX)",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                                color = HiddenForest.Accent,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
                             )
+
+                            SherpaVoiceOption.entries.forEach { option ->
+                                val isDownloaded = viewModel.isVoiceDownloaded(option)
+                                val isSelected = selectedSherpaVoice == option
+                                val isDownloadingThis = (sherpaDownloadState is SherpaDownloadState.Downloading || sherpaDownloadState is SherpaDownloadState.Extracting) && isSelected
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = option.displayName,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = option.accent,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    if (isDownloadingThis) {
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            if (sherpaDownloadState is SherpaDownloadState.Downloading) {
+                                                val dlState = sherpaDownloadState as SherpaDownloadState.Downloading
+                                                Text(
+                                                    text = "${(dlState.progress * 100).toInt()}%",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = HiddenForest.Accent
+                                                )
+                                                LinearProgressIndicator(
+                                                    progress = { dlState.progress },
+                                                    modifier = Modifier.width(70.dp).height(4.dp),
+                                                    color = HiddenForest.Accent
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "Descomprimiendo...",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = HiddenForest.Accent
+                                                )
+                                            }
+                                        }
+                                    } else if (isDownloaded) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (isSelected) {
+                                                WoodsBadge(text = "ACTIVA", color = HiddenForest.Accent)
+                                            } else {
+                                                Button(
+                                                    onClick = { viewModel.selectAndActivateSherpaVoice(option) },
+                                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                                    modifier = Modifier.height(32.dp),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = HiddenForest.Accent.copy(alpha = 0.2f),
+                                                        contentColor = HiddenForest.Accent
+                                                    )
+                                                ) {
+                                                    Text("Usar", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.width(8.dp))
+
+                                            IconButton(
+                                                onClick = { viewModel.deleteSherpaVoice(option) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Eliminar voz",
+                                                    tint = Color(0xFFEF9A9A),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Button(
+                                            onClick = { viewModel.downloadSherpaVoice(option) },
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(32.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = HiddenForest.Accent,
+                                                contentColor = HiddenForest.Background
+                                            )
+                                        ) {
+                                            Text("Descargar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         HorizontalDivider(
@@ -502,7 +602,7 @@ fun SettingsScreen(
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(32.dp)) }
+            item { Spacer(modifier = Modifier.height(120.dp)) }
         }
 
         if (showSherpaDownloadDialog) {
