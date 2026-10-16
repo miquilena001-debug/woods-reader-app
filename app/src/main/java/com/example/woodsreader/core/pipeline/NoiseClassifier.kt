@@ -46,6 +46,22 @@ class NoiseClassifier @Inject constructor() {
             "licencia creative commons",
             "registro de propiedad intelectual"
         )
+
+        private val WEB_NOVEL_SPAM_KEYWORDS = listOf(
+            "lee capítulos adelantados en patreon",
+            "capítulos adelantados en patreon",
+            "apóyanos en patreon",
+            "únete a nuestro discord",
+            "unete a nuestro discord",
+            "traducido por",
+            "traducción al español por",
+            " visita nuestra web ",
+            "lee gratis en",
+            "novelas ligeras en español",
+            "suscríbete a nuestro canal",
+            "nota del traductor:",
+            "n/t:"
+        )
     }
 
     /**
@@ -84,6 +100,15 @@ class NoiseClassifier @Inject constructor() {
         if (lower.isEmpty()) return false
 
         return LEGAL_KEYWORDS.any { keyword -> lower.contains(keyword) }
+    }
+
+    /**
+     * Detecta marcas de agua de scrapers, anuncios de Patreon/Discord y notas intrusivas en novelas web.
+     */
+    fun isTranslatorSpam(text: String): Boolean {
+        val lower = text.lowercase(Locale.ROOT).trim()
+        if (lower.isEmpty() || lower.length > 220) return false
+        return WEB_NOVEL_SPAM_KEYWORDS.any { keyword -> lower.contains(keyword) }
     }
 
     /**
@@ -153,6 +178,10 @@ class NoiseClassifier @Inject constructor() {
 
         if (isLegalBoilerplate(trimmed)) {
             return NoiseReason.LEGAL_COPYRIGHT
+        }
+
+        if (isTranslatorSpam(trimmed)) {
+            return NoiseReason.TRANSLATOR_SPAM
         }
 
         val normalized = normalizeHeaderText(trimmed)

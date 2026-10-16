@@ -78,6 +78,28 @@ $fragment
             ?: result
     }
 
+    fun injectSelectionStyles(html: String): String {
+        if (html.isBlank() || html.contains("woods-reader-selection-style", ignoreCase = true)) {
+            return html
+        }
+        val selectionCss = """<style id="woods-reader-selection-style" type="text/css">
+::selection {
+  background-color: rgba(76, 175, 125, 0.40) !important;
+  color: #FFFFFF !important;
+}
+::-moz-selection {
+  background-color: rgba(76, 175, 125, 0.40) !important;
+  color: #FFFFFF !important;
+}
+</style>"""
+        val headEndIdx = html.indexOf("</head>", ignoreCase = true)
+        return if (headEndIdx != -1) {
+            html.substring(0, headEndIdx) + selectionCss + "\n" + html.substring(headEndIdx)
+        } else {
+            html
+        }
+    }
+
     fun encodeSanitized(original: String, sanitized: String, originalCharset: Charset): ByteArray {
         val outputCharset = if (HTML_OPEN_TAG_REGEX.containsMatchIn(original)) {
             originalCharset

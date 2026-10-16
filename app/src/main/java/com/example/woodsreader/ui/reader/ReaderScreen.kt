@@ -281,8 +281,14 @@ fun ReaderScreen(
     val focusRequester = remember { FocusRequester() }
 
     var activeActionMode by remember { mutableStateOf<ActionMode?>(null) }
+    var isLongPressSelecting by remember { mutableStateOf(false) }
+    val isSelectionModeActive = isLongPressSelecting ||
+        showHighlightMenu != null ||
+        activeActionMode != null
+    val isSelectionModeActiveState = rememberUpdatedState(isSelectionModeActive)
 
     val clearActiveSelection: () -> Unit = {
+        isLongPressSelecting = false
         try {
             activeActionMode?.finish()
             activeActionMode = null
@@ -293,6 +299,7 @@ fun ReaderScreen(
         showHighlightMenu = null
         val pubView = (navigatorState.value as? VisualNavigator)?.safePublicationView
         if (pubView != null) {
+            pubView.parent?.requestDisallowInterceptTouchEvent(false)
             applyToAllWebViews(pubView) { wv ->
                 wv.clearFocus()
                 wv.evaluateJavascript("if (window.getSelection) { window.getSelection().removeAllRanges(); }", null)
@@ -303,11 +310,25 @@ fun ReaderScreen(
     val ttsSelectionCallback = remember(viewModel, scope) {
         object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+                menu.clear()
                 activeActionMode = mode
-                menu.add(Menu.NONE, MENU_ITEM_HIGHLIGHT_ID, Menu.NONE, "✦ Resaltar")
-                menu.add(Menu.NONE, MENU_ITEM_TTS_ID, Menu.NONE, "🔊 Narrar")
-                menu.add(Menu.NONE, MENU_ITEM_DICTIONARY_ID, Menu.NONE, "📖 Diccionario")
-                menu.add(Menu.NONE, MENU_ITEM_TRANSLATE_ID, Menu.NONE, "🌐 Traducir")
+                isLongPressSelecting = true
+                (navigatorState.value as? VisualNavigator)?.safePublicationView
+                    ?.parent?.requestDisallowInterceptTouchEvent(true)
+                scope.launch {
+                    delay(180L)
+                    repeat(5) { attempt ->
+                        val selection =
+                            (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                        if (selection != null) {
+                            showHighlightMenu = selection
+                            viewModel.hideControls()
+                            isLongPressSelecting = false
+                            return@launch
+                        }
+                        if (attempt < 4) delay(50)
+                    }
+                }
                 return true
             }
             override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
@@ -372,6 +393,9 @@ fun ReaderScreen(
                 if (activeActionMode == mode) {
                     activeActionMode = null
                 }
+                isLongPressSelecting = false
+                (navigatorState.value as? VisualNavigator)?.safePublicationView
+                    ?.parent?.requestDisallowInterceptTouchEvent(false)
             }
             override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
         }
@@ -771,7 +795,8 @@ fun ReaderScreen(
                 viewModel.onUserInteraction() 
 
                 // Si hay una selección activa o popup de selección abierto, el toque lo cierra de inmediato
-                if (activeActionMode != null || showHighlightMenu != null) {
+                if (isSelectionModeActiveState.value) {
+                    isLongPressSelecting = false
                     clearActiveSelection()
                     return true
                 }
@@ -803,12 +828,24 @@ fun ReaderScreen(
         val detector = ChapterScrollDetector(
             rootView = pubView,
             scope = scope,
-            onGoForward = { viewModel.goToNextChapter(nav) },
-            onGoBackward = { viewModel.goToPreviousChapter(nav) },
-            onPullProgress = { pullProgress = it },
-            onPageForward = { wv -> turnPageForward(nav, wv) },
-            onPageBackward = { wv -> turnPageBackward(nav, wv) },
-            onClearSelection = { clearActiveSelection() }
+            onGoForward = {
+                if (!isSelectionModeActiveState.value) viewModel.goToNextChapter(nav)
+            },
+            onGoBackward = {
+                if (!isSelectionModeActiveState.value) viewModel.goToPreviousChapter(nav)
+            },
+            onPullProgress = {
+                pullProgress = if (isSelectionModeActiveState.value) 0f else it
+            },
+            onPageForward = { wv ->
+                if (!isSelectionModeActiveState.value) turnPageForward(nav, wv)
+            },
+            onPageBackward = { wv ->
+                if (!isSelectionModeActiveState.value) turnPageBackward(nav, wv)
+            },
+            onClearSelection = {
+                if (!isSelectionModeActiveState.value) clearActiveSelection()
+            }
         )
         detector.attach()
 
@@ -1040,10 +1077,8 @@ fun ReaderScreen(
                         }
                     },
                     onTtsToggle = { 
-                        if (ttsState == TtsState.PLAYING) {
-                            viewModel.pauseTts()
-                        } else if (ttsState == TtsState.PAUSED) {
-                            viewModel.resumeTts()
+                        if (ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED) {
+                            showTtsMacroWindow = true
                         } else {
                             viewModel.onPlay()
                         }
@@ -1301,8 +1336,10 @@ fun ReaderScreen(
             val lastTtsLocator by viewModel.lastTtsLocator.collectAsStateWithLifecycle()
             ReaderTtsMacroWindow(
                 hazeState = hazeState,
+                coverPath = successState?.book?.coverCachePath,
                 title = successState?.book?.title ?: "",
                 author = successState?.book?.author ?: "",
+                progress = globalProgress,
                 ttsState = ttsState,
                 isLoadingTtsModel = isLoadingTtsModel,
                 currentSpeed = currentSpeed,
@@ -1331,9 +1368,14 @@ fun ReaderScreen(
                 onPitchChange = { pitch -> viewModel.onPitchChange(pitch) },
                 onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
                 onSkipSentenceBackward = { viewModel.skipTtsSentenceBackward() },
+                onSkipChapterForward = { viewModel.skipTtsChapterForward() },
+                onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
                 onSleepTimer = { mins -> viewModel.startSleepTimer(mins) },
                 onCancelSleepTimer = { viewModel.cancelSleepTimer() },
                 sleepTimerRemaining = sleepTimerRemaining,
+                activeAmbiencePreset = viewModel.activeAmbiencePreset,
+                onToggleNextAmbience = { viewModel.toggleNextAmbience() },
+                onInstallTtsPresetPack = { pack -> viewModel.installTtsPresetPack(pack) },
                 currentSentenceFlow = viewModel.currentTtsSentence,
                 currentTtsRangeFlow = viewModel.currentTtsRange,
                 chapterInfoFlow = viewModel.chapterInfo,
@@ -1450,6 +1492,12 @@ fun ReaderScreen(
         val chapterInfoForTts by viewModel.chapterInfo.collectAsStateWithLifecycle()
         val chapterProgressForTts = chapterInfoForTts.progress
 
+        val floatingBottomPadding by animateDpAsState(
+            targetValue = if (showControls) 136.dp else 28.dp,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "floatingBottomPadding"
+        )
+
         when (userPreferences.ttsUiStyle) {
             TtsUiStyle.BAR -> {
                 // Compact bottom bar — Moon+ Reader style
@@ -1487,7 +1535,15 @@ fun ReaderScreen(
                         onLock = { isTtsScreenLocked = true },
                         onExpandSettings = { showTtsMacroWindow = true },
                         onSpeedUp = { viewModel.ttsSpeedUp() },
-                        onSpeedDown = { viewModel.ttsSpeedDown() }
+                        onSpeedDown = { viewModel.ttsSpeedDown() },
+                        onSpeedChange = { s -> viewModel.onSpeedChange(s) },
+                        onSwipeUp = {
+                            viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
+                            showTtsMacroWindow = true
+                        },
+                        onSwipeDown = {
+                            viewModel.updateTtsUiStyle(TtsUiStyle.FLOATING)
+                        }
                     )
                 }
             }
@@ -1496,13 +1552,14 @@ fun ReaderScreen(
                 ReaderFloatingTtsButton(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 24.dp, bottom = 120.dp)
+                        .padding(end = 20.dp, bottom = floatingBottomPadding)
                         .zIndex(20f),
                     ttsState = ttsState,
                     isLoadingTtsModel = isLoadingTtsModel,
                     showTtsMacroWindow = showTtsMacroWindow,
                     isReflowMode = isReflowMode,
                     chapterProgress = chapterProgressForTts,
+                    speed = currentSpeed,
                     hazeState = hazeState,
                     onPlayPause = {
                         if (ttsState == TtsState.PLAYING) {
@@ -1512,6 +1569,10 @@ fun ReaderScreen(
                         } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
                             viewModel.onPlay()
                         }
+                    },
+                    onSpeedClick = {
+                        viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
+                        showTtsMacroWindow = true
                     },
                     onStop = { viewModel.stopTts() },
                     onOpenSettings = {
@@ -1530,13 +1591,14 @@ fun ReaderScreen(
                 ReaderFloatingTtsButton(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(end = 24.dp, bottom = 120.dp)
+                        .padding(end = 20.dp, bottom = floatingBottomPadding)
                         .zIndex(20f),
                     ttsState = ttsState,
                     isLoadingTtsModel = isLoadingTtsModel,
                     showTtsMacroWindow = showTtsMacroWindow,
                     isReflowMode = isReflowMode,
                     chapterProgress = chapterProgressForTts,
+                    speed = currentSpeed,
                     hazeState = hazeState,
                     onPlayPause = {
                         if (ttsState == TtsState.PLAYING) {
@@ -1546,6 +1608,10 @@ fun ReaderScreen(
                         } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
                             viewModel.onPlay()
                         }
+                    },
+                    onSpeedClick = {
+                        viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
+                        showTtsMacroWindow = true
                     },
                     onStop = { viewModel.stopTts() },
                     onOpenSettings = {

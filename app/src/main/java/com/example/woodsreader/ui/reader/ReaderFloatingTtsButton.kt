@@ -36,7 +36,18 @@ import com.example.woodsreader.ui.theme.HiddenForest
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 
-// ── Animated equalizer bars shown below the button when playing ──────────────
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+import java.util.Locale
+
+// ── Animated equalizer bars shown inside the button when playing ─────────────
 @Composable
 private fun EqualizerBars(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "equalizer")
@@ -74,7 +85,7 @@ private fun EqualizerBars(modifier: Modifier = Modifier) {
     }
 }
 
-// ── Main floating TTS button ─────────────────────────────────────────────────
+// ── Main floating TTS button (Unified Liquid Glass Capsule) ──────────────────
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReaderFloatingTtsButton(
@@ -82,10 +93,12 @@ fun ReaderFloatingTtsButton(
     ttsState: TtsState,
     isLoadingTtsModel: Boolean,
     showTtsMacroWindow: Boolean,
-    isReflowMode: Boolean,
+    isReflowMode: Boolean = false,
     chapterProgress: Float,
+    speed: Float = 1.0f,
     hazeState: HazeState,
     onPlayPause: () -> Unit,
+    onSpeedClick: () -> Unit = {},
     onStop: () -> Unit = {},
     onOpenSettings: () -> Unit
 ) {
@@ -93,228 +106,186 @@ fun ReaderFloatingTtsButton(
     val isPlaying = ttsState == TtsState.PLAYING
     val haptic = LocalHapticFeedback.current
 
-    // ── Progress arc animation ───────────────────────────────────────────────
+    // Drag offsets for free positioning
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // Progress arc animation
     val animatedProgress by animateFloatAsState(
         targetValue = chapterProgress.coerceIn(0f, 1f),
         animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
         label = "progress"
     )
 
-    // ── Pulsing glow when playing ────────────────────────────────────────────
-    val infiniteTransition = rememberInfiniteTransition(label = "glow")
-    val glowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.15f,
-        targetValue = 0.45f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowAlpha"
-    )
-    val glowRadius by infiniteTransition.animateFloat(
-        initialValue = 32f,
-        targetValue = 48f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowRadius"
-    )
-
-
     AnimatedVisibility(
         visible = isTtsActive && !showTtsMacroWindow,
-        enter = fadeIn(tween(350)) + slideInHorizontally(
-            animationSpec = tween(350, easing = FastOutSlowInEasing),
-            initialOffsetX = { it / 2 }
-        ) + scaleIn(
+        enter = fadeIn(tween(350)) + scaleIn(
             initialScale = 0.85f,
             animationSpec = tween(350, easing = FastOutSlowInEasing)
         ),
-        exit = fadeOut(tween(250)) + slideOutHorizontally(
-            animationSpec = tween(250, easing = FastOutSlowInEasing),
-            targetOffsetX = { it / 2 }
-        ) + scaleOut(
+        exit = fadeOut(tween(250)) + scaleOut(
             targetScale = 0.85f,
             animationSpec = tween(250, easing = FastOutSlowInEasing)
         ),
         modifier = modifier
+            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    offsetX += dragAmount.x
+                    offsetY += dragAmount.y
+                }
+            }
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Box(
+            modifier = Modifier
+                .shadow(
+                    elevation = 16.dp,
+                    shape = RoundedCornerShape(28.dp),
+                    ambientColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                    spotColor = HiddenForest.Accent.copy(alpha = 0.35f)
+                )
+                .clip(RoundedCornerShape(28.dp))
+                .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
+                .background(Color(0xFF0E1F16).copy(alpha = 0.92f))
+                .border(
+                    width = 1.dp,
+                    color = HiddenForest.Accent.copy(alpha = 0.45f),
+                    shape = RoundedCornerShape(28.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
         ) {
-            // ── Botón Stop / Cerrar (Permite quitar o detener el TTS flotante inmediatamente) ──
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
-                    .background(HiddenForest.Surface.copy(alpha = 0.90f))
-                    .border(
-                        width = 1.dp,
-                        color = HiddenForest.Outline.copy(alpha = 0.35f),
-                        shape = CircleShape
-                    )
-                    .combinedClickable(
-                        onClick = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 1. Botón compacto X (28.dp) para detener TTS
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .clickable {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onStop()
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Detener y cerrar TTS",
-                    tint = HiddenForest.TextSecondary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Detener TTS",
+                        tint = HiddenForest.TextSecondary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+                // 2. Badge de velocidad
+                val speedFormatted = String.format(Locale.US, "%.2fx", speed)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(HiddenForest.Accent.copy(alpha = 0.15f))
+                        .border(0.5.dp, HiddenForest.Accent.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSpeedClick()
+                        }
+                        .padding(horizontal = 7.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = speedFormatted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = HiddenForest.Accent
+                    )
+                }
+
+                // 3. Botón circular Play / Pausa (44.dp) con borde de progreso
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(60.dp)
-            ) {
-                // ── Ring progress arc (behind the button) ────────────────────
-                val progressColor = if (isPlaying) HiddenForest.Accent else HiddenForest.TextSecondary
-                val trackColor = HiddenForest.Outline
-                val sweepAngle = animatedProgress * 360f
-
-                androidx.compose.foundation.Canvas(
-                    modifier = Modifier.matchParentSize()
+                    modifier = Modifier.size(44.dp)
                 ) {
-                    val strokeWidth = 2.5.dp.toPx()
-                    val inset = strokeWidth / 2f
-                    val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
-                    val topLeft = Offset(inset, inset)
+                    val progressColor = if (isPlaying) HiddenForest.Accent else HiddenForest.TextSecondary
+                    val trackColor = HiddenForest.Outline.copy(alpha = 0.3f)
+                    val sweepAngle = animatedProgress * 360f
 
-                    // Track ring
-                    drawArc(
-                        color = trackColor,
-                        startAngle = -90f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                    )
+                    androidx.compose.foundation.Canvas(
+                        modifier = Modifier.matchParentSize()
+                    ) {
+                        val strokeWidth = 2.dp.toPx()
+                        val inset = strokeWidth / 2f
+                        val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
+                        val topLeft = Offset(inset, inset)
 
-                    // Progress ring
-                    if (sweepAngle > 0f) {
+                        // Track ring
                         drawArc(
-                            color = progressColor,
+                            color = trackColor,
                             startAngle = -90f,
-                            sweepAngle = sweepAngle,
+                            sweepAngle = 360f,
                             useCenter = false,
                             topLeft = topLeft,
                             size = arcSize,
                             style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
                         )
-                    }
-                }
 
-                // ── Pulsing glow layer (only when playing) ───────────────────
-                if (isPlaying) {
+                        // Progress ring
+                        if (sweepAngle > 0f) {
+                            drawArc(
+                                color = progressColor,
+                                startAngle = -90f,
+                                sweepAngle = sweepAngle,
+                                useCenter = false,
+                                topLeft = topLeft,
+                                size = arcSize,
+                                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                            )
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
-                            .size(60.dp)
-                            .drawWithCache {
-            val brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            HiddenForest.Accent.copy(alpha = glowAlpha),
-                                            Color.Transparent
-                                        ),
-                                        radius = glowRadius.dp.toPx()
-                                    )
-            onDrawBehind {
-                drawCircle(brush = brush)
-            }
-        }
-                    )
-                }
-
-                // ── Glassmorphism circle button ──────────────────────────────
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
-                        .background(HiddenForest.Surface.copy(alpha = 0.85f))
-                        .border(
-                            width = 1.dp,
-                            brush = Brush.verticalGradient(
-                                listOf(
-                                    (if (isPlaying) HiddenForest.Accent else HiddenForest.TextSecondary)
-                                        .copy(alpha = 0.4f),
-                                    Color.Transparent
-                                )
-                            ),
-                            shape = CircleShape
-                        )
-                        .combinedClickable(
-                            onClick = { onPlayPause() },
-                            onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onOpenSettings()
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Radial tint behind icon when playing
-                    if (isPlaying) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(
-                                            HiddenForest.Accent.copy(alpha = 0.20f),
-                                            Color.Transparent
-                                        )
-                                    )
-                                )
-                        )
-                    }
-
-                    // ── Loading spinner / Play-Pause icon ────────────────────
-                    if (isLoadingTtsModel) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = HiddenForest.Accent,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Crossfade(
-                            targetState = isPlaying,
-                            animationSpec = tween(200),
-                            label = "playPauseIcon"
-                        ) { playing ->
-                            Icon(
-                                imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = stringResource(
-                                    if (playing) R.string.tts_action_pause else R.string.tts_action_play
-                                ),
-                                tint = if (playing) HiddenForest.Accent else HiddenForest.TextSecondary,
-                                modifier = Modifier.size(28.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isPlaying) HiddenForest.Accent
+                                else HiddenForest.SurfaceVariant
                             )
+                            .combinedClickable(
+                                onClick = { onPlayPause() },
+                                onLongClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onOpenSettings()
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isLoadingTtsModel) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = if (isPlaying) HiddenForest.Background else HiddenForest.Accent,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Crossfade(
+                                targetState = isPlaying,
+                                animationSpec = tween(200),
+                                label = "playPauseIcon"
+                            ) { playingState ->
+                                Icon(
+                                    imageVector = if (playingState) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = stringResource(
+                                        if (playingState) R.string.tts_action_pause else R.string.tts_action_play
+                                    ),
+                                    tint = if (playingState) HiddenForest.Background else HiddenForest.Accent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
-
-            AnimatedVisibility(
-                visible = isPlaying && !isLoadingTtsModel,
-                enter = fadeIn(tween(200)) + expandVertically(),
-                exit = fadeOut(tween(150)) + shrinkVertically()
-            ) {
-                EqualizerBars()
-            }
         }
     }
-}
 }

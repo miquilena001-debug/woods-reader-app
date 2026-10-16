@@ -29,9 +29,11 @@ import com.example.woodsreader.data.database.BookmarkEntity
 import com.example.woodsreader.data.database.HighlightEntity
 import com.example.woodsreader.data.model.HighlightColor
 import com.example.woodsreader.data.model.toArgb
+import com.example.woodsreader.core.managers.QuoteCardGenerator
 import com.example.woodsreader.ui.theme.HiddenForest
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -64,6 +66,8 @@ fun ReaderNotesTab(
     onDeleteHighlight: (HighlightEntity) -> Unit,
     onDeleteBookmark: (BookmarkEntity) -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val unifiedFeed = remember(highlights, bookmarks) {
         val list = mutableListOf<UnifiedNote>()
         
@@ -168,6 +172,20 @@ fun ReaderNotesTab(
                         onDeleteClick = {
                             if (note.type == NoteType.HIGHLIGHT) onDeleteHighlight(note.originalHighlight!!)
                             else onDeleteBookmark(note.originalBookmark!!)
+                        },
+                        onShareClick = {
+                            val highlight = note.originalHighlight
+                            if (highlight != null) {
+                                scope.launch {
+                                    QuoteCardGenerator.shareQuoteCard(
+                                        context = context,
+                                        quoteText = highlight.highlightedText,
+                                        bookTitle = bookTitle,
+                                        bookAuthor = bookAuthor,
+                                        chapterTitle = highlight.chapterTitle
+                                    )
+                                }
+                            }
                         }
                     )
                 }
@@ -208,7 +226,8 @@ fun ReaderUnifiedNoteItem(
     hazeState: HazeState,
     note: UnifiedNote,
     onNoteClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onShareClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -299,7 +318,20 @@ fun ReaderUnifiedNoteItem(
                 }
             }
 
-            // Botón de Borrar
+            if (note.type == NoteType.HIGHLIGHT) {
+                IconButton(
+                    onClick = onShareClick,
+                    modifier = Modifier.align(Alignment.Top)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Compartir cita como imagen",
+                        tint = HiddenForest.Accent,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
             IconButton(
                 onClick = onDeleteClick,
                 modifier = Modifier.align(Alignment.Top)

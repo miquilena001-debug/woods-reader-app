@@ -3,6 +3,7 @@ package com.example.woodsreader.ui.reader
 import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.viewpager.widget.ViewPager
@@ -79,6 +80,7 @@ class ChapterScrollDetector(
                 val absDy = kotlin.math.abs(dy)
                 val absDx = kotlin.math.abs(dx)
                 val density = wv.context.resources.displayMetrics.density
+                val touchSlop = ViewConfiguration.get(wv.context).scaledTouchSlop.toFloat()
 
                 // Descartar cualquier selección previa de texto al comenzar a deslizar o arrastrar
                 if (absDy > 8f * density || absDx > 8f * density) {
@@ -88,7 +90,11 @@ class ChapterScrollDetector(
                 // 1. Detección y bloqueo exclusivo de Swipe Horizontal
                 // Consumir el evento (return true) y mantener disallowParentIntercept para evitar
                 // que Chromium libere el bloqueo y ViewPager salte al siguiente capítulo de forma descontrolada.
-                if (!isVerticalDrag && (isHorizontalSwipe || (absDx > absDy * 1.35f && absDx > 12f * density))) {
+                if (!isVerticalDrag && (
+                    isHorizontalSwipe ||
+                        (absDx > touchSlop * 2.2f && absDx > absDy * 1.8f)
+                    )
+                ) {
                     isHorizontalSwipe = true
                     disallowParentIntercept(view)
                     return@OnTouchListener true
@@ -134,9 +140,14 @@ class ChapterScrollDetector(
                 val absDx = kotlin.math.abs(dx)
                 val absDy = kotlin.math.abs(dy)
                 val minSwipeDistance = 24f * density
+                val touchSlop = ViewConfiguration.get(wv.context).scaledTouchSlop.toFloat()
                 val isFlick = dt < 350 && (absDx > 18f * density)
 
-                val wasHorizontal = isHorizontalSwipe || (absDx > absDy * 1.35f && (absDx >= minSwipeDistance || isFlick))
+                val wasHorizontal = isHorizontalSwipe || (
+                    absDx > touchSlop * 2.2f &&
+                        absDx > absDy * 1.8f &&
+                        (absDx >= minSwipeDistance || isFlick)
+                    )
 
                 if (wasHorizontal) {
                     // Swipe horizontal predominante -> Avanzar o retroceder página dentro del capítulo actual

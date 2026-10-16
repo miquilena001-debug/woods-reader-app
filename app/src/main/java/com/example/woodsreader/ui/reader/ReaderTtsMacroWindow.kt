@@ -12,14 +12,18 @@ import androidx.compose.material.icons.rounded.Bedtime
 import com.example.woodsreader.model.TtsUiStyle
 import com.example.woodsreader.model.TtsHighlightStyle
 import com.example.woodsreader.core.tts.SherpaDownloadState
+import com.example.woodsreader.core.tts.AmbiencePreset
+import com.example.woodsreader.core.tts.TtsPresetPack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -33,9 +37,12 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import coil3.compose.AsyncImage
+import kotlin.math.roundToInt
 
 private val ORGANIC_WAVES = List(40) { i ->
     val x = (i - 20f) / 20f
@@ -51,8 +58,10 @@ private val ORGANIC_WAVES = List(40) { i ->
 @Composable
 fun ReaderTtsMacroWindow(
     hazeState: HazeState,
+    coverPath: String? = null,
     title: String,
     author: String,
+    progress: Float = 0f,
     ttsState: TtsState,
     isLoadingTtsModel: Boolean,
     currentSpeed: Float,
@@ -75,9 +84,14 @@ fun ReaderTtsMacroWindow(
     onPitchChange: (Float) -> Unit,
     onSkipSentenceForward: () -> Unit,
     onSkipSentenceBackward: () -> Unit,
+    onSkipChapterForward: () -> Unit = {},
+    onSkipChapterBackward: () -> Unit = {},
     onSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     sleepTimerRemaining: Long?,
+    activeAmbiencePreset: StateFlow<AmbiencePreset>,
+    onToggleNextAmbience: () -> Unit,
+    onInstallTtsPresetPack: suspend (TtsPresetPack) -> Int,
     currentSentenceFlow: StateFlow<String>,
     currentTtsRangeFlow: StateFlow<IntRange?>,
     chapterInfoFlow: StateFlow<ChapterInfo>,
@@ -92,7 +106,10 @@ fun ReaderTtsMacroWindow(
     val currentSentence by currentSentenceFlow.collectAsStateWithLifecycle(initialValue = "")
     val currentRange by currentTtsRangeFlow.collectAsStateWithLifecycle(initialValue = null)
     val chapterInfo by chapterInfoFlow.collectAsStateWithLifecycle()
+    val ambiencePreset by activeAmbiencePreset.collectAsStateWithLifecycle()
     val chapterProgress = chapterInfo.progress
+    val scope = rememberCoroutineScope()
+    var presetInstallMessage by remember { mutableStateOf<String?>(null) }
 
     var showLanguageSheet by remember { mutableStateOf(false) }
 
@@ -107,6 +124,7 @@ fun ReaderTtsMacroWindow(
     ) {
         val playing = ttsState == TtsState.PLAYING
         var speed by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
+        var showCompactSpeedSlider by remember { mutableStateOf(false) }
 
         val infiniteTransition = rememberInfiniteTransition(label = "pulse")
         val pulseAlpha by infiniteTransition.animateFloat(
@@ -123,45 +141,88 @@ fun ReaderTtsMacroWindow(
                 .padding(bottom = 16.dp)
                 .windowInsetsPadding(WindowInsets.navigationBars)
         ) {
-            // BOOK HEADER
+            // ── 1. CABECERA DEL LIBRO ──────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Box(
-                        modifier = Modifier.size(50.dp, 70.dp).clip(RoundedCornerShape(12.dp))
-                            .background(Brush.linearGradient(listOf(HiddenForest.Accent.copy(0.4f), HiddenForest.Surface)))
-                            .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("📚", fontSize = 24.sp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (!coverPath.isNullOrBlank()) {
+                        AsyncImage(
+                            model = coverPath,
+                            contentDescription = title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(width = 52.dp, height = 72.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(12.dp))
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 52.dp, height = 72.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Brush.linearGradient(listOf(HiddenForest.Accent.copy(0.4f), HiddenForest.Surface)))
+                                .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(12.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("📚", fontSize = 24.sp)
+                        }
                     }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
+
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = title.ifEmpty { "Cargando..." },
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-0.5).sp),
-                            color = HiddenForest.Text, maxLines = 1, overflow = TextOverflow.Ellipsis
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black, letterSpacing = (-0.3).sp),
+                            color = HiddenForest.Text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
-                        Text(text = author.ifEmpty { "Autor Desconocido" }, style = MaterialTheme.typography.bodyMedium, color = HiddenForest.TextSecondary)
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = author.ifEmpty { "Autor Desconocido" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HiddenForest.TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val chapterTitle = chapterInfo.title?.takeIf { it.isNotBlank() } ?: "Capítulo actual"
+                        val progressPct = if (progress > 0f) (progress * 100).roundToInt().coerceIn(1, 100)
+                                          else if (chapterProgress > 0f) (chapterProgress * 100).roundToInt().coerceIn(1, 100)
+                                          else 0
+                        Text(
+                            text = "$chapterTitle · $progressPct%",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = HiddenForest.Accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-                
-                // Settings button for language
-                IconButton(onClick = { showLanguageSheet = true }) {
-                    Icon(Icons.Default.Settings, contentDescription = "Configuración TTS", tint = HiddenForest.TextSecondary)
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showLanguageSheet = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Configuración TTS", tint = HiddenForest.TextSecondary)
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Minimizar panel", tint = HiddenForest.TextSecondary, modifier = Modifier.size(28.dp))
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // VISUALIZER + CURRENT SENTENCE
+            // ── 2. TARJETA "NARRACIÓN ACTIVA" ──────────────────────────────────
             ReaderCrystalCard(hazeState = hazeState, modifier = Modifier.fillMaxWidth()) {
                 if (isLoadingTtsModel) {
                     Column(
-                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 16.dp),
+                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         CircularProgressIndicator(
@@ -178,9 +239,9 @@ fun ReaderTtsMacroWindow(
                 } else {
                     Text(
                         text = if (playing) "NARRACIÓN ACTIVA" else "NARRACIÓN PAUSADA",
-                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp),
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 2.sp, fontWeight = FontWeight.Bold),
                         color = if (playing) HiddenForest.Accent else HiddenForest.TextLow,
-                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 12.dp)
+                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 10.dp)
                     )
                 }
 
@@ -189,17 +250,17 @@ fun ReaderTtsMacroWindow(
                     animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)), label = "wave"
                 )
                 
-                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxWidth().height(60.dp)) {
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxWidth().height(56.dp)) {
                     val barWidth = size.width / ORGANIC_WAVES.size
                     val spacing = 2.dp.toPx()
-                    val actualBarWidth = barWidth - spacing
+                    val actualBarWidth = (barWidth - spacing).coerceAtLeast(1f)
                     
                     ORGANIC_WAVES.forEachIndexed { i, bias ->
                         val phase = kotlin.math.sin(wavePhase + i * 0.2f).toFloat().coerceIn(-1f, 1f)
-                        val heightFactor = if (playing) 0.2f + (bias * 0.8f * (0.7f + phase * 0.3f)) else 0.15f * bias
-                        val barHeight = size.height * heightFactor
-                        val alpha = if (playing) 0.6f + phase * 0.4f else 0.3f
-                        val color = if (playing) HiddenForest.Accent.copy(alpha = alpha) else HiddenForest.Outline.copy(alpha = alpha)
+                        val heightFactor = if (playing) 0.18f + (bias * 0.82f * (0.65f + phase * 0.35f)) else (0.05f + 0.05f * bias)
+                        val barHeight = (size.height * heightFactor).coerceAtLeast(3.dp.toPx())
+                        val alpha = if (playing) 0.6f + phase * 0.4f else 0.25f
+                        val color = if (playing) HiddenForest.Accent.copy(alpha = alpha) else HiddenForest.TextLow.copy(alpha = alpha)
                         
                         drawRoundRect(
                             color = color,
@@ -213,7 +274,7 @@ fun ReaderTtsMacroWindow(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Current sentence with word highlighting
                 val annotatedString = buildAnnotatedString {
@@ -222,7 +283,7 @@ fun ReaderTtsMacroWindow(
                         val start = range.first.coerceIn(0, currentSentence.length)
                         val end = (range.last + 1).coerceIn(0, currentSentence.length)
                         if (start > 0) append(currentSentence.substring(0, start))
-                        withStyle(SpanStyle(color = HiddenForest.Accent, fontWeight = FontWeight.Black, background = HiddenForest.Accent.copy(alpha = 0.1f))) {
+                        withStyle(SpanStyle(color = HiddenForest.Accent, fontWeight = FontWeight.Black, background = HiddenForest.Accent.copy(alpha = 0.12f))) {
                             append(currentSentence.substring(start, end))
                         }
                         if (end < currentSentence.length) append(currentSentence.substring(end))
@@ -233,13 +294,13 @@ fun ReaderTtsMacroWindow(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 40.dp, max = 120.dp)
+                        .heightIn(min = 36.dp, max = 110.dp)
                         .verticalScroll(rememberScrollState()),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = annotatedString,
-                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp, fontSize = 15.sp, textAlign = TextAlign.Center),
+                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp, fontSize = 14.5.sp, textAlign = TextAlign.Center),
                         color = HiddenForest.Text.copy(alpha = 0.9f),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -249,116 +310,453 @@ fun ReaderTtsMacroWindow(
                 LinearProgressIndicator(
                     progress = { chapterProgress },
                     modifier = Modifier.fillMaxWidth().height(3.dp).clip(CircleShape),
-                    color = HiddenForest.Accent, trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                    color = HiddenForest.Accent,
+                    trackColor = HiddenForest.Outline.copy(alpha = 0.2f)
                 )
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = HiddenForest.Outline.copy(0.1f))
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-                // ── ESTILO DE CONTROLES TTS ──────────────────────────────────
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // ── 3. BLOQUE DE TRANSPORTE Y ACCIONES RÁPIDAS ─────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // [⏮ Cap. Anterior] (IconButton 42.dp)
+                IconButton(
+                    onClick = onSkipChapterBackward,
+                    modifier = Modifier.size(42.dp)
                 ) {
-                    Icon(Icons.Default.Tune, null, tint = HiddenForest.Accent, modifier = Modifier.size(18.dp))
-                    Text("Estilo de Controles", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Capítulo anterior",
+                        tint = HiddenForest.TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Elige cómo se muestran los controles TTS", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
-                Spacer(modifier = Modifier.height(12.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // [⏪ Oración Anterior] (IconButton 46.dp)
+                IconButton(
+                    onClick = onSkipSentenceBackward,
+                    modifier = Modifier.size(46.dp)
                 ) {
-                    data class StyleOption(
-                        val style: TtsUiStyle,
-                        val icon: androidx.compose.ui.graphics.vector.ImageVector,
-                        val label: String,
-                        val desc: String
+                    Icon(
+                        imageVector = Icons.Default.FastRewind,
+                        contentDescription = "Oración anterior",
+                        tint = HiddenForest.Text,
+                        modifier = Modifier.size(28.dp)
                     )
-                    val options = listOf(
-                        StyleOption(TtsUiStyle.BAR, Icons.Default.ViewStream, "Barra", "Controles compactos"),
-                        StyleOption(TtsUiStyle.FLOATING, Icons.Default.Adjust, "Flotante", "Botón rápido"),
-                        StyleOption(TtsUiStyle.PANEL, Icons.Default.DashboardCustomize, "Panel", "Control completo")
-                    )
-                    options.forEach { opt ->
-                        val isSelected = ttsUiStyle == opt.style
-                        val borderColor by animateColorAsState(
-                            targetValue = if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(0.3f),
-                            animationSpec = tween(300),
-                            label = "borderColor"
-                        )
-                        val bgColor by animateColorAsState(
-                            targetValue = if (isSelected) HiddenForest.Accent.copy(0.12f) else HiddenForest.Background,
-                            animationSpec = tween(300),
-                            label = "bgColor"
-                        )
-                        val iconTint by animateColorAsState(
-                            targetValue = if (isSelected) HiddenForest.Accent else HiddenForest.TextLow,
-                            animationSpec = tween(300),
-                            label = "iconTint"
-                        )
+                }
 
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(bgColor)
-                                .border(1.dp, borderColor, RoundedCornerShape(14.dp))
-                                .clickable { onTtsUiStyleChange(opt.style) }
-                                .padding(vertical = 14.dp, horizontal = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isSelected) HiddenForest.Accent.copy(0.15f)
-                                        else HiddenForest.SurfaceVariant
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    opt.icon, null,
-                                    tint = iconTint,
-                                    modifier = Modifier.size(20.dp)
+                // [⏯ Play / Pausa] (Botón circular central de 64.dp con gradiente HiddenForest.Accent y sombra luminosa)
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .shadow(
+                            elevation = if (playing) 10.dp else 4.dp,
+                            shape = CircleShape,
+                            ambientColor = HiddenForest.Accent,
+                            spotColor = HiddenForest.Accent
+                        )
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(
+                                    HiddenForest.Accent,
+                                    HiddenForest.Accent.copy(alpha = 0.85f)
                                 )
+                            )
+                        )
+                        .border(1.5.dp, HiddenForest.Accent.copy(alpha = 0.4f), CircleShape)
+                        .clickable(enabled = !isLoadingTtsModel) {
+                            if (!isLoadingTtsModel) {
+                                if (playing) onPause() else onPlay()
                             }
-                            Text(
-                                opt.label,
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                ),
-                                color = if (isSelected) HiddenForest.Accent else HiddenForest.Text
-                            )
-                            Text(
-                                opt.desc,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = HiddenForest.TextLow,
-                                fontSize = 9.sp,
-                                textAlign = TextAlign.Center
-                            )
-                            // Selection indicator dot
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (isSelected) HiddenForest.Accent else Color.Transparent
-                                    )
-                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isLoadingTtsModel) {
+                        CircularProgressIndicator(
+                            color = HiddenForest.Background,
+                            modifier = Modifier.size(26.dp),
+                            strokeWidth = 2.5.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (playing) "Pausar" else "Reproducir",
+                            tint = HiddenForest.Background,
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+                }
+
+                // [⏩ Oración Siguiente] (IconButton 46.dp)
+                IconButton(
+                    onClick = onSkipSentenceForward,
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FastForward,
+                        contentDescription = "Oración siguiente",
+                        tint = HiddenForest.Text,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                // [⏭ Cap. Siguiente] (IconButton 42.dp)
+                IconButton(
+                    onClick = onSkipChapterForward,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Capítulo siguiente",
+                        tint = HiddenForest.TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Fila de Chips Interactivos de Audio
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Chip de Velocidad (⚡ ${String.format("%.2fx", speed)})
+                val speedCycle = listOf(1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.25f, 2.5f)
+                val speedFormatted = String.format(java.util.Locale.US, "%.2fx", speed)
+                Row(
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (showCompactSpeedSlider) HiddenForest.Accent.copy(alpha = 0.20f)
+                            else HiddenForest.SurfaceVariant.copy(alpha = 0.6f)
+                        )
+                        .border(
+                            1.dp,
+                            if (showCompactSpeedSlider) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.25f),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            val next = speedCycle.firstOrNull { it > speed + 0.01f } ?: speedCycle.first()
+                            speed = next
+                            onSpeedChange(next)
                         }
+                        .padding(vertical = 10.dp, horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⚡", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = speedFormatted,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = HiddenForest.Accent,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Icon(
+                        imageVector = if (showCompactSpeedSlider) Icons.Default.Tune else Icons.Default.UnfoldMore,
+                        contentDescription = "Ajustar velocidad y tono",
+                        tint = HiddenForest.Accent.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clickable { showCompactSpeedSlider = !showCompactSpeedSlider }
+                    )
+                }
+
+                // Chip de Temporizador de Sueño (🌙 ${if (sleepTimerRemaining != null) "${sleepTimerRemaining / 60000}m" else "Sueño"})
+                val isSleepActive = sleepTimerRemaining != null
+                val sleepText = if (isSleepActive) "${sleepTimerRemaining!! / 60000}m" else "Sueño"
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isSleepActive) HiddenForest.Accent.copy(alpha = 0.18f)
+                            else HiddenForest.SurfaceVariant.copy(alpha = 0.6f)
+                        )
+                        .border(
+                            1.dp,
+                            if (isSleepActive) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.25f),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable {
+                            if (sleepTimerRemaining == null) {
+                                onSleepTimer(15)
+                            } else {
+                                val mins = (sleepTimerRemaining / 60000).toInt()
+                                when {
+                                    mins <= 15 -> onSleepTimer(30)
+                                    mins <= 30 -> onSleepTimer(45)
+                                    else -> onCancelSleepTimer()
+                                }
+                            }
+                        }
+                        .padding(vertical = 10.dp, horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🌙", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = sleepText,
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = if (isSleepActive) HiddenForest.Accent else HiddenForest.Text,
+                        maxLines = 1
+                    )
+                }
+
+                // Chip de Parada (⏹ Detener)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(HiddenForest.SurfaceVariant.copy(alpha = 0.6f))
+                        .border(1.dp, HiddenForest.Outline.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            onStop()
+                            onDismiss()
+                        }
+                        .padding(vertical = 10.dp, horizontal = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⏹", fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "Detener",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = HiddenForest.TextSecondary,
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(HiddenForest.SurfaceVariant.copy(alpha = 0.6f))
+                    .border(1.dp, HiddenForest.Outline.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                    .clickable(onClick = onToggleNextAmbience)
+                    .padding(vertical = 10.dp, horizontal = 12.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🌲", fontSize = 14.sp)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = ambiencePreset.displayName,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = if (ambiencePreset == AmbiencePreset.OFF) HiddenForest.Text else HiddenForest.Accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val added = onInstallTtsPresetPack(TtsPresetPack.PINYIN_SPANISH)
+                        presetInstallMessage = if (added == 0) {
+                            "El preset fonético ya estaba instalado."
+                        } else {
+                            "Preset fonético instalado ($added reglas)."
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Instalar preset fonético")
+            }
+            presetInstallMessage?.let { message ->
+                Text(
+                    text = message,
+                    color = HiddenForest.Accent,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            // Slider compacto desplegable de velocidad y tono
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showCompactSpeedSlider,
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
+            ) {
+                Column(modifier = Modifier.padding(top = 10.dp)) {
+                    ReaderCrystalCard(hazeState = hazeState, modifier = Modifier.fillMaxWidth()) {
+                        PremiumSlider(
+                            label = "Velocidad de Lectura",
+                            value = speed,
+                            onValueChange = { speed = it; onSpeedChange(it) },
+                            valueRange = 0.5f..2.5f
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        var currentPitchState by remember(currentPitch) { mutableFloatStateOf(currentPitch) }
+                        PremiumSlider(
+                            label = "Tono de la Voz (Pitch)",
+                            value = currentPitchState,
+                            onValueChange = { currentPitchState = it; onPitchChange(it) },
+                            valueRange = 0.5f..1.5f
+                        )
+                    }
+                }
+            }
+
+            // Chip "Continuar desde donde pausé"
+            androidx.compose.animation.AnimatedVisibility(
+                visible = hasLastPosition && (ttsState == TtsState.STOPPED || ttsState == TtsState.IDLE),
+                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
+                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(HiddenForest.Accent.copy(alpha = 0.08f))
+                            .border(1.dp, HiddenForest.Accent.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                            .clickable { onResumeLast() }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Continuar desde donde pausé",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = HiddenForest.Accent
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // ─── Highlight Style Selector ─────────────────────────────────
+            // ── 4. SELECTOR "ESTILO DE CONTROLES" ──────────────────────────────
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Tune, null, tint = HiddenForest.Accent, modifier = Modifier.size(18.dp))
+                Text("Estilo de Controles", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Elige cómo se muestran los controles TTS", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                data class StyleOption(
+                    val style: TtsUiStyle,
+                    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+                    val label: String,
+                    val desc: String
+                )
+                val options = listOf(
+                    StyleOption(TtsUiStyle.BAR, Icons.Default.ViewStream, "Barra", "Controles compactos"),
+                    StyleOption(TtsUiStyle.FLOATING, Icons.Default.Adjust, "Flotante", "Botón rápido"),
+                    StyleOption(TtsUiStyle.PANEL, Icons.Default.DashboardCustomize, "Panel", "Control completo")
+                )
+                options.forEach { opt ->
+                    val isSelected = ttsUiStyle == opt.style
+                    val borderColor by animateColorAsState(
+                        targetValue = if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(0.3f),
+                        animationSpec = tween(300),
+                        label = "borderColor"
+                    )
+                    val bgColor by animateColorAsState(
+                        targetValue = if (isSelected) HiddenForest.Accent.copy(0.12f) else HiddenForest.Background,
+                        animationSpec = tween(300),
+                        label = "bgColor"
+                    )
+                    val iconTint by animateColorAsState(
+                        targetValue = if (isSelected) HiddenForest.Accent else HiddenForest.TextLow,
+                        animationSpec = tween(300),
+                        label = "iconTint"
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(bgColor)
+                            .border(1.dp, borderColor, RoundedCornerShape(14.dp))
+                            .clickable { onTtsUiStyleChange(opt.style) }
+                            .padding(vertical = 14.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) HiddenForest.Accent.copy(0.15f)
+                                    else HiddenForest.SurfaceVariant
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                opt.icon, null,
+                                tint = iconTint,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Text(
+                            opt.label,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            ),
+                            color = if (isSelected) HiddenForest.Accent else HiddenForest.Text
+                        )
+                        Text(
+                            opt.desc,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = HiddenForest.TextLow,
+                            fontSize = 9.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        // Selection indicator dot
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) HiddenForest.Accent else Color.Transparent
+                                )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ── 5. SELECTOR "ESTILO DE RESALTADO" ──────────────────────────────
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.Transparent),
                 modifier = Modifier.fillMaxWidth()
@@ -476,141 +874,38 @@ fun ReaderTtsMacroWindow(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // COMPACT TRANSPORT CONTROLS (still present for when panel is open)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onSkipSentenceBackward) { Icon(Icons.Default.SkipPrevious, null, tint = HiddenForest.Text, modifier = Modifier.size(28.dp)) }
-                Surface(
-                    onClick = {
-                        if (!isLoadingTtsModel) {
-                            if (playing) onPause() else onPlay()
-                        }
-                    },
-                    enabled = !isLoadingTtsModel,
-                    shape = CircleShape,
-                    color = if (playing) HiddenForest.Accent else HiddenForest.Accent.copy(0.2f),
-                    modifier = Modifier.size(52.dp).border(1.dp, HiddenForest.Accent.copy(0.4f), CircleShape)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (isLoadingTtsModel) {
-                            CircularProgressIndicator(color = HiddenForest.Accent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = if (playing) HiddenForest.Background else HiddenForest.Accent, modifier = Modifier.size(26.dp))
-                        }
-                    }
-                }
-                IconButton(onClick = onSkipSentenceForward) { Icon(Icons.Default.SkipNext, null, tint = HiddenForest.Text, modifier = Modifier.size(28.dp)) }
-                IconButton(onClick = onStop) { Icon(Icons.Default.Stop, null, tint = HiddenForest.TextSecondary, modifier = Modifier.size(24.dp)) }
-            }
-
-            // Chip "Continuar desde donde pausé" — solo visible cuando hay posición guardada y TTS no está activo
-            androidx.compose.animation.AnimatedVisibility(
-                visible = hasLastPosition && (ttsState == TtsState.STOPPED || ttsState == TtsState.IDLE),
-                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
-                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(HiddenForest.Accent.copy(alpha = 0.08f))
-                            .border(1.dp, HiddenForest.Accent.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                            .clickable { onResumeLast() }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = null,
-                            tint = HiddenForest.Accent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Continuar desde donde pausé",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = HiddenForest.Accent
-                        )
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
 
-            // SETTINGS: SPEED & SLEEP TIMER
-            ReaderCrystalCard(hazeState = hazeState, modifier = Modifier.fillMaxWidth()) {
-                PremiumSlider(
-                    label = "Velocidad de Lectura", value = speed,
-                    onValueChange = { speed = it; onSpeedChange(it) }, valueRange = 0.5f..2.5f
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-                HorizontalDivider(color = HiddenForest.Outline.copy(0.1f))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Bedtime, null, tint = if (sleepTimerRemaining != null) HiddenForest.Accent else HiddenForest.TextLow, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Temporizador de Sueño", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (sleepTimerRemaining != null) {
-                        val minutes = (sleepTimerRemaining / 60000).toInt()
-                        val seconds = ((sleepTimerRemaining % 60000) / 1000).toInt()
-                        Text(String.format("%02d:%02d", minutes, seconds), style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Accent)
-                        IconButton(onClick = onCancelSleepTimer, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Close, null, tint = Color.Red.copy(0.6f), modifier = Modifier.size(16.dp))
-                        }
-                    }
+            // Desplazamiento Automático (Auto-Scroll) Switch
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(HiddenForest.SurfaceVariant.copy(alpha = 0.4f))
+                    .border(1.dp, HiddenForest.Outline.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Icon(Icons.Default.ArrowDownward, null, tint = if (ttsAutoScroll) HiddenForest.Accent else HiddenForest.TextLow, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Desplazamiento Automático", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
+                    Text("Mover la página al avanzar la lectura", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(5, 15, 30, 60).forEach { mins ->
-                        val isActive = sleepTimerRemaining != null
-                        OutlinedButton(
-                            onClick = { onSleepTimer(mins) },
-                            modifier = Modifier.weight(1f).height(36.dp),
-                            shape = RoundedCornerShape(10.dp), contentPadding = PaddingValues(0.dp),
-                            border = BorderStroke(1.dp, if (isActive) HiddenForest.Accent.copy(0.3f) else HiddenForest.Outline.copy(0.2f)),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = if (isActive) HiddenForest.Accent else HiddenForest.TextSecondary)
-                        ) { Text("${mins}m", fontSize = 12.sp) }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = HiddenForest.Outline.copy(0.1f))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.ArrowDownward, null, tint = if (ttsAutoScroll) HiddenForest.Accent else HiddenForest.TextLow, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Desplazamiento Automático", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
-                        Text("Mover la página al avanzar la lectura", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = ttsAutoScroll,
-                        onCheckedChange = onTtsAutoScrollChange,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = HiddenForest.Background,
-                            checkedTrackColor = HiddenForest.Accent,
-                            uncheckedThumbColor = HiddenForest.TextLow,
-                            uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
-                        )
+                Spacer(modifier = Modifier.width(8.dp))
+                Switch(
+                    checked = ttsAutoScroll,
+                    onCheckedChange = onTtsAutoScrollChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = HiddenForest.Background,
+                        checkedTrackColor = HiddenForest.Accent,
+                        uncheckedThumbColor = HiddenForest.TextLow,
+                        uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
                     )
-                }
+                )
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
     

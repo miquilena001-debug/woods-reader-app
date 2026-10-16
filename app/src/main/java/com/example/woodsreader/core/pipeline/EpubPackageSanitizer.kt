@@ -116,7 +116,9 @@ object EpubPackageSanitizer {
                     } -> resource.map { bytes ->
                         val charset = EpubHtmlSanitizer.detectCharset(bytes)
                         val original = bytes.toString(charset)
-                        val sanitized = EpubHtmlSanitizer.sanitize(original)
+                        val sanitized = EpubHtmlSanitizer.injectSelectionStyles(
+                            EpubHtmlSanitizer.sanitize(original)
+                        )
                         if (sanitized == original) {
                             Try.success(bytes)
                         } else {
@@ -170,7 +172,9 @@ object EpubPackageSanitizer {
                             normalizedPath.endsWith("/$href") || href.endsWith("/$normalizedPath") ||
                             fileName.equals(href.substringAfterLast('/'), ignoreCase = true)
                         }?.value
-                    val sanitized = EpubHtmlSanitizer.sanitize(original, chapterTitle)
+                    val sanitized = EpubHtmlSanitizer.injectSelectionStyles(
+                        EpubHtmlSanitizer.sanitize(original, chapterTitle)
+                    )
                     if (sanitized != original) {
                         Try.success(EpubHtmlSanitizer.encodeSanitized(original, sanitized, charset))
                     } else {

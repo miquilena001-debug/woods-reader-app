@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -195,6 +196,7 @@ private fun CoverHeroSection(
         modifier = Modifier
             .fillMaxWidth()
             .height(340.dp)
+            .clipToBounds()
     ) {
         val coverFile = remember(book.coverCachePath) {
             book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }
@@ -214,7 +216,7 @@ private fun CoverHeroSection(
                 error = androidx.compose.ui.res.painterResource(com.example.woodsreader.R.drawable.placeholder),
                 contentDescription = null,
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .graphicsLayer {
                         // Simulate blur via heavy scaling + alpha for pre-API31 compat
                         scaleX = 1.15f
@@ -226,7 +228,7 @@ private fun CoverHeroSection(
         } else {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .matchParentSize()
                     .background(
                         brush = Brush.verticalGradient(
                             listOf(
@@ -241,12 +243,15 @@ private fun CoverHeroSection(
         // Gradient scrim
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to HiddenForest.Background.copy(alpha = 0.35f),
-                        0.65f to HiddenForest.Background.copy(alpha = 0.85f),
-                        1f to HiddenForest.Background
+                        colorStops = arrayOf(
+                            0.0f to Color(0xFF0A140F).copy(alpha = 0.45f),
+                            0.70f to Color(0xFF0A140F).copy(alpha = 0.92f),
+                            0.95f to Color(0xFF0A140F),
+                            1.0f to Color(0xFF0A140F)
+                        )
                     )
                 )
         )
@@ -301,15 +306,15 @@ private fun CoverHeroSection(
 
                 // Progress pill
                 if (book.readingProgressPercent > 0f) {
-                    val progressPct = (book.readingProgressPercent * 100f).coerceIn(0f, 100f)
-                    val progressLabel = when {
-                        progressPct <= 0f -> "0%"
-                        progressPct < 1f -> String.format(Locale.US, "%.1f%%", progressPct)
-                        else -> "${progressPct.roundToInt()}%"
+                    val rawProgressPct = (book.readingProgressPercent * 100f).coerceIn(0f, 100f)
+                    val progressText = when {
+                        rawProgressPct <= 0f -> "0%"
+                        rawProgressPct < 1f -> String.format(Locale.US, "%.1f%%", rawProgressPct)
+                        else -> "${kotlin.math.round(rawProgressPct).toInt()}%"
                     }
                     LinearProgressIndicatorPill(
                         progress = book.readingProgressPercent.coerceAtLeast(0.02f),
-                        progressLabel = progressLabel
+                        progressLabel = progressText
                     )
                 }
             }
@@ -438,7 +443,13 @@ private fun MetadataSection(
 
         // Status + Rating row
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0xFF102018))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {

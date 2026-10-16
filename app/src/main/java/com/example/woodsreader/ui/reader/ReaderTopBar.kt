@@ -160,37 +160,17 @@ fun ReaderTopBar(
                     )
                 }
                 
-                // << CHANGE: AnimatedContent para animación Play/Pause suave
-                val isPlaying = ttsState == TtsState.PLAYING
+                val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED
                 IconButton(
                     onClick = onTtsToggle,
-                    colors = IconButtonDefaults.iconButtonColors(
-                        containerColor = Color.Transparent
-                    ),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .then(
-                            if (isPlaying) {
-                                Modifier
-                                    .background(HiddenForest.Accent.copy(0.12f))
-                                    .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(12.dp))
-                            } else Modifier
-                        )
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    AnimatedContent(
-                        targetState = isPlaying,
-                        transitionSpec = {
-                            androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(200)) togetherWith androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(200))
-                        },
-                        label = "tts-icon-animation"
-                    ) { playing ->
-                        Icon(
-                            imageVector = if (playing) Icons.Default.Pause else Icons.Default.GraphicEq,
-                            contentDescription = stringResource(if (playing) R.string.reader_tts_pause else R.string.reader_tts_play),
-                            tint = if (playing) HiddenForest.Accent else HiddenForest.TextSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.GraphicEq,
+                        contentDescription = stringResource(R.string.reader_tts_play),
+                        tint = if (isTtsActive) HiddenForest.Accent else HiddenForest.TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
                 
                 Spacer(modifier = Modifier.width(4.dp))

@@ -39,7 +39,11 @@ import org.readium.r2.navigator.preferences.PreferencesEditor
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.services.cover
+import com.example.woodsreader.core.pipeline.EpubPackageSanitizer
+import java.util.Locale
+import kotlinx.coroutines.Job
 
 /**
  * Servicio TTS integrado con Media3 MediaSessionService.
@@ -92,6 +96,11 @@ class ReaderTtsService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
     val binder = TtsBinder()
+
+    private var publication: Publication? = null
+    private var cachedCoverBytes: ByteArray? = null
+    private var forwardingPlayer: TtsProgressForwardingPlayer? = null
+    private var metadataUpdateJob: Job? = null
 
     private var currentSpeed = 1.0f
     private var currentPreferences = AndroidTtsPreferences()
@@ -250,6 +259,10 @@ class ReaderTtsService : MediaSessionService() {
 
     override fun onDestroy() {
         _ttsNavigator.value?.close()
+        forwardingPlayer = null
+        publication = null
+        cachedCoverBytes = null
+        metadataUpdateJob?.cancel()
         mediaSession?.run { release(); mediaSession = null }
         serviceScope.coroutineContext.cancelChildren()
         serviceScope.cancel()
@@ -283,11 +296,13 @@ class ReaderTtsService : MediaSessionService() {
 
     // ── Inicialización del Navigator ─────────────────────────────────────────
     fun initNavigator(pub: Publication, initialLocator: Locator? = null) {
+        this.publication = pub
+        this.cachedCoverBytes = null
         pendingPlayOnReady = false
         _playbackState.value = null
-        _currentLocator.value = null
+        _currentLocator.value = initialLocator
         preWarmEngine()
-        updateMediaMetadata(pub)
+        updateMediaMetadata(pub, initialLocator)
 
         serviceScope.launch(Dispatchers.Main) {
             try {
@@ -364,37 +379,129 @@ class ReaderTtsService : MediaSessionService() {
         }
     }
 
-    // ── Metadata (portada + título en notificación) ───────────────────────────
-    private fun updateMediaMetadata(pub: Publication) {
-        serviceScope.launch(Dispatchers.Default) {
-            val title  = pub.metadata.title ?: ""
-            val author = pub.metadata.authors.joinToString { it.name }
+    // ── Metadata (portada + título + capítulo + progreso en notificación) ─────
+    private fun updateMediaMetadata(pub: Publication?, locator: Locator? = _currentLocator.value) {
+        val targetPub = pub ?: this.publication ?: return
+        metadataUpdateJob?.cancel()
+        metadataUpdateJob = serviceScope.launch(Dispatchers.Default) {
+            val title = targetPub.metadata.title?.takeIf { it.isNotBlank() } ?: "Woods Reader"
+            val authorName = targetPub.metadata.authors.joinToString { it.name }.trim()
+            val chapterTitle = resolveChapterTitle(targetPub, locator)
+            val pct = computeProgression(targetPub, locator) * 100.0
 
-            val coverBytes: ByteArray? = try {
-                pub.cover()?.let { bmp ->
-                    val scaled = bmp.scale(400, 600, true)
-                    val stream = java.io.ByteArrayOutputStream()
-                    scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
-                    stream.toByteArray()
+            val artistText = buildString {
+                if (authorName.isNotBlank()) {
+                    append(authorName)
+                    if (chapterTitle.isNotBlank()) append(" · $chapterTitle")
+                } else if (chapterTitle.isNotBlank()) {
+                    append(chapterTitle)
                 }
-            } catch (_: Exception) { null }
+                if (pct > 0.0) {
+                    val formattedPct = String.format(Locale.US, "%.1f%%", pct)
+                    if (isNotEmpty()) {
+                        append(" ($formattedPct)")
+                    } else {
+                        append(formattedPct)
+                    }
+                }
+            }.ifBlank { "Woods Reader" }
+
+            val subtitleText = if (chapterTitle.isNotBlank()) {
+                val formattedPct = String.format(Locale.US, "%.1f%%", pct)
+                if (pct > 0.0) "$chapterTitle · $formattedPct" else chapterTitle
+            } else {
+                authorName.ifBlank { "Woods Reader" }
+            }
+
+            val coverBytes = cachedCoverBytes ?: run {
+                try {
+                    targetPub.cover()?.let { bmp ->
+                        val scaled = bmp.scale(400, 600, true)
+                        val stream = java.io.ByteArrayOutputStream()
+                        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                        val bytes = stream.toByteArray()
+                        cachedCoverBytes = bytes
+                        bytes
+                    }
+                } catch (_: Exception) { null }
+            }
 
             serviceScope.launch(Dispatchers.Main) {
                 val metadata = MediaMetadata.Builder()
-                    .setTitle(title).setArtist(author).setAlbumTitle(title)
+                    .setTitle(title)
+                    .setArtist(artistText)
+                    .setDisplayTitle(title)
+                    .setSubtitle(subtitleText)
+                    .setAlbumTitle(title)
                     .apply { coverBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
                     .build()
 
+                forwardingPlayer?.updateMetadata(metadata)
                 mediaSession?.player?.let { player ->
-                    player.setMediaItem(
-                        MediaItem.Builder()
-                            .setMediaId("woods_tts_item")
-                            .setMediaMetadata(metadata)
-                            .build()
-                    )
+                    try {
+                        player.setMediaItem(
+                            MediaItem.Builder()
+                                .setMediaId("woods_tts_item")
+                                .setMediaMetadata(metadata)
+                                .build()
+                        )
+                    } catch (_: Exception) {}
                 }
             }
         }
+    }
+
+    private fun resolveChapterTitle(pub: Publication, locator: Locator?): String {
+        if (locator == null) return ""
+        val titleFromLocator = locator.title?.trim()?.takeIf { it.isNotEmpty() }
+        if (titleFromLocator != null) return titleFromLocator
+
+        val resourceHref = locator.href.toString()
+        val normalized = EpubPackageSanitizer.normalizeResourcePath(resourceHref)
+        val fileName = normalized.substringAfterLast('/')
+
+        fun findInLinks(links: List<Link>): String? {
+            for (link in links) {
+                val linkNorm = EpubPackageSanitizer.normalizeResourcePath(link.href.toString())
+                if (linkNorm == normalized ||
+                    linkNorm.endsWith("/$normalized") ||
+                    normalized.endsWith("/$linkNorm") ||
+                    fileName.equals(linkNorm.substringAfterLast('/'), ignoreCase = true)
+                ) {
+                    val title = link.title?.trim()?.takeIf { it.isNotEmpty() }
+                    if (title != null) return title
+                }
+                val child = findInLinks(link.children)
+                if (child != null) return child
+            }
+            return null
+        }
+
+        return findInLinks(pub.tableOfContents)
+            ?: findInLinks(pub.readingOrder)
+            ?: pub.readingOrder.indexOfFirst { it.href.toString() == resourceHref }
+                .takeIf { it >= 0 }
+                ?.let { idx -> pub.tableOfContents.getOrNull(idx)?.title?.trim()?.takeIf { it.isNotEmpty() } }
+            ?: ""
+    }
+
+    private fun computeProgression(pub: Publication?, locator: Locator?): Double {
+        if (locator == null) return 0.0
+        locator.locations.totalProgression?.let { return it.coerceIn(0.0, 1.0) }
+
+        // Fallback: estimate from reading order and chapter progression
+        if (pub != null && pub.readingOrder.isNotEmpty()) {
+            val resourceHref = locator.href.toString()
+            val index = pub.readingOrder.indexOfFirst {
+                it.href.toString() == resourceHref ||
+                it.href.toString().substringAfterLast('/') == resourceHref.substringAfterLast('/')
+            }
+            if (index >= 0) {
+                val chapterProg = locator.locations.progression ?: 0.0
+                return ((index + chapterProg) / pub.readingOrder.size).coerceIn(0.0, 1.0)
+            }
+        }
+        return (locator.locations.progression ?: 0.0).coerceIn(0.0, 1.0)
     }
 
     // ── MediaSession setup ────────────────────────────────────────────────────
@@ -405,7 +512,10 @@ class ReaderTtsService : MediaSessionService() {
             it.release()
             mediaSession = null
         }
-        if (navigator == null) return
+        if (navigator == null) {
+            forwardingPlayer = null
+            return
+        }
 
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
@@ -415,10 +525,12 @@ class ReaderTtsService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // navigator.asMedia3Player() conecta el Player de Readium con Media3.
-        // Esto hace que Play/Pause funcionen directamente desde la notificación
-        // y que los auriculares A40 envíen sus comandos AVRCP aquí.
-        mediaSession = MediaSession.Builder(this, navigator.asMedia3Player())
+        val basePlayer = navigator.asMedia3Player()
+        val customPlayer = TtsProgressForwardingPlayer(basePlayer)
+        forwardingPlayer = customPlayer
+
+        // customPlayer envuelve el Player de Readium con Media3 y gestiona metadatos y progreso real (0..1000)
+        mediaSession = MediaSession.Builder(this, customPlayer)
             .setSessionActivity(pendingIntent)
             .setCallback(TtsSessionCallback())
             .setCustomLayout(buildCommandButtons())
@@ -435,7 +547,9 @@ class ReaderTtsService : MediaSessionService() {
         serviceScope.launch { navigator.playback.collectLatest { _playbackState.value = it } }
         serviceScope.launch {
             navigator.location.collectLatest { loc ->
-                _currentLocator.value = loc.utteranceLocator
+                val utteranceLocator = loc.utteranceLocator
+                _currentLocator.value = utteranceLocator
+                updateMediaMetadata(publication, utteranceLocator)
             }
         }
     }
@@ -470,14 +584,120 @@ class ReaderTtsService : MediaSessionService() {
         val nav = _ttsNavigator.value
         if (nav != null) {
             nav.go(locator)
+            _currentLocator.value = locator
+            updateMediaMetadata(publication, locator)
         } else {
             android.util.Log.d("ReaderTtsService", "go() queued: locator = $locator")
             pendingLocatorOnReady = locator
         }
     }
 
+    fun updateProgress(locator: Locator) {
+        _currentLocator.value = locator
+        updateMediaMetadata(publication, locator)
+    }
+
     fun goNext()     { _ttsNavigator.value?.skipToNextUtterance() }
     fun goPrevious() { _ttsNavigator.value?.skipToPreviousUtterance() }
+
+    // ── Player envolvente con soporte de progreso y metadatos ─────────────────
+    @AndroidOptIn(UnstableApi::class)
+    private inner class TtsProgressForwardingPlayer(
+        player: Player
+    ) : androidx.media3.common.ForwardingPlayer(player) {
+
+        private val playerListeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
+        private var customMetadata: MediaMetadata? = null
+
+        override fun addListener(listener: Player.Listener) {
+            super.addListener(listener)
+            playerListeners.add(listener)
+        }
+
+        override fun removeListener(listener: Player.Listener) {
+            super.removeListener(listener)
+            playerListeners.remove(listener)
+        }
+
+        fun updateMetadata(metadata: MediaMetadata) {
+            customMetadata = metadata
+            playerListeners.forEach { l ->
+                try {
+                    l.onMediaMetadataChanged(metadata)
+                } catch (_: Exception) {}
+            }
+        }
+
+        override fun getMediaMetadata(): MediaMetadata {
+            return customMetadata ?: super.getMediaMetadata()
+        }
+
+        override fun getCurrentMediaItem(): MediaItem? {
+            val base = super.getCurrentMediaItem()
+            val meta = customMetadata ?: return base
+            return (base?.buildUpon() ?: MediaItem.Builder().setMediaId("woods_tts_item"))
+                .setMediaMetadata(meta)
+                .build()
+        }
+
+        override fun setMediaItem(mediaItem: MediaItem) {
+            updateMetadata(mediaItem.mediaMetadata)
+            try {
+                super.setMediaItem(mediaItem)
+            } catch (_: Exception) {}
+        }
+
+        override fun getDuration(): Long {
+            val d = super.getDuration()
+            return if (d > 0L && d != androidx.media3.common.C.TIME_UNSET) d else 1000L
+        }
+
+        override fun getCurrentPosition(): Long {
+            val d = super.getDuration()
+            if (d > 0L && d != androidx.media3.common.C.TIME_UNSET) {
+                val pos = super.getCurrentPosition()
+                if (pos > 0L) return pos
+            }
+            val prog = computeProgression(publication, _currentLocator.value)
+            return (prog.coerceIn(0.0, 1.0) * 1000.0).toLong().coerceIn(0L, 1000L)
+        }
+
+        override fun getContentDuration(): Long = getDuration()
+
+        override fun getContentPosition(): Long = getCurrentPosition()
+
+        override fun isCurrentMediaItemSeekable(): Boolean = true
+
+        override fun isCurrentMediaItemDynamic(): Boolean = false
+
+        override fun getAvailableCommands(): Player.Commands {
+            return super.getAvailableCommands().buildUpon()
+                .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
+                .add(Player.COMMAND_GET_METADATA)
+                .build()
+        }
+
+        override fun isCommandAvailable(command: Int): Boolean {
+            if (command == Player.COMMAND_GET_CURRENT_MEDIA_ITEM ||
+                command == Player.COMMAND_GET_METADATA
+            ) {
+                return true
+            }
+            return super.isCommandAvailable(command)
+        }
+
+        override fun seekTo(positionMs: Long) {
+            try {
+                super.seekTo(positionMs)
+            } catch (_: Exception) {}
+        }
+
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            try {
+                super.seekTo(mediaItemIndex, positionMs)
+            } catch (_: Exception) {}
+        }
+    }
 
     fun speakNarrationUnits(
         units: List<com.example.woodsreader.core.pipeline.TtsNarrationUnit>,
