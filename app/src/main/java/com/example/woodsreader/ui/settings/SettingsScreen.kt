@@ -1,5 +1,7 @@
 package com.example.woodsreader.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,8 +41,21 @@ fun SettingsScreen(
     val storageSizes by viewModel.storageSizes.collectAsStateWithLifecycle()
     val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
+    val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
     val isBusy = isScanning || isEnriching
     val context = LocalContext.current
+
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) viewModel.exportFullBackup(uri)
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) viewModel.restoreFullBackup(uri)
+    }
 
     // Calculate storage sizes on display
     LaunchedEffect(Unit) {
@@ -353,6 +368,56 @@ fun SettingsScreen(
                                     }
                                 },
                                 containerColor = HiddenForest.SurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SettingsSection("🗄️ Bóveda de Respaldo") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.clearBackupStatusMessage()
+                                createBackupLauncher.launch("woods_reader_backup.woodsbackup")
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = HiddenForest.Accent
+                            ),
+                            border = BorderStroke(1.dp, HiddenForest.Outline)
+                        ) {
+                            Icon(Icons.Default.Upload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Exportar respaldo (.woodsbackup)")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.clearBackupStatusMessage()
+                                restoreBackupLauncher.launch(
+                                    arrayOf("application/json", "application/octet-stream", "*/*")
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = HiddenForest.Accent
+                            ),
+                            border = BorderStroke(1.dp, HiddenForest.Outline)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Restaurar desde archivo")
+                        }
+
+                        backupStatusMessage?.let { message ->
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = HiddenForest.Accent
                             )
                         }
                     }

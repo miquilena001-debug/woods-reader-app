@@ -15,6 +15,7 @@ import com.example.woodsreader.data.database.ReadingSessionEntity
 import com.example.woodsreader.data.datastore.UserPreferences
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
 import com.example.woodsreader.service.BookScannerService
+import com.example.woodsreader.core.managers.BackupManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,7 +59,8 @@ class SettingsViewModel @Inject constructor(
     private val bookmarkDao: BookmarkDao,
     private val readingSessionDao: ReadingSessionDao,
     private val sherpaModelManager: SherpaModelManager,
-    private val ttsManager: TtsManager
+    private val ttsManager: TtsManager,
+    private val backupManager: BackupManager
 ) : ViewModel() {
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow
@@ -70,6 +72,43 @@ class SettingsViewModel @Inject constructor(
 
     private val _storageSizes = MutableStateFlow(StorageSizes())
     val storageSizes: StateFlow<StorageSizes> = _storageSizes.asStateFlow()
+
+    private val _backupStatusMessage = MutableStateFlow<String?>(null)
+    val backupStatusMessage = _backupStatusMessage.asStateFlow()
+
+    fun clearBackupStatusMessage() {
+        _backupStatusMessage.value = null
+    }
+
+    fun exportFullBackup(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _backupStatusMessage.value = "Exportando copia de seguridad..."
+            backupManager.exportBackupToUri(uri)
+                .onSuccess {
+                    _backupStatusMessage.value = "Respaldo guardado correctamente (.woodsbackup)"
+                }
+                .onFailure { err ->
+                    _backupStatusMessage.value =
+                        "Error al exportar: ${err.localizedMessage ?: "desconocido"}"
+                }
+        }
+    }
+
+    fun restoreFullBackup(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _backupStatusMessage.value = "Restaurando biblioteca..."
+            backupManager.restoreFromUri(uri)
+                .onSuccess { summary ->
+                    _backupStatusMessage.value =
+                        "Restaurados: ${summary.booksRestored} libros, ${summary.highlightsRestored} citas, " +
+                            "${summary.bookmarksRestored} marcadores y ${summary.rulesRestored} reglas."
+                }
+                .onFailure { err ->
+                    _backupStatusMessage.value =
+                        "Error al restaurar: ${err.localizedMessage ?: "archivo inválido"}"
+                }
+        }
+    }
 
     // ── Toggle and Slider handlers ───────────────────────────────────────────
 

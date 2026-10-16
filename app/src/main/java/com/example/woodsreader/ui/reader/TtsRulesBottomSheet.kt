@@ -3,6 +3,7 @@ package com.example.woodsreader.ui.reader
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -22,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.woodsreader.data.database.TtsRuleEntity
+import com.example.woodsreader.core.tts.TtsPresetPack
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.ui.theme.Semantic
 
@@ -31,6 +34,7 @@ fun TtsRulesBottomSheet(
     rules: List<TtsRuleEntity>,
     onSaveRule: (TtsRuleEntity) -> Unit,
     onDeleteRule: (TtsRuleEntity) -> Unit,
+    onInstallPresetPack: (TtsPresetPack) -> Unit,
     onDismiss: () -> Unit
 ) {
     var pattern by remember { mutableStateOf("") }
@@ -178,6 +182,39 @@ fun TtsRulesBottomSheet(
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Guardar Regla", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "PAQUETES RÁPIDOS",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                ),
+                color = HiddenForest.TextLow
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TtsPresetPack.entries.forEach { pack ->
+                    val icon = when (pack) {
+                        TtsPresetPack.PINYIN_SPANISH -> "⚡"
+                        TtsPresetPack.WEB_NOVEL_CLEANER -> "🧹"
+                        TtsPresetPack.EDITORIAL_ABBREVIATIONS -> "📖"
+                    }
+                    AssistChip(
+                        onClick = { onInstallPresetPack(pack) },
+                        label = { Text("$icon ${pack.title}") },
+                        colors = AssistChipDefaults.assistChipColors(
+                            labelColor = HiddenForest.Text,
+                            containerColor = HiddenForest.SurfaceVariant
+                        )
+                    )
                 }
             }
 

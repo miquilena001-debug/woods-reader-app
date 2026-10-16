@@ -193,23 +193,20 @@ class TtsManager @Inject constructor(
                     continue
                 }
                 
-                // Ajustar entonaciÃƒÂ³n y velocidad dinÃƒÂ¡micamente segÃƒÂºn el rol
-                when (item.type) {
-                    ChunkType.DIALOGUE -> {
-                        tts?.setPitch(basePitch)
-                        tts?.setSpeechRate(baseRate * 0.95f)
-                    }
-                    ChunkType.NARRATOR -> {
-                        tts?.setPitch(basePitch)
-                        tts?.setSpeechRate(baseRate)
-                    }
-                    else -> {}
+                val rolePitchModifier = when {
+                    item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.08f
+                    item.type == ChunkType.DIALOGUE && item.isQuestion -> 1.06f
+                    item.type == ChunkType.DIALOGUE -> 1.04f
+                    item.isExclamation -> 1.04f
+                    else -> 1.0f
                 }
-                
-                // Refuerzo especial para signos de exclamaciÃƒÂ³n
-                if (item.isExclamation) {
-                    tts?.setPitch(basePitch * 1.1f)
+                val speechRateMultiplier = when {
+                    item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.02f
+                    item.type == ChunkType.DIALOGUE -> 0.96f
+                    else -> 1.0f
                 }
+                tts?.setPitch((basePitch * rolePitchModifier).coerceIn(0.5f, 2.0f))
+                tts?.setSpeechRate((baseRate * speechRateMultiplier).coerceIn(0.1f, 3.0f))
                 
                 val id = "utterance_${System.currentTimeMillis()}"
                 
@@ -262,76 +259,54 @@ class TtsManager @Inject constructor(
         val chunks = mutableListOf<SpeechChunk>()
         val currentText = StringBuilder()
         var inDialogue = false
-        var dialogueStartedByDash = false
         var i = 0
-
-        fun flushCurrent() {
-            val content = currentText.toString().trim()
-            if (content.isNotEmpty()) {
-                chunks.add(SpeechChunk(content, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
-                currentText.clear()
-            }
-        }
+        val trimmedStart = text.trimStart()
+        val startsAsDialogueParagraph = trimmedStart.startsWith('\u2014') ||
+            trimmedStart.startsWith('\u2013') ||
+            trimmedStart.startsWith("- ")
 
         while (i < text.length) {
             val char = text[i]
-            when (char) {
-                '\n', '\r' -> {
-                    flushCurrent()
-                    // En español un salto de párrafo cierra el turno de diálogo abierto por raya o comillas
-                    inDialogue = false
-                    dialogueStartedByDash = false
-                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 350L))
-                }
-                // Comillas de apertura explícitas: siempre inician diálogo
-                '\u00AB', '\u201C' -> {
-                    flushCurrent()
-                    inDialogue = true
-                    dialogueStartedByDash = false
-                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
-                }
-                // Comillas de cierre explícitas: siempre cierran diálogo
-                '\u00BB', '\u201D' -> {
-                    flushCurrent()
-                    inDialogue = false
-                    dialogueStartedByDash = false
-                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
-                }
-                // Comilla recta doble: alterna estado de diálogo dentro del mismo párrafo
-                '"' -> {
-                    flushCurrent()
-                    inDialogue = !inDialogue
-                    dialogueStartedByDash = false
-                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
-                }
-                // Raya de diálogo (em-dash — o en-dash –)
-                '\u2014', '\u2013' -> {
-                    val prevChar = if (i > 0) text[i - 1] else '\n'
-                    val nextChar = if (i + 1 < text.length) text[i + 1] else ' '
-                    val isEndOfClauseDash = nextChar == '.' || nextChar == ',' || nextChar == ';' ||
-                            nextChar == ':' || nextChar == '!' || nextChar == '?'
+            val isDash = char == '\u2014' || char == '\u2013'
+            val isQuoteOpen = char == '\u00AB' || char == '\u201C'
+            val isQuoteClose = char == '\u00BB' || char == '\u201D'
+            val isStraightQuote = char == '"'
 
-                    flushCurrent()
-                    if (prevChar == '\n' || prevChar == '\r' || i == 0) {
-                        // Raya al inicio de párrafo: inicia diálogo
-                        inDialogue = true
-                        dialogueStartedByDash = true
-                    } else if (dialogueStartedByDash && isEndOfClauseDash) {
-                        // Raya que cierra un inciso del narrador (ej. "—dijo Juan—. ¡Vamos!")
-                        inDialogue = true
-                    } else {
-                        inDialogue = !inDialogue
-                    }
-                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 200L))
+            if (isDash || isQuoteOpen || isQuoteClose || isStraightQuote) {
+                val content = currentText.toString().trim()
+                if (content.isNotEmpty()) {
+                    chunks.add(SpeechChunk(content, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
+                    currentText.clear()
                 }
-                else -> {
+                inDialogue = when {
+                    isQuoteOpen -> true
+                    isQuoteClose -> false
+                    isStraightQuote -> !inDialogue
+                    isDash && i == text.indexOfFirst { !it.isWhitespace() } && startsAsDialogueParagraph -> true
+                    else -> !inDialogue
+                }
+                chunks.add(SpeechChunk("", ChunkType.PAUSE, 180L))
+            } else {
+                if (char == '\n') {
+                    val content = currentText.toString().trim()
+                    if (content.isNotEmpty()) {
+                        chunks.add(SpeechChunk(content, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
+                        currentText.clear()
+                    }
+                    inDialogue = false
+                    chunks.add(SpeechChunk("", ChunkType.PAUSE, 450L))
+                } else {
                     currentText.append(char)
                 }
             }
             i++
         }
 
-        flushCurrent()
+        val finalContent = currentText.toString().trim()
+        if (finalContent.isNotEmpty()) {
+            chunks.add(SpeechChunk(finalContent, if (inDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR))
+        }
+
         return chunks
     }
 
@@ -658,6 +633,17 @@ class TtsManager @Inject constructor(
             Timber.w(e, "Error releasing OfflineTts")
         }
         offlineTts = null
+    }
+
+    suspend fun switchSherpaVoice(option: SherpaVoiceOption): Boolean {
+        stop()
+        sherpaModelManager.selectVoiceOption(option)
+        resetSherpa()
+        return if (sherpaModelManager.isModelReady()) {
+            initSherpaIfNeeded()
+        } else {
+            false
+        }
     }
 
     suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
@@ -991,12 +977,18 @@ class TtsManager @Inject constructor(
                         continue
                     }
 
-                    // Combined pitch factor: basePitch (user's setting)
-                    val currentPitchFactor = basePitch.coerceIn(0.5f, 2.0f)
+                    val rolePitchModifier = when {
+                        item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.08f
+                        item.type == ChunkType.DIALOGUE && item.isQuestion -> 1.06f
+                        item.type == ChunkType.DIALOGUE -> 1.04f
+                        item.isExclamation -> 1.04f
+                        else -> 1.0f
+                    }
+                    val currentPitchFactor = (basePitch * rolePitchModifier).coerceIn(0.5f, 2.0f)
 
-                    // Compensate speed for pitch-shifted sample playback
-                    val speedMultiplier = when (item.type) {
-                        ChunkType.DIALOGUE -> 0.95f
+                    val speedMultiplier = when {
+                        item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.02f
+                        item.type == ChunkType.DIALOGUE -> 0.96f
                         else -> 1.0f
                     }
                     val targetSpeed = (baseRate * speedMultiplier).coerceIn(0.1f, 3.0f)
@@ -1113,5 +1105,4 @@ class TtsManager @Inject constructor(
         }
     }
 }
-
 

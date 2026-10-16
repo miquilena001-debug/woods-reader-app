@@ -24,6 +24,58 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
+enum class SherpaVoiceOption(
+    val id: String,
+    val displayName: String,
+    val accent: String,
+    val dirName: String,
+    val onnxFileName: String,
+    val downloadUrl: String,
+    val minBytes: Long = 40_000_000L
+) {
+    DAVEFX_ES(
+        id = "es_ES-davefx-medium",
+        displayName = "David (Narrador Clásico)",
+        accent = "Español (España)",
+        dirName = "vits-piper-es_ES-davefx-medium",
+        onnxFileName = "es_ES-davefx-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2",
+        minBytes = 50_000_000L
+    ),
+    ALD_MX(
+        id = "es_MX-ald-medium",
+        displayName = "Alejandro (Latino Neutro)",
+        accent = "Español (México / Latam)",
+        dirName = "vits-piper-es_MX-ald-medium",
+        onnxFileName = "es_MX-ald-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-ald-medium.tar.bz2",
+        minBytes = 45_000_000L
+    ),
+    CLAUDE_MX(
+        id = "es_MX-claude-high",
+        displayName = "Claudia (Voz Femenina Alta Definición)",
+        accent = "Español (México / Latam)",
+        dirName = "vits-piper-es_MX-claude-high",
+        onnxFileName = "es_MX-claude-high.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-claude-high.tar.bz2",
+        minBytes = 50_000_000L
+    ),
+    CARLFM_ES(
+        id = "es_ES-carlfm-x_low",
+        displayName = "Carlos (Ultraligero y Rápido)",
+        accent = "Español (España)",
+        dirName = "vits-piper-es_ES-carlfm-x_low",
+        onnxFileName = "es_ES-carlfm-x_low.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-carlfm-x_low.tar.bz2",
+        minBytes = 15_000_000L
+    );
+
+    companion object {
+        fun fromId(id: String?): SherpaVoiceOption =
+            entries.find { it.id == id } ?: DAVEFX_ES
+    }
+}
+
 sealed interface SherpaDownloadState {
     data object Idle : SherpaDownloadState
     data class Downloading(val progress: Float, val downloadedBytes: Long, val totalBytes: Long) : SherpaDownloadState
@@ -37,6 +89,9 @@ class SherpaModelManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     companion object {
+        const val PREFS_NAME = "sherpa_model_prefs"
+        const val KEY_SELECTED_VOICE_ID = "sherpa_selected_voice_id"
+
         const val MODEL_DIR_NAME = "vits-piper-es_ES-davefx-medium"
         const val ONNX_FILE_NAME = "es_ES-davefx-medium.onnx"
         const val TOKENS_FILE_NAME = "tokens.txt"
@@ -48,12 +103,24 @@ class SherpaModelManager @Inject constructor(
         private const val MIN_ONNX_BYTES = 50_000_000L
     }
 
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val _selectedVoice = MutableStateFlow(
+        SherpaVoiceOption.fromId(prefs.getString(KEY_SELECTED_VOICE_ID, null))
+    )
+    val selectedVoice: StateFlow<SherpaVoiceOption> = _selectedVoice.asStateFlow()
+
     private val downloadMutex = Mutex()
     private val baseDir = File(context.filesDir, "sherpa-onnx")
-    val modelDir = File(baseDir, MODEL_DIR_NAME)
-    val onnxFile = File(modelDir, ONNX_FILE_NAME)
-    val tokensFile = File(modelDir, TOKENS_FILE_NAME)
-    val espeakDir = File(modelDir, ESPEAK_DIR_NAME)
+
+    val modelDir: File
+        get() = File(baseDir, _selectedVoice.value.dirName)
+    val onnxFile: File
+        get() = File(modelDir, _selectedVoice.value.onnxFileName)
+    val tokensFile: File
+        get() = File(modelDir, TOKENS_FILE_NAME)
+    val espeakDir: File
+        get() = File(modelDir, ESPEAK_DIR_NAME)
 
     private val _downloadState = MutableStateFlow<SherpaDownloadState>(
         if (isModelReady()) SherpaDownloadState.Ready else SherpaDownloadState.Idle
@@ -67,14 +134,28 @@ class SherpaModelManager @Inject constructor(
         .followSslRedirects(true)
         .build()
 
+    fun isVoiceDownloaded(option: SherpaVoiceOption): Boolean {
+        val dir = File(baseDir, option.dirName)
+        val onnx = File(dir, option.onnxFileName)
+        val tokens = File(dir, TOKENS_FILE_NAME)
+        val espeak = File(dir, ESPEAK_DIR_NAME)
+        return onnx.exists() &&
+                onnx.length() > option.minBytes &&
+                tokens.exists() &&
+                tokens.length() > 0 &&
+                espeak.exists() &&
+                espeak.isDirectory &&
+                (espeak.list()?.isNotEmpty() == true)
+    }
+
     fun isModelReady(): Boolean {
-        return onnxFile.exists() &&
-                onnxFile.length() > MIN_ONNX_BYTES &&
-                tokensFile.exists() &&
-                tokensFile.length() > 0 &&
-                espeakDir.exists() &&
-                espeakDir.isDirectory &&
-                (espeakDir.list()?.isNotEmpty() == true)
+        return isVoiceDownloaded(_selectedVoice.value)
+    }
+
+    fun selectVoiceOption(option: SherpaVoiceOption) {
+        prefs.edit().putString(KEY_SELECTED_VOICE_ID, option.id).apply()
+        _selectedVoice.value = option
+        _downloadState.value = if (isModelReady()) SherpaDownloadState.Ready else SherpaDownloadState.Idle
     }
 
     suspend fun downloadAndExtractModel(): Result<Unit> = withContext(Dispatchers.IO) {
@@ -84,13 +165,14 @@ class SherpaModelManager @Inject constructor(
                 return@withLock Result.success(Unit)
             }
 
-            val tempArchive = File(context.cacheDir, "sherpa_model_temp_${System.currentTimeMillis()}.tar.bz2")
+            val currentVoice = _selectedVoice.value
+            val tempArchive = File(context.cacheDir, "sherpa_model_temp_${currentVoice.id}_${System.currentTimeMillis()}.tar.bz2")
             try {
-                Timber.i("Iniciando descarga del modelo Sherpa ONNX desde $MODEL_DOWNLOAD_URL")
+                Timber.i("Iniciando descarga del modelo Sherpa ONNX desde ${currentVoice.downloadUrl}")
                 _downloadState.value = SherpaDownloadState.Downloading(0f, 0L, 0L)
 
                 val request = Request.Builder()
-                    .url(MODEL_DOWNLOAD_URL)
+                    .url(currentVoice.downloadUrl)
                     .header("User-Agent", "WoodsReader/1.0")
                     .build()
 
@@ -226,6 +308,21 @@ class SherpaModelManager @Inject constructor(
             deleted
         } catch (e: Exception) {
             Timber.e(e, "Error al eliminar modelo Sherpa ONNX")
+            false
+        }
+    }
+
+    fun deleteVoice(option: SherpaVoiceOption): Boolean {
+        return try {
+            val dir = File(baseDir, option.dirName)
+            val deleted = dir.deleteRecursively()
+            if (_selectedVoice.value == option) {
+                _downloadState.value = SherpaDownloadState.Idle
+            }
+            Timber.i("Modelo Sherpa ONNX (${option.displayName}) eliminado: $deleted")
+            deleted
+        } catch (e: Exception) {
+            Timber.e(e, "Error al eliminar modelo Sherpa ONNX (${option.displayName})")
             false
         }
     }

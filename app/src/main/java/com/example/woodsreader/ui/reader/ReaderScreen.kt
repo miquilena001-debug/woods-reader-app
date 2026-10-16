@@ -65,6 +65,8 @@ import android.content.Intent
 import android.net.Uri
 import kotlinx.coroutines.Job
 import com.example.woodsreader.databinding.FragmentReaderContainerBinding
+import com.example.woodsreader.core.managers.InlineLookupManager
+import com.example.woodsreader.core.managers.LookupResult
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.model.TtsHighlightStyle
 import com.example.woodsreader.ui.theme.LocalHighlightColors
@@ -265,6 +267,15 @@ fun ReaderScreen(
     var pullProgress by remember { mutableFloatStateOf(0f) }
     var footnoteContent by remember { mutableStateOf<String?>(null) }
 
+    val inlineLookupManager = remember { InlineLookupManager() }
+    var lookupState by remember { mutableStateOf<LookupResult>(LookupResult.Idle) }
+
+    LaunchedEffect(showHighlightMenu) {
+        if (showHighlightMenu == null) {
+            lookupState = LookupResult.Idle
+        }
+    }
+
     val context = LocalContext.current
     LaunchedEffect(isTtsActive) {
         val activity = context.findFragmentActivity()
@@ -288,6 +299,7 @@ fun ReaderScreen(
     val isSelectionModeActiveState = rememberUpdatedState(isSelectionModeActive)
 
     val clearActiveSelection: () -> Unit = {
+        lookupState = LookupResult.Idle
         isLongPressSelecting = false
         try {
             activeActionMode?.finish()
@@ -1010,8 +1022,20 @@ fun ReaderScreen(
 
             HighlightColorMenu(
                 hazeState = hazeState,
+                selectedText = highlightedText,
+                lookupState = lookupState,
                 onColorSelected = { color ->
                     viewModel.addHighlight(locator, color, highlightedText)
+                    clearActiveSelection()
+                },
+                onSaveCharacter = { name, role, noteText ->
+                    val customNote = if (noteText.isNotBlank()) "[PERSONAJE: $role] $noteText" else "[PERSONAJE: $role]"
+                    viewModel.addHighlight(
+                        locator = locator,
+                        color = com.example.woodsreader.data.model.HighlightColor.BLUE,
+                        text = name,
+                        note = customNote
+                    )
                     clearActiveSelection()
                 },
                 onPlayTts = {
@@ -1025,14 +1049,16 @@ fun ReaderScreen(
                     showSearch = true
                 },
                 onTranslate = {
-                    selectedTextForQuery = highlightedText
-                    clearActiveSelection()
-                    showTranslateSheet = true
+                    scope.launch {
+                        lookupState = LookupResult.Loading("Traduciendo...")
+                        lookupState = inlineLookupManager.translateToSpanish(highlightedText)
+                    }
                 },
                 onDictionary = {
-                    selectedTextForQuery = highlightedText
-                    clearActiveSelection()
-                    showDictionarySheet = true
+                    scope.launch {
+                        lookupState = LookupResult.Loading("Buscando definición...")
+                        lookupState = inlineLookupManager.defineTerm(highlightedText)
+                    }
                 },
                 onIgnoreTts = {
                     if (highlightedText.isNotBlank()) {
@@ -1044,7 +1070,21 @@ fun ReaderScreen(
                     }
                     clearActiveSelection()
                 },
-                onDismiss = { clearActiveSelection() }
+                onErrorOpenBrowser = {
+                    val encoded = Uri.encode(highlightedText.trim())
+                    val url = if (lookupState is LookupResult.Error && (lookupState as LookupResult.Error).modeTitle.contains("Definición", ignoreCase = true)) {
+                        "https://es.wiktionary.org/wiki/$encoded"
+                    } else {
+                        "https://translate.google.com/?sl=auto&tl=es&text=$encoded"
+                    }
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    } catch (_: Exception) {}
+                },
+                onDismiss = {
+                    lookupState = LookupResult.Idle
+                    clearActiveSelection()
+                }
             )
         }
 
@@ -1375,7 +1415,9 @@ fun ReaderScreen(
                 sleepTimerRemaining = sleepTimerRemaining,
                 activeAmbiencePreset = viewModel.activeAmbiencePreset,
                 onToggleNextAmbience = { viewModel.toggleNextAmbience() },
-                onInstallTtsPresetPack = { pack -> viewModel.installTtsPresetPack(pack) },
+                onInstallTtsPresetPack = { pack ->
+                    viewModel.installTtsPresetPackWithResult(pack)
+                },
                 currentSentenceFlow = viewModel.currentTtsSentence,
                 currentTtsRangeFlow = viewModel.currentTtsRange,
                 chapterInfoFlow = viewModel.chapterInfo,
@@ -1798,6 +1840,7 @@ fun ReaderScreen(
                 rules = ttsRules,
                 onSaveRule = { viewModel.saveTtsRule(it) },
                 onDeleteRule = { viewModel.deleteTtsRule(it) },
+                onInstallPresetPack = { pack -> viewModel.installTtsPresetPack(pack) },
                 onDismiss = { showTtsRulesSheet = false }
             )
         }

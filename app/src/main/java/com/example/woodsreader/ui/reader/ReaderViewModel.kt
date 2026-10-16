@@ -36,6 +36,8 @@ import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.TtsPresetCatalog
 import com.example.woodsreader.core.tts.TtsPresetPack
+import com.example.woodsreader.core.tts.ChapterAudioExporter
+import com.example.woodsreader.core.tts.SherpaVoiceOption
 import com.example.woodsreader.core.managers.PdfReflowManager
 
 import com.example.woodsreader.data.model.ReflowItem
@@ -110,7 +112,8 @@ class ReaderViewModel @Inject constructor(
     private val sherpaModelManager: SherpaModelManager,
     private val ambienceEngine: ForestAmbienceEngine,
     private val coverExtractor: CoverExtractor,
-    private val ttsPresetCatalog: TtsPresetCatalog
+    private val ttsPresetCatalog: TtsPresetCatalog,
+    private val chapterAudioExporter: ChapterAudioExporter
 ) : ViewModel() {
 
         companion object {
@@ -200,14 +203,24 @@ class ReaderViewModel @Inject constructor(
         ambienceEngine.setVolume(volume)
     }
 
-    suspend fun installTtsPresetPack(pack: TtsPresetPack): Int =
-        ttsPresetCatalog.installPresetPack(pack)
+    fun installTtsPresetPack(pack: TtsPresetPack) = viewModelScope.launch {
+        installTtsPresetPackWithResult(pack)
+    }
+
+    suspend fun installTtsPresetPackWithResult(pack: TtsPresetPack): Int {
+        val addedRules = ttsPresetCatalog.installPresetPack(pack)
+        epubFormatManager.invalidateCache()
+        return addedRules
+    }
 
     private var progressListenerJob: Job? = null
     private var reflowListenerJob: Job? = null
 
     private val _chapterInfo = MutableStateFlow(ChapterInfo())
     val chapterInfo = _chapterInfo.asStateFlow()
+    val currentChapterTitle: StateFlow<String> = _chapterInfo
+        .map { it.title.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     private val _isRtl = MutableStateFlow(false)
     val isRtl = _isRtl.asStateFlow()
@@ -240,6 +253,40 @@ class ReaderViewModel @Inject constructor(
     val currentTtsSentence = _currentTtsSentence.asStateFlow()
     private val _currentTtsRange = MutableStateFlow<IntRange?>(null)
     val currentTtsRange = _currentTtsRange.asStateFlow()
+
+    val audioExportState = chapterAudioExporter.exportState
+    val selectedSherpaVoice = sherpaModelManager.selectedVoice
+
+    fun switchSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
+        viewModelScope.launch {
+            ttsManager.switchSherpaVoice(option)
+        }
+    }
+
+    fun exportCurrentChapterToAudio() {
+        val book = (_uiState.value as? ReaderUiState.Success)?.book ?: return
+        val chapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
+        viewModelScope.launch {
+            val paragraphs = if (isReflowMode.value || isPdfBook) {
+                pdfReflowManager.reflowState.value.items.mapNotNull {
+                    when (it) {
+                        is ReflowItem.Paragraph -> it.content
+                        is ReflowItem.Header -> it.content
+                        else -> null
+                    }
+                }
+            } else {
+                epubFormatManager.currentProcessedDocument.value?.ttsNarrationUnits?.map { it.textToSpeak }
+                    ?: emptyList()
+            }
+            chapterAudioExporter.exportTextToWav(
+                bookTitle = book.title,
+                chapterTitle = chapTitle,
+                paragraphs = paragraphs,
+                speed = currentSpeed.value
+            )
+        }
+    }
 
     val currentProcessedDocument: StateFlow<com.example.woodsreader.core.pipeline.ProcessedDocument?> =
         epubFormatManager.currentProcessedDocument
@@ -757,7 +804,7 @@ class ReaderViewModel @Inject constructor(
 
     fun deleteHighlight(highlight: HighlightEntity) = viewModelScope.launch { bookRepository.deleteHighlight(highlight) }
 
-    fun addHighlight(locator: Locator, color: HighlightColor, text: String) {
+    fun addHighlight(locator: Locator, color: HighlightColor, text: String, note: String = "") {
         viewModelScope.launch {
             val chapter = locator.title ?: _chapterInfo.value.title ?: ""
             val entity = HighlightEntity(
@@ -765,6 +812,7 @@ class ReaderViewModel @Inject constructor(
                 locatorJson = locator.toJSON().toString(),
                 highlightedText = text,
                 color = color,
+                note = note,
                 chapterTitle = chapter,
                 createdAt = System.currentTimeMillis()
             )

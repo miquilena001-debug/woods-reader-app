@@ -11,10 +11,11 @@ import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import android.content.Intent
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.ui.platform.LocalContext
 import com.example.woodsreader.core.managers.HighlightExporter
 import androidx.compose.ui.Alignment
@@ -41,6 +42,13 @@ import java.util.Locale
 
 enum class NoteType { HIGHLIGHT, BOOKMARK }
 
+enum class NotesFilter(val label: String) {
+    TODOS("Todos"),
+    PERSONAJES("Personajes"),
+    CITAS("Citas"),
+    MARCADORES("Marcadores")
+}
+
 data class UnifiedNote(
     val id: String,
     val type: NoteType,
@@ -48,11 +56,26 @@ data class UnifiedNote(
     val content: String,
     val timestamp: Long,
     val color: HighlightColor? = null,
+    val isCharacter: Boolean = false,
+    val characterRole: String? = null,
+    val characterDescription: String? = null,
     val originalHighlight: HighlightEntity? = null,
     val originalBookmark: BookmarkEntity? = null
 )
 
 private val noteDateFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
+
+private fun parseCharacterNote(note: String): Pair<String, String> {
+    val clean = note.trim()
+    val match = Regex("""^\[PERSONAJE(?::\s*([^\]]+))?\]\s*(.*)$""", RegexOption.DOT_MATCHES_ALL).find(clean)
+    return if (match != null) {
+        val role = match.groupValues[1].trim().ifBlank { "PERSONAJE" }
+        val desc = match.groupValues[2].trim()
+        role to desc
+    } else {
+        "PERSONAJE" to clean.removePrefix("[PERSONAJE]").trim()
+    }
+}
 
 @Composable
 fun ReaderNotesTab(
@@ -68,11 +91,15 @@ fun ReaderNotesTab(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var selectedFilter by remember { mutableStateOf(NotesFilter.TODOS) }
+
     val unifiedFeed = remember(highlights, bookmarks) {
         val list = mutableListOf<UnifiedNote>()
         
         // Convert Highlights
         highlights.forEach { hl ->
+            val isChar = hl.note.startsWith("[PERSONAJE")
+            val (charRole, charDesc) = if (isChar) parseCharacterNote(hl.note) else null to null
             list.add(
                 UnifiedNote(
                     id = hl.id,
@@ -81,6 +108,9 @@ fun ReaderNotesTab(
                     content = hl.highlightedText,
                     timestamp = hl.createdAt,
                     color = hl.color,
+                    isCharacter = isChar,
+                    characterRole = charRole,
+                    characterDescription = charDesc,
                     originalHighlight = hl
                 )
             )
@@ -104,6 +134,15 @@ fun ReaderNotesTab(
         list.sortedByDescending { it.timestamp }
     }
 
+    val filteredFeed = remember(unifiedFeed, selectedFilter) {
+        when (selectedFilter) {
+            NotesFilter.TODOS -> unifiedFeed
+            NotesFilter.PERSONAJES -> unifiedFeed.filter { it.isCharacter }
+            NotesFilter.CITAS -> unifiedFeed.filter { it.type == NoteType.HIGHLIGHT && !it.isCharacter }
+            NotesFilter.MARCADORES -> unifiedFeed.filter { it.type == NoteType.BOOKMARK }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -111,7 +150,7 @@ fun ReaderNotesTab(
     ) {
         Spacer(modifier = Modifier.height(24.dp))
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -122,7 +161,6 @@ fun ReaderNotesTab(
             )
             
             if (highlights.isNotEmpty()) {
-                val context = LocalContext.current
                 IconButton(
                     onClick = {
                         val shareText = HighlightExporter.exportToMarkdown(bookTitle, bookAuthor, highlights)
@@ -144,13 +182,58 @@ fun ReaderNotesTab(
             }
         }
 
-        if (unifiedFeed.isEmpty()) {
+        // Fila de Chips de Filtro (Todos | Personajes | Citas | Marcadores)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            NotesFilter.entries.forEach { filter ->
+                val isSelected = selectedFilter == filter
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (isSelected) HiddenForest.Accent else HiddenForest.Surface.copy(alpha = 0.6f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) HiddenForest.Accent else HiddenForest.OutlineHi.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.clickable { selectedFilter = filter }
+                ) {
+                    Text(
+                        text = filter.label,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp
+                        ),
+                        color = if (isSelected) Color(0xFF080B08) else HiddenForest.TextSecondary,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+
+        if (filteredFeed.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("🏜️", fontSize = 40.sp)
+                    Text(
+                        text = when (selectedFilter) {
+                            NotesFilter.PERSONAJES -> "👤"
+                            NotesFilter.CITAS -> "📝"
+                            NotesFilter.MARCADORES -> "🔖"
+                            NotesFilter.TODOS -> "🏜️"
+                        },
+                        fontSize = 40.sp
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        "No tienes notas ni marcadores",
+                        text = when (selectedFilter) {
+                            NotesFilter.PERSONAJES -> "No tienes personajes guardados"
+                            NotesFilter.CITAS -> "No tienes citas guardadas"
+                            NotesFilter.MARCADORES -> "No tienes marcadores guardados"
+                            NotesFilter.TODOS -> "No tienes notas ni marcadores"
+                        },
                         color = HiddenForest.TextLow,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -161,7 +244,7 @@ fun ReaderNotesTab(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(bottom = 120.dp, top = 4.dp)
             ) {
-                items(unifiedFeed, key = { it.id }) { note ->
+                items(filteredFeed, key = { it.id }) { note ->
                     ReaderUnifiedNoteItem(
                         hazeState = hazeState,
                         note = note,
@@ -235,117 +318,252 @@ fun ReaderUnifiedNoteItem(
             .hazeChild(state = hazeState, style = ReaderDesign.GlassStyle)
             .clip(RoundedCornerShape(24.dp))
             .background(Color(0xFF162B20).copy(alpha = 0.92f))
-            .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp))
+            .border(
+                1.dp,
+                if (note.isCharacter) HiddenForest.Amber.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.14f),
+                RoundedCornerShape(24.dp)
+            )
             .clickable { onNoteClick() }
             .padding(16.dp)
     ) {
-        Row(
-            modifier = Modifier.height(IntrinsicSize.Min),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 1. Indicador de Tipo / Color
-            if (note.type == NoteType.HIGHLIGHT && note.color != null) {
+        if (note.isCharacter) {
+            // Tarjeta de Personaje
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Icono Personaje
                 Box(
                     modifier = Modifier
-                        .width(4.dp)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(Color(note.color.toArgb()))
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(HiddenForest.Accent.copy(alpha = 0.15f)),
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(HiddenForest.Amber.copy(alpha = 0.18f))
+                        .border(1.dp, HiddenForest.Amber.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (note.type == NoteType.BOOKMARK) Icons.Default.Bookmark else Icons.AutoMirrored.Filled.StickyNote2,
-                        contentDescription = null,
-                        tint = HiddenForest.Accent,
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "Personaje",
+                        tint = HiddenForest.Amber,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
+
                 Spacer(modifier = Modifier.width(12.dp))
-            }
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(vertical = 4.dp)
-            ) {
-                // Título / Capítulo
-                Text(
-                    text = note.title.uppercase(),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    ),
-                    color = HiddenForest.Accent,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                
-                Spacer(modifier = Modifier.height(6.dp))
-                
-                // Contenido
-                Text(
-                    text = note.content,
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
-                    color = HiddenForest.Text,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                // Fecha
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.History,
-                        contentDescription = null,
-                        tint = HiddenForest.TextLow,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 2.dp)
+                ) {
+                    // Badge con rol extraído + Capítulo al lado
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = HiddenForest.Amber.copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, HiddenForest.Amber.copy(alpha = 0.5f))
+                        ) {
+                            val roleDisplay = if (note.characterRole != null && note.characterRole.isNotBlank() && !note.characterRole.equals("PERSONAJE", ignoreCase = true)) {
+                                "PERSONAJE · ${note.characterRole.uppercase()}"
+                            } else {
+                                "PERSONAJE"
+                            }
+                            Text(
+                                text = roleDisplay,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    letterSpacing = 1.sp
+                                ),
+                                color = HiddenForest.Amber,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+
+                        if (note.title.isNotBlank()) {
+                            Text(
+                                text = note.title,
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                color = HiddenForest.TextLow,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Nombre del personaje en tipografía grande (16.sp, FontWeight.Bold, color blanco)
                     Text(
-                        text = noteDateFormat.format(Date(note.timestamp)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = HiddenForest.TextLow
+                        text = note.content,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-            }
 
-            if (note.type == NoteType.HIGHLIGHT) {
+                    // Descripción limpia debajo sin el prefijo [PERSONAJE: ...]
+                    if (!note.characterDescription.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = note.characterDescription,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            ),
+                            color = HiddenForest.Text,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Fecha
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            tint = HiddenForest.TextLow,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = noteDateFormat.format(Date(note.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = HiddenForest.TextLow
+                        )
+                    }
+                }
+
+                // Borrar
                 IconButton(
-                    onClick = onShareClick,
+                    onClick = onDeleteClick,
                     modifier = Modifier.align(Alignment.Top)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Compartir cita como imagen",
-                        tint = HiddenForest.Accent,
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Borrar",
+                        tint = HiddenForest.TextLow.copy(alpha = 0.35f),
                         modifier = Modifier.size(18.dp)
                     )
                 }
             }
-
-            IconButton(
-                onClick = onDeleteClick,
-                modifier = Modifier.align(Alignment.Top)
+        } else {
+            // Cita o Marcador Normal
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Min),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Borrar",
-                    tint = HiddenForest.TextLow.copy(alpha = 0.3f),
-                    modifier = Modifier.size(18.dp)
-                )
+                // 1. Indicador de Tipo / Color
+                if (note.type == NoteType.HIGHLIGHT && note.color != null) {
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color(note.color.toArgb()))
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(HiddenForest.Accent.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (note.type == NoteType.BOOKMARK) Icons.Default.Bookmark else Icons.AutoMirrored.Filled.StickyNote2,
+                            contentDescription = null,
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = 4.dp)
+                ) {
+                    // Título / Capítulo
+                    Text(
+                        text = note.title.uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        ),
+                        color = HiddenForest.Accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    Spacer(modifier = Modifier.height(6.dp))
+                    
+                    // Contenido
+                    Text(
+                        text = note.content,
+                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                        color = HiddenForest.Text,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    // Fecha
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = null,
+                            tint = HiddenForest.TextLow,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = noteDateFormat.format(Date(note.timestamp)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = HiddenForest.TextLow
+                        )
+                    }
+                }
+
+                if (note.type == NoteType.HIGHLIGHT) {
+                    IconButton(
+                        onClick = onShareClick,
+                        modifier = Modifier.align(Alignment.Top)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Compartir cita como imagen",
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onDeleteClick,
+                    modifier = Modifier.align(Alignment.Top)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Borrar",
+                        tint = HiddenForest.TextLow.copy(alpha = 0.3f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }
 }
-
-// El componente anterior ReaderNoteItem puede ser eliminado o mantenido como deprecated.
-// Por ahora lo eliminaremos para limpiar el archivo.
