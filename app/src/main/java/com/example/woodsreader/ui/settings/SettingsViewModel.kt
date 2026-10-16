@@ -31,6 +31,8 @@ import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.SherpaVoiceOption
 import com.example.woodsreader.core.tts.TtsManager
+import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
+import com.example.woodsreader.core.tts.EdgeVoiceOption
 import java.io.File
 import javax.inject.Inject
 
@@ -61,6 +63,7 @@ class SettingsViewModel @Inject constructor(
     private val readingSessionDao: ReadingSessionDao,
     private val sherpaModelManager: SherpaModelManager,
     private val ttsManager: TtsManager,
+    private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val backupManager: BackupManager
 ) : ViewModel() {
 
@@ -131,6 +134,17 @@ class SettingsViewModel @Inject constructor(
 
     fun setTtsPitch(pitch: Float) {
         viewModelScope.launch { preferencesRepository.updateTtsPitch(pitch) }
+    }
+
+    val useEdgeNeuralTts = edgeNeuralTtsClient.isEnabled
+    val selectedEdgeVoice = edgeNeuralTtsClient.selectedVoice
+
+    fun setUseEdgeNeuralTts(enabled: Boolean) {
+        edgeNeuralTtsClient.setEnabled(enabled)
+    }
+
+    fun selectEdgeVoice(option: EdgeVoiceOption) {
+        edgeNeuralTtsClient.setVoice(option)
     }
 
     val sherpaDownloadState = sherpaModelManager.downloadState

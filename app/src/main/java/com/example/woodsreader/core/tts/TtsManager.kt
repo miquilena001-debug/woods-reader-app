@@ -46,7 +46,8 @@ class TtsManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
     private val userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
-    private val sherpaModelManager: SherpaModelManager
+    private val sherpaModelManager: SherpaModelManager,
+    private val edgeNeuralTtsClient: EdgeNeuralTtsClient
 ) {
     private var tts: TextToSpeech? = null
     private var isReady = false
@@ -144,6 +145,30 @@ class TtsManager @Inject constructor(
     }
 
     suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null) {
+        if (edgeNeuralTtsClient.isEnabled.value) {
+            val activeRules = try {
+                ttsRuleDao.getActiveRulesForBook(currentBookId)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val exclusionRules = activeRules.map {
+                com.example.woodsreader.core.pipeline.WordExclusionRule(
+                    id = it.id.toString(),
+                    target = it.pattern,
+                    replacement = it.replacement,
+                    isRegex = it.isRegex
+                )
+            }
+            val processedText = wordExclusionEngine.filterText(text, exclusionRules)
+            isSpeakingCancelled = false
+            requestAudioFocus()
+            val success = edgeNeuralTtsClient.speakSentence(processedText, baseRate, basePitch)
+            if (success) {
+                return
+            }
+            // Fallback inteligente: si falla (ej. sin internet), continúa hacia Sherpa o TTS del sistema
+        }
+
         val useSherpa = try {
             userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
         } catch (_: Exception) {
@@ -535,12 +560,14 @@ class TtsManager @Inject constructor(
     }
 
     fun stop() {
+        edgeNeuralTtsClient.stopPlayback()
         isSpeakingCancelled = true
         tts?.stop()
         abandonAudioFocus()
     }
 
     fun shutdown() {
+        edgeNeuralTtsClient.stopPlayback()
         isSpeakingCancelled = true
         tts?.stop()
         tts?.shutdown()

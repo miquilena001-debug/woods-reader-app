@@ -13,6 +13,7 @@ import com.example.woodsreader.model.TtsUiStyle
 import com.example.woodsreader.model.TtsHighlightStyle
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.SherpaVoiceOption
+import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.tts.AudioExportState
 import com.example.woodsreader.core.tts.AmbiencePreset
 import com.example.woodsreader.core.tts.TtsPresetPack
@@ -112,6 +113,10 @@ fun ReaderTtsMacroWindow(
     onExportAudioChapters: (Int) -> Unit = { onExportChapterAudio() },
     onCancelAudioExport: () -> Unit = {},
     onResetAudioExportState: () -> Unit = {},
+    useEdgeNeuralTts: Boolean = false,
+    onUseEdgeNeuralTtsChange: (Boolean) -> Unit = {},
+    selectedEdgeVoice: EdgeVoiceOption = EdgeVoiceOption.ALVARO_ES,
+    onSelectEdgeVoice: (EdgeVoiceOption) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val currentSentence by currentSentenceFlow.collectAsStateWithLifecycle(initialValue = "")
@@ -929,6 +934,128 @@ fun ReaderTtsMacroWindow(
             Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 32.dp)) {
                 Text("Configuración de Voz y TTS", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
                 Spacer(modifier = Modifier.height(16.dp))
+
+                // ── SECCIÓN ONLINE: VOCES DE ESTUDIO ONLINE (EDGE NEURAL 10/10) ──
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            if (useEdgeNeuralTts) Brush.linearGradient(
+                                listOf(
+                                    HiddenForest.Accent.copy(alpha = 0.15f),
+                                    HiddenForest.Accent.copy(alpha = 0.05f)
+                                )
+                            ) else Brush.linearGradient(
+                                listOf(
+                                    HiddenForest.Background,
+                                    HiddenForest.Background
+                                )
+                            )
+                        )
+                        .border(
+                            1.dp,
+                            if (useEdgeNeuralTts) HiddenForest.Accent.copy(0.4f) else HiddenForest.Outline.copy(0.3f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .padding(16.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (useEdgeNeuralTts) HiddenForest.Accent.copy(0.2f)
+                                        else HiddenForest.Background
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("☁️", fontSize = 20.sp)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Voces de Estudio Online (Edge)",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = HiddenForest.Text
+                                )
+                                Text(
+                                    "Calidad Humana 10/10 · 0 MB en disco",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (useEdgeNeuralTts) HiddenForest.Accent else HiddenForest.TextLow,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Switch(
+                                checked = useEdgeNeuralTts,
+                                onCheckedChange = onUseEdgeNeuralTtsChange,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = HiddenForest.Background,
+                                    checkedTrackColor = HiddenForest.Accent,
+                                    uncheckedThumbColor = HiddenForest.TextLow,
+                                    uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                                )
+                            )
+                        }
+
+                        if (useEdgeNeuralTts) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Elige tu Voz de Estudio:",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                                color = HiddenForest.Accent
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                EdgeVoiceOption.entries.forEach { option ->
+                                    val isSelected = selectedEdgeVoice == option
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (isSelected) HiddenForest.Accent.copy(alpha = 0.12f) else HiddenForest.Background)
+                                            .border(
+                                                1.dp,
+                                                if (isSelected) HiddenForest.Accent.copy(alpha = 0.4f) else HiddenForest.Outline.copy(alpha = 0.25f),
+                                                RoundedCornerShape(12.dp)
+                                            )
+                                            .clickable { onSelectEdgeVoice(option) }
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = { onSelectEdgeVoice(option) },
+                                            colors = RadioButtonDefaults.colors(selectedColor = HiddenForest.Accent)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = option.displayName,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = option.regionLabel,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                                color = HiddenForest.TextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // ── SECCIÓN 0: MOTOR DE VOZ IA NEURONAL ─────────────────────────
                 Box(

@@ -38,6 +38,8 @@ import com.example.woodsreader.core.tts.TtsPresetCatalog
 import com.example.woodsreader.core.tts.TtsPresetPack
 import com.example.woodsreader.core.tts.ChapterAudioExporter
 import com.example.woodsreader.core.tts.SherpaVoiceOption
+import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
+import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.managers.PdfReflowManager
 
 import com.example.woodsreader.data.model.ReflowItem
@@ -113,7 +115,8 @@ class ReaderViewModel @Inject constructor(
     private val ambienceEngine: ForestAmbienceEngine,
     private val coverExtractor: CoverExtractor,
     private val ttsPresetCatalog: TtsPresetCatalog,
-    private val chapterAudioExporter: ChapterAudioExporter
+    private val chapterAudioExporter: ChapterAudioExporter,
+    private val edgeNeuralTtsClient: EdgeNeuralTtsClient
 ) : ViewModel() {
 
         companion object {
@@ -291,6 +294,17 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             ttsManager.speak(text)
         }
+    }
+
+    val useEdgeNeuralTts = edgeNeuralTtsClient.isEnabled
+    val selectedEdgeVoice = edgeNeuralTtsClient.selectedVoice
+
+    fun setUseEdgeNeuralTts(enabled: Boolean) {
+        edgeNeuralTtsClient.setEnabled(enabled)
+    }
+
+    fun selectEdgeVoice(option: EdgeVoiceOption) {
+        edgeNeuralTtsClient.setVoice(option)
     }
 
     fun switchSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {

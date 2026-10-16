@@ -29,6 +29,7 @@ import com.example.woodsreader.ui.library.WoodsBadge
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.SherpaVoiceOption
+import com.example.woodsreader.core.tts.EdgeVoiceOption
 import java.util.Locale
 
 @Composable
@@ -43,6 +44,8 @@ fun SettingsScreen(
     val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
     val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
+    val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
+    val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
     val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
     val isBusy = isScanning || isEnriching
     val context = LocalContext.current
@@ -133,6 +136,66 @@ fun SettingsScreen(
             item {
                 SettingsSection("🔊 Configuración de Voz (TTS)") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsToggleRow(
+                            icon = Icons.Default.Cloud,
+                            title = "☁️ Voces de Estudio Online (Edge Neural 10/10)",
+                            subtitle = "Voces humanas de Azure (Álvaro, Elvira, Dalia, Jorge, Sebastián) · 0 MB en disco",
+                            checked = useEdgeNeuralTts,
+                            onCheck = { viewModel.setUseEdgeNeuralTts(it) }
+                        )
+
+                        if (useEdgeNeuralTts) {
+                            Text(
+                                text = "Catálogo de Voces de Estudio (Azure/Edge)",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                                color = HiddenForest.Accent,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+                            )
+
+                            EdgeVoiceOption.entries.forEach { option ->
+                                val isSelected = selectedEdgeVoice == option
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { viewModel.selectEdgeVoice(option) },
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (isSelected) HiddenForest.Accent.copy(alpha = 0.12f) else HiddenForest.Background,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) HiddenForest.Accent.copy(alpha = 0.4f) else HiddenForest.Outline.copy(alpha = 0.25f)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        RadioButton(
+                                            selected = isSelected,
+                                            onClick = { viewModel.selectEdgeVoice(option) },
+                                            colors = RadioButtonDefaults.colors(selectedColor = HiddenForest.Accent)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = option.displayName,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 14.sp),
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = option.regionLabel,
+                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                                color = HiddenForest.TextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+
                         val downloadState = sherpaDownloadState
                         SettingsToggleRow(
                             icon = Icons.Default.RecordVoiceOver,

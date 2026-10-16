@@ -203,6 +203,8 @@ fun ReaderScreen(
     val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
     val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
+    val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
+    val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
     
     val interactionSource = remember { MutableInteractionSource() }
     val isUserInteracting by interactionSource.collectIsPressedAsState()
@@ -1442,6 +1444,10 @@ fun ReaderScreen(
                 onExportAudioChapters = { viewModel.exportAudioChapters(it) },
                 onCancelAudioExport = { viewModel.cancelAudioExport() },
                 onResetAudioExportState = { viewModel.resetAudioExportState() },
+                useEdgeNeuralTts = useEdgeNeuralTts,
+                onUseEdgeNeuralTtsChange = { viewModel.setUseEdgeNeuralTts(it) },
+                selectedEdgeVoice = selectedEdgeVoice,
+                onSelectEdgeVoice = { viewModel.selectEdgeVoice(it) },
                 onDismiss = { showTtsMacroWindow = false }
             )
         }
