@@ -109,6 +109,8 @@ fun ReaderTtsMacroWindow(
     onDeleteSherpaVoice: (SherpaVoiceOption) -> Unit = {},
     audioExportState: AudioExportState = AudioExportState.Idle,
     onExportChapterAudio: () -> Unit = {},
+    onExportAudioChapters: (Int) -> Unit = { onExportChapterAudio() },
+    onCancelAudioExport: () -> Unit = {},
     onResetAudioExportState: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -1306,19 +1308,58 @@ fun ReaderTtsMacroWindow(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // ── SECCIÓN 4: EXPORTAR CAPÍTULO A AUDIO (.WAV) ──
+                // ── SECCIÓN 4: EXPORTAR AUDIOLIBRO COMPRIMIDO (.M4A) ──
+                Text(
+                    text = "🎧 Exportar Audiolibro Comprimido (.M4A)",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = HiddenForest.Text
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
                 when (val export = audioExportState) {
                     is AudioExportState.Idle -> {
-                        OutlinedButton(
-                            onClick = onExportChapterAudio,
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, HiddenForest.Accent),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = HiddenForest.Accent
-                            )
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("🎧 Exportar capítulo actual a .WAV", fontWeight = FontWeight.Bold)
+                            OutlinedButton(
+                                onClick = { onExportAudioChapters(1) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, HiddenForest.Accent),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = HiddenForest.Accent
+                                ),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            ) {
+                                Text("Cap. Actual", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onExportAudioChapters(10) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, HiddenForest.Accent),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = HiddenForest.Accent
+                                ),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            ) {
+                                Text("Próx. 10 Caps", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            }
+
+                            OutlinedButton(
+                                onClick = { onExportAudioChapters(9999) },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, HiddenForest.Accent),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = HiddenForest.Accent
+                                ),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                            ) {
+                                Text("Libro Completo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            }
                         }
                     }
                     is AudioExportState.Exporting -> {
@@ -1329,11 +1370,27 @@ fun ReaderTtsMacroWindow(
                             border = BorderStroke(1.dp, HiddenForest.Accent.copy(alpha = 0.4f))
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
-                                Text(
-                                    text = "Generando audio: oración ${export.currentSentence} de ${export.totalSentences} (${(export.progress * 100).toInt()}%)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = HiddenForest.Accent
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Cap. ${export.currentChapter}/${export.totalChapters} (${export.label}) · Oración ${export.currentSentence}/${export.totalSentences}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = HiddenForest.Accent,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    TextButton(
+                                        onClick = onCancelAudioExport,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                    ) {
+                                        Text("Cancelar", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 LinearProgressIndicator(
                                     progress = { export.progress },
@@ -1357,7 +1414,7 @@ fun ReaderTtsMacroWindow(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "✓ Audio guardado en Music/WoodsReader/${export.fileName}",
+                                    text = "✓ Guardado en Music/WoodsReader: ${export.fileName} (${export.sizeKb} KB)",
                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                                     color = Color(0xFF81C784),
                                     modifier = Modifier.weight(1f)

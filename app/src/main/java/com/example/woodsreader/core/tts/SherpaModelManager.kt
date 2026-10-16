@@ -31,15 +31,42 @@ enum class SherpaVoiceOption(
     val dirName: String,
     val onnxFileName: String,
     val downloadUrl: String,
-    val minBytes: Long = 40_000_000L
+    val minBytes: Long = 40_000_000L,
+    val isKokoro: Boolean = false,
+    val voicesBinFileName: String = "voices.bin",
+    val speakerId: Int = 0
 ) {
-    DAVEFX_ES(
-        id = "es_ES-davefx-medium",
-        displayName = "David (Narrador Clásico)",
-        accent = "Español (España)",
-        dirName = "vits-piper-es_ES-davefx-medium",
-        onnxFileName = "es_ES-davefx-medium.onnx",
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2",
+    KOKORO_DORA_ES(
+        id = "kokoro-es-dora",
+        displayName = "✨ Kokoro Dora (Ultra-Realista Femenina)",
+        accent = "Español · Kokoro-82M Studio",
+        dirName = "kokoro-multi-lang-v1_0",
+        onnxFileName = "model.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+        minBytes = 250_000_000L,
+        isKokoro = true,
+        voicesBinFileName = "voices.bin",
+        speakerId = 28 // ef_dora en kokoro-multi-lang-v1_0
+    ),
+    KOKORO_ALEX_ES(
+        id = "kokoro-es-alex",
+        displayName = "✨ Kokoro Alex (Ultra-Realista Masculina)",
+        accent = "Español · Kokoro-82M Studio",
+        dirName = "kokoro-multi-lang-v1_0",
+        onnxFileName = "model.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+        minBytes = 250_000_000L,
+        isKokoro = true,
+        voicesBinFileName = "voices.bin",
+        speakerId = 29 // em_alex en kokoro-multi-lang-v1_0
+    ),
+    CLAUDE_MX(
+        id = "es_MX-claude-high",
+        displayName = "Claudia (Voz Femenina Alta Definición)",
+        accent = "Español (México / Latam)",
+        dirName = "vits-piper-es_MX-claude-high",
+        onnxFileName = "es_MX-claude-high.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-claude-high.tar.bz2",
         minBytes = 50_000_000L
     ),
     ALD_MX(
@@ -51,13 +78,13 @@ enum class SherpaVoiceOption(
         downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-ald-medium.tar.bz2",
         minBytes = 45_000_000L
     ),
-    CLAUDE_MX(
-        id = "es_MX-claude-high",
-        displayName = "Claudia (Voz Femenina Alta Definición)",
-        accent = "Español (México / Latam)",
-        dirName = "vits-piper-es_MX-claude-high",
-        onnxFileName = "es_MX-claude-high.onnx",
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-claude-high.tar.bz2",
+    DAVEFX_ES(
+        id = "es_ES-davefx-medium",
+        displayName = "David (Narrador Clásico)",
+        accent = "Español (España)",
+        dirName = "vits-piper-es_ES-davefx-medium",
+        onnxFileName = "es_ES-davefx-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2",
         minBytes = 50_000_000L
     ),
     CARLFM_ES(
@@ -139,10 +166,12 @@ class SherpaModelManager @Inject constructor(
         val onnx = File(dir, option.onnxFileName)
         val tokens = File(dir, TOKENS_FILE_NAME)
         val espeak = File(dir, ESPEAK_DIR_NAME)
+        val voicesOk = if (option.isKokoro) File(dir, option.voicesBinFileName).exists() else true
         return onnx.exists() &&
                 onnx.length() > option.minBytes &&
                 tokens.exists() &&
                 tokens.length() > 0 &&
+                voicesOk &&
                 espeak.exists() &&
                 espeak.isDirectory &&
                 (espeak.list()?.isNotEmpty() == true)
@@ -150,6 +179,67 @@ class SherpaModelManager @Inject constructor(
 
     fun isModelReady(): Boolean {
         return isVoiceDownloaded(_selectedVoice.value)
+    }
+
+    fun createOfflineTtsInstance(): com.k2fsa.sherpa.onnx.OfflineTts? {
+        val voice = _selectedVoice.value
+        if (!isVoiceDownloaded(voice)) return null
+        val dir = File(baseDir, voice.dirName)
+        val onnxPath = File(dir, voice.onnxFileName).absolutePath
+        val tokensPath = File(dir, TOKENS_FILE_NAME).absolutePath
+        val espeakPath = File(dir, ESPEAK_DIR_NAME).absolutePath
+
+        if (voice.isKokoro) {
+            return try {
+                val voicesPath = File(dir, voice.voicesBinFileName).absolutePath
+                val kokoroClass = Class.forName("com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig")
+                val kokoroInstance = runCatching {
+                    val inst = kokoroClass.getDeclaredConstructor().newInstance()
+                    kokoroClass.getDeclaredField("model").apply { isAccessible = true }.set(inst, onnxPath)
+                    kokoroClass.getDeclaredField("voices").apply { isAccessible = true }.set(inst, voicesPath)
+                    kokoroClass.getDeclaredField("tokens").apply { isAccessible = true }.set(inst, tokensPath)
+                    kokoroClass.getDeclaredField("dataDir").apply { isAccessible = true }.set(inst, espeakPath)
+                    inst
+                }.getOrElse {
+                    val ctor = kokoroClass.constructors.first { it.parameterTypes.size == 7 }
+                    ctor.newInstance(onnxPath, voicesPath, tokensPath, espeakPath, "", "", 1.0f)
+                }
+                runCatching {
+                    kokoroClass.getDeclaredField("lang").apply { isAccessible = true; set(kokoroInstance, "es") }
+                }
+
+                val modelConfig = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
+                    numThreads = 4,
+                    debug = false
+                )
+                modelConfig.javaClass.getDeclaredField("kokoro").apply {
+                    isAccessible = true
+                    set(modelConfig, kokoroInstance)
+                }
+                val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(model = modelConfig)
+                com.k2fsa.sherpa.onnx.OfflineTts(null, config)
+            } catch (e: Exception) {
+                Timber.e(e, "Tu versión de sherpa-onnx.aar no incluye soporte nativo para Kokoro")
+                null
+            }
+        }
+
+        val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
+            model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
+                vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
+                    model = onnxPath,
+                    lexicon = "",
+                    tokens = tokensPath,
+                    dataDir = espeakPath,
+                    noiseScale = 0.667f,
+                    noiseScaleW = 0.8f,
+                    lengthScale = 1.0f
+                ),
+                numThreads = 4,
+                debug = false
+            )
+        )
+        return com.k2fsa.sherpa.onnx.OfflineTts(null, config)
     }
 
     fun selectVoiceOption(option: SherpaVoiceOption) {

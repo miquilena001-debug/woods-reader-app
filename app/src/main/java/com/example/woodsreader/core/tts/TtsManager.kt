@@ -657,24 +657,11 @@ class TtsManager @Inject constructor(
 
                 if (sherpaModelManager.isModelReady()) {
                     Timber.d("Loading Sherpa ONNX from disk: ${sherpaModelManager.modelDir.absolutePath}")
-                    val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
-                        model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
-                            vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
-                                model = sherpaModelManager.onnxFile.absolutePath,
-                                lexicon = "",
-                                tokens = sherpaModelManager.tokensFile.absolutePath,
-                                dataDir = sherpaModelManager.espeakDir.absolutePath,
-                                noiseScale = 0.667f,
-                                noiseScaleW = 0.8f,
-                                lengthScale = 1.0f
-                            ),
-                            numThreads = 4,
-                            debug = false
-                        )
-                    )
-                    offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(null, config)
-                    Timber.i("Sherpa ONNX initialized successfully from disk")
-                    return@withLock true
+                    offlineTts = sherpaModelManager.createOfflineTtsInstance()
+                    if (offlineTts != null) {
+                        Timber.i("Sherpa ONNX initialized successfully from disk")
+                        return@withLock true
+                    }
                 }
 
                 // Fallback a assets si el modelo todavía estuviera en el APK
@@ -997,7 +984,7 @@ class TtsManager @Inject constructor(
                     val generatedAudio = try {
                         offlineTts?.generate(
                             text = item.text,
-                            sid = 0,
+                            sid = sherpaModelManager.selectedVoice.value.speakerId,
                             speed = generationSpeed
                         )
                     } catch (e: Exception) {

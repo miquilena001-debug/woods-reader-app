@@ -1439,6 +1439,8 @@ fun ReaderScreen(
                 onDeleteSherpaVoice = { viewModel.deleteSherpaVoiceFromReader(it) },
                 audioExportState = audioExportState,
                 onExportChapterAudio = { viewModel.exportCurrentChapterToAudio() },
+                onExportAudioChapters = { viewModel.exportAudioChapters(it) },
+                onCancelAudioExport = { viewModel.cancelAudioExport() },
                 onResetAudioExportState = { viewModel.resetAudioExportState() },
                 onDismiss = { showTtsMacroWindow = false }
             )

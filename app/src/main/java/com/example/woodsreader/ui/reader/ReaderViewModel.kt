@@ -299,32 +299,66 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun exportCurrentChapterToAudio() {
+    fun cancelAudioExport() {
+        chapterAudioExporter.cancelExport()
+    }
+
+    fun exportAudioChapters(maxChaptersToExport: Int = 1) {
         val book = (_uiState.value as? ReaderUiState.Success)?.book ?: return
-        val chapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
-        viewModelScope.launch {
-            val paragraphs = if (isReflowMode.value || isPdfBook) {
-                pdfReflowManager.reflowState.value.items.mapNotNull {
+        val pub = publication ?: return
+        val startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
+
+        val job = viewModelScope.launch {
+            if (isReflowMode.value || isPdfBook) {
+                val items = pdfReflowManager.reflowState.value.items.mapNotNull {
                     when (it) {
                         is ReflowItem.Paragraph -> it.content
                         is ReflowItem.Header -> it.content
                         else -> null
                     }
                 }
+                chapterAudioExporter.exportChaptersToM4a(
+                    bookTitle = book.title,
+                    exportLabel = startChapTitle,
+                    totalChaptersCount = 1,
+                    chapterProvider = { com.example.woodsreader.core.tts.ChapterTextChunk(startChapTitle, items) },
+                    speed = currentSpeed.value
+                )
             } else {
-                val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
-                val doc = epubFormatManager.currentProcessedDocument.value
-                    ?: if (currentHref.isNotBlank()) epubFormatManager.processResource(currentHref, book.id) else null
-                doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
+                val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString()
+                    ?.substringBefore('#').orEmpty()
+                val startIdx = pub.readingOrder.indexOfFirst {
+                    it.href.toString().substringBefore('#') == currentHref ||
+                        it.href.toString().substringAfterLast('/') == currentHref.substringAfterLast('/')
+                }.coerceAtLeast(0)
+
+                val availableCount = (pub.readingOrder.size - startIdx).coerceAtLeast(1)
+                val countToExport = minOf(maxChaptersToExport, availableCount)
+                val label = when {
+                    countToExport == 1 -> startChapTitle
+                    countToExport >= pub.readingOrder.size -> "Libro_Completo"
+                    else -> "Caps_${startIdx + 1}_a_${startIdx + countToExport}"
+                }
+
+                chapterAudioExporter.exportChaptersToM4a(
+                    bookTitle = book.title,
+                    exportLabel = label,
+                    totalChaptersCount = countToExport,
+                    chapterProvider = { offset ->
+                        val link = pub.readingOrder.getOrNull(startIdx + offset) ?: return@exportChaptersToM4a null
+                        val doc = epubFormatManager.processResource(link.href.toString(), book.id)
+                        val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
+                        val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${startIdx + offset + 1}"
+                        com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
+                    },
+                    speed = currentSpeed.value
+                )
             }
-            chapterAudioExporter.exportTextToWav(
-                bookTitle = book.title,
-                chapterTitle = chapTitle,
-                paragraphs = paragraphs,
-                speed = currentSpeed.value
-            )
         }
+        chapterAudioExporter.setActiveJob(job)
     }
+
+    fun exportCurrentChapterToAudio() = exportAudioChapters(1)
 
     val currentProcessedDocument: StateFlow<com.example.woodsreader.core.pipeline.ProcessedDocument?> =
         epubFormatManager.currentProcessedDocument
