@@ -39,12 +39,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import com.example.woodsreader.ui.common.WoodsProUnlockDialog
 
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val prefs       by viewModel.preferences.collectAsStateWithLifecycle()
+    val isProUnlocked by viewModel.proLicenseManager.isProUnlocked.collectAsStateWithLifecycle()
+    var showProUnlockDialog by remember { mutableStateOf(false) }
     val isScanning  by viewModel.isScanning.collectAsStateWithLifecycle(false)
     val isEnriching by viewModel.isEnriching.collectAsStateWithLifecycle(false)
     val progress    by viewModel.scanProgress.collectAsStateWithLifecycle("")
@@ -122,6 +125,114 @@ fun SettingsScreen(
                         ),
                         color = HiddenForest.Text
                     )
+                }
+            }
+
+            // ── Tarjeta Destacada: Estado de Cuenta (Gratis / PRO) ────────────
+            item {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF102017).copy(alpha = 0.95f),
+                    border = BorderStroke(
+                        width = 1.2.dp,
+                        brush = Brush.horizontalGradient(
+                            if (isProUnlocked) listOf(HiddenForest.Amber, HiddenForest.Accent)
+                            else listOf(HiddenForest.Accent.copy(alpha = 0.6f), Color(0xFF233B2C))
+                        )
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isProUnlocked) "👑" else "✨",
+                                    fontSize = 20.sp
+                                )
+                                Column {
+                                    Text(
+                                        text = if (isProUnlocked) "Woods Reader PRO" else "Estado de Cuenta",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp
+                                        ),
+                                        color = HiddenForest.Text
+                                    )
+                                    Text(
+                                        text = if (isProUnlocked) "Edición Vitalicia Activada" else "Woods Reader Gratis",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 12.sp
+                                        ),
+                                        color = if (isProUnlocked) HiddenForest.Amber else HiddenForest.Accent
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isProUnlocked) HiddenForest.Amber.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.08f),
+                                border = BorderStroke(0.6.dp, if (isProUnlocked) HiddenForest.Amber.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.2f))
+                            ) {
+                                Text(
+                                    text = if (isProUnlocked) "PRO ACTIVO" else "GRATIS",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        letterSpacing = 1.sp
+                                    ),
+                                    color = if (isProUnlocked) HiddenForest.Amber else HiddenForest.TextSecondary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = if (isProUnlocked) {
+                                "Tienes acceso completo a la exportación masiva de audiolibros .M4A, tarjetas HD y motor Rayos-X sin límites."
+                            } else {
+                                "Desbloquea exportación de audiolibros .M4A por lotes, tarjetas de citas Ultra HD, motor Rayos-X ilimitado y audio de estudio."
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                lineHeight = 17.sp,
+                                fontSize = 12.sp
+                            ),
+                            color = HiddenForest.Text.copy(alpha = 0.85f)
+                        )
+
+                        Button(
+                            onClick = { showProUnlockDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isProUnlocked) HiddenForest.SurfaceVariant.copy(alpha = 0.8f) else HiddenForest.Accent,
+                                contentColor = if (isProUnlocked) HiddenForest.Text else Color(0xFF0A140F)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = if (isProUnlocked) Icons.Default.Verified else Icons.Default.Stars,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = if (isProUnlocked) HiddenForest.Amber else Color(0xFF0A140F)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isProUnlocked) "Gestionar Licencia PRO" else "Activar Woods Reader PRO",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1173,6 +1284,13 @@ fun SettingsScreen(
             com.example.woodsreader.ui.reader.AddPhoneticRuleDialog(
                 onDismiss = { showAddRuleDialog = false },
                 onAdd = { orig, phon -> viewModel.addCustomPhoneticRule(orig, phon) }
+            )
+        }
+
+        if (showProUnlockDialog) {
+            WoodsProUnlockDialog(
+                proLicenseManager = viewModel.proLicenseManager,
+                onDismiss = { showProUnlockDialog = false }
             )
         }
     }

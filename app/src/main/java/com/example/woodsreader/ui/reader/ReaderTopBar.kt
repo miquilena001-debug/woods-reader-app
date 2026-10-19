@@ -44,6 +44,7 @@ fun ReaderTopBar(
     onBack: () -> Unit,
     onHighlight: () -> Unit,
     onTtsToggle: () -> Unit,
+    onXRayClick: (() -> Unit)? = null,
     onMenuClick: () -> Unit
 ) {
     Surface(
@@ -173,6 +174,20 @@ fun ReaderTopBar(
                         tint = if (isTtsActive) HiddenForest.Accent else HiddenForest.TextSecondary,
                         modifier = Modifier.size(20.dp)
                     )
+                }
+
+                if (onXRayClick != null) {
+                    IconButton(
+                        onClick = onXRayClick,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Woods X-Ray",
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
                 
                 Spacer(modifier = Modifier.width(4.dp))

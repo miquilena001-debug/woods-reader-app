@@ -3,6 +3,8 @@ package com.example.woodsreader.core.tts
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +40,7 @@ class SherpaTtsEngine(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var activeJob: Job? = null
+    private val nativeTtsMutex = kotlinx.coroutines.sync.Mutex()
 
     @Volatile private var isSherpa: Boolean = false
 
@@ -177,7 +180,9 @@ class SherpaTtsEngine(
     suspend fun synthesizeExpressiveStudioAudio(
         text: String,
         baseSpeed: Float
-    ): Pair<FloatArray, Int>? = ttsManager.synthesizeExpressiveStudioAudio(text, baseSpeed)
+    ): Pair<FloatArray, Int>? = nativeTtsMutex.withLock {
+        ttsManager.synthesizeExpressiveStudioAudio(text, baseSpeed)
+    }
 
     override fun stop() {
         activeJob?.cancel()

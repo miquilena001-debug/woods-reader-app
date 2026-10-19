@@ -12,8 +12,8 @@ import kotlin.random.Random
 enum class StudioAcousticsProfile(val id: String, val label: String, val description: String) {
     STUDIO_WARM(
         id = "studio_warm",
-        label = "Estudio C\u00E1lido (Broadcast)",
-        description = "Cuerpo grave tipo podcast, sin brillo met\u00E1lico y sibilancias domadas"
+        label = "Estudio Cálido (Broadcast)",
+        description = "Cuerpo grave tipo podcast, sin brillo metálico y sibilancias domadas"
     ),
     NIGHT_INTIMATE(
         id = "night_intimate",
@@ -23,7 +23,7 @@ enum class StudioAcousticsProfile(val id: String, val label: String, val descrip
     CRISP_HD(
         id = "crisp_hd",
         label = "Claridad HD (Velocidad Alta)",
-        description = "Articulaci\u00F3n vocal extra n\u00EDtida ideal para escuchar a 1.25x - 1.75x"
+        description = "Articulación vocal extra nítida ideal para escuchar a 1.25x - 1.75x"
     );
 
     companion object {
@@ -83,13 +83,13 @@ object StudioAudioDspProcessor {
         profile: StudioAcousticsProfile = StudioAcousticsProfile.STUDIO_WARM,
         role: VoiceActRole = VoiceActRole.NARRATOR,
         gainMultiplier: Float = 1.0f,
-        postPauseMs: Int = 300,
+        postPauseMs: Int = 260,
         singleVoiceRoleShift: Boolean = true
     ): FloatArray {
         if (rawSamples.isEmpty() || sampleRate <= 0) return rawSamples
 
-        // 1. Recortar silencios muertos extremos al inicio y al final del modelo VITS
-        val trimThreshold = 0.0035f
+        // 1. Recorte suave de silencios muertos extremos conservando ataque natural de 14ms
+        val trimThreshold = 0.0025f
         var startIdx = 0
         while (startIdx < rawSamples.size && abs(rawSamples[startIdx]) < trimThreshold) {
             startIdx++
@@ -98,52 +98,60 @@ object StudioAudioDspProcessor {
         while (endIdx > startIdx && abs(rawSamples[endIdx]) < trimThreshold) {
             endIdx--
         }
-        // Dejar un peque\u00F1o margen natural de 10ms antes y despu\u00E9s del corte
-        val marginSamples = (sampleRate * 0.010f).toInt()
+        val marginSamples = (sampleRate * 0.014f).toInt()
         startIdx = (startIdx - marginSamples).coerceAtLeast(0)
         endIdx = (endIdx + marginSamples).coerceAtMost(rawSamples.lastIndex)
 
         val activeLen = (endIdx - startIdx + 1).coerceAtLeast(1)
-        val pauseSamples = ((postPauseMs.coerceIn(40, 1200) / 1000.0f) * sampleRate).toInt()
+        val pauseSamples = ((postPauseMs.coerceIn(60, 900) / 1000.0f) * sampleRate).toInt()
         val output = FloatArray(activeLen + pauseSamples)
-        System.arraycopy(rawSamples, startIdx, output, 0, activeLen)
 
-        // 2. Configurar cadena Biquad seg\u00FAn el perfil ac\u00FAstico y el rol dram\u00E1tico
-        val hpFilter = BiquadFilter().apply { configureHighPass(sampleRate, 78f, 0.707f) }
+        // Headroom inicial (-2.5 dB) antes de los filtros EQ para impedir saturación interna
+        val preScale = 0.75f
+        for (i in 0 until activeLen) {
+            output[i] = rawSamples[startIdx + i] * preScale
+        }
+
+        // 2. Filtros Biquad suaves y seguros para cualquier Sample Rate (16kHz / 22.05kHz)
+        val hpFilter = BiquadFilter().apply { configureHighPass(sampleRate, 75f, 0.707f) }
         val warmthFilter = BiquadFilter()
         val deBoxFilter = BiquadFilter()
         val presenceFilter = BiquadFilter()
-        val sibilanceDetector = BiquadFilter().apply { configurePeakingEq(sampleRate, 6300f, 2.2f, 12.0f) }
 
         val warmthGain = when (profile) {
-            StudioAcousticsProfile.STUDIO_WARM -> 2.8f
-            StudioAcousticsProfile.NIGHT_INTIMATE -> 3.4f
-            StudioAcousticsProfile.CRISP_HD -> 1.4f
-        } + if (singleVoiceRoleShift && role == VoiceActRole.NARRATOR) 0.7f else 0.0f
+            StudioAcousticsProfile.STUDIO_WARM -> 1.6f
+            StudioAcousticsProfile.NIGHT_INTIMATE -> 2.1f
+            StudioAcousticsProfile.CRISP_HD -> 0.8f
+        } + if (singleVoiceRoleShift && role == VoiceActRole.NARRATOR) 0.4f else 0.0f
 
         val deBoxGain = when (profile) {
-            StudioAcousticsProfile.STUDIO_WARM -> -2.5f
-            StudioAcousticsProfile.NIGHT_INTIMATE -> -3.2f
-            StudioAcousticsProfile.CRISP_HD -> -1.8f
+            StudioAcousticsProfile.STUDIO_WARM -> -1.8f
+            StudioAcousticsProfile.NIGHT_INTIMATE -> -2.4f
+            StudioAcousticsProfile.CRISP_HD -> -1.2f
         }
 
         val presenceGain = when (profile) {
-            StudioAcousticsProfile.STUDIO_WARM -> 1.5f
-            StudioAcousticsProfile.NIGHT_INTIMATE -> -1.8f
-            StudioAcousticsProfile.CRISP_HD -> 2.8f
-        } + if (singleVoiceRoleShift && role == VoiceActRole.DIALOGUE) 1.3f else 0.0f
+            StudioAcousticsProfile.STUDIO_WARM -> 0.9f
+            StudioAcousticsProfile.NIGHT_INTIMATE -> -1.5f
+            StudioAcousticsProfile.CRISP_HD -> 1.8f
+        } + if (singleVoiceRoleShift && role == VoiceActRole.DIALOGUE) 0.7f else 0.0f
 
-        val warmthFreq = if (singleVoiceRoleShift && role == VoiceActRole.DIALOGUE) 165f else 132f
-        val presenceFreq = if (role == VoiceActRole.SYSTEM_ALERT) 3600f else 4600f
+        val warmthFreq = if (singleVoiceRoleShift && role == VoiceActRole.DIALOGUE) 155f else 130f
+        val safePresenceFreq = (if (role == VoiceActRole.SYSTEM_ALERT) 3400f else 4200f)
+            .coerceAtMost(sampleRate * 0.38f)
 
-        warmthFilter.configurePeakingEq(sampleRate, warmthFreq, 0.85f, warmthGain)
-        deBoxFilter.configurePeakingEq(sampleRate, 2850f, 1.45f, deBoxGain)
-        presenceFilter.configurePeakingEq(sampleRate, presenceFreq, 1.1f, presenceGain)
+        warmthFilter.configurePeakingEq(sampleRate, warmthFreq, 0.8f, warmthGain)
+        deBoxFilter.configurePeakingEq(sampleRate, 2750f, 1.3f, deBoxGain)
+        presenceFilter.configurePeakingEq(sampleRate, safePresenceFreq, 1.0f, presenceGain)
 
-        // 3. Procesar EQ + De-Esser Din\u00E1mico + C\u00E1lculo RMS en una sola pasada
+        // Detector de sibilancia seguro respecto a Nyquist
+        val sibFreq = 5800f.coerceAtMost(sampleRate * 0.42f)
+        val sibilanceDetector = BiquadFilter().apply { configurePeakingEq(sampleRate, sibFreq, 1.8f, 6.0f) }
+
         var sumSquares = 0.0
+        var peakVal = 0.0001f
         var deEssEnvelope = 0.0f
-        val deEssThreshold = 0.14f
+        val deEssThreshold = 0.16f
 
         for (i in 0 until activeLen) {
             var s = output[i]
@@ -152,57 +160,50 @@ object StudioAudioDspProcessor {
             s = deBoxFilter.processSample(s)
             s = presenceFilter.processSample(s)
 
-            // De-Esser din\u00E1mico sobre sibilancias fuertes ('s', 'c', 'z')
             val sibEnergy = abs(sibilanceDetector.processSample(s))
-            deEssEnvelope = 0.85f * deEssEnvelope + 0.15f * sibEnergy
+            deEssEnvelope = 0.88f * deEssEnvelope + 0.12f * sibEnergy
             if (deEssEnvelope > deEssThreshold) {
-                val reduction = (deEssThreshold / (deEssEnvelope + 0.0001f)).coerceIn(0.55f, 1.0f)
+                val reduction = (deEssThreshold / (deEssEnvelope + 0.0001f)).coerceIn(0.68f, 1.0f)
                 s *= reduction
             }
 
             output[i] = s
+            val absS = abs(s)
+            if (absS > peakVal) peakVal = absS
             sumSquares += (s * s).toDouble()
         }
 
-        // 4. Micro-Reflexi\u00F3n Temprana de Estudio (Cabina Ac\u00FAstica Haas 11ms a -27 dB)
-        val delaySamples = (sampleRate * 0.0115f).toInt().coerceAtLeast(1)
-        val roomMix = if (role == VoiceActRole.SYSTEM_ALERT) 0.085f else 0.042f
-        if (activeLen > delaySamples) {
-            for (i in activeLen - 1 downTo delaySamples) {
-                output[i] = output[i] + output[i - delaySamples] * roomMix
-            }
-        }
-
-        // 5. Normalizaci\u00F3n RMS Inteligente + Compresor/Limitador Anal\u00F3gico Soft-Knee
+        // 3. Normalización Estándar Audible (-19.5 dBFS RMS) con Protección Anti-Clipping
         val rms = sqrt(sumSquares / activeLen.toDouble()).toFloat().coerceAtLeast(0.0001f)
-        val targetRms = 0.165f * gainMultiplier
-        val autoMakeUpGain = (targetRms / rms).coerceIn(0.65f, 2.35f)
+        val targetRms = 0.105f * gainMultiplier.coerceIn(0.85f, 1.08f)
+        val desiredGain = (targetRms / rms).coerceIn(0.55f, 1.45f)
+        // Nunca permitir que la ganancia supere el techo limpio de 0.82f (-1.7 dBFS)
+        val maxSafeGain = (0.82f / peakVal).coerceAtMost(1.45f)
+        val finalGain = minOf(desiredGain, maxSafeGain)
 
-        val fadeInLen = (sampleRate * 0.008f).toInt().coerceIn(1, activeLen / 4 + 1)
-        val fadeOutLen = (sampleRate * 0.014f).toInt().coerceIn(1, activeLen / 4 + 1)
+        val fadeInLen = (sampleRate * 0.010f).toInt().coerceIn(1, activeLen / 4 + 1)
+        val fadeOutLen = (sampleRate * 0.016f).toInt().coerceIn(1, activeLen / 4 + 1)
         val fadeOutStart = (activeLen - fadeOutLen).coerceAtLeast(0)
 
         for (i in 0 until activeLen) {
-            var s = output[i] * autoMakeUpGain
+            var s = output[i] * finalGain
 
-            // Fade-in cosenoidal anti-clic
             if (i < fadeInLen) {
                 val env = 0.5f * (1.0f - cos(PI * i / fadeInLen).toFloat())
                 s *= env
             }
-            // Fade-out cosenoidal anti-clic
             if (i >= fadeOutStart) {
                 val rel = i - fadeOutStart
                 val env = 0.5f * (1.0f + cos(PI * rel / fadeOutLen).toFloat())
                 s *= env
             }
 
-            // Saturador / Limitador Soft-Knee suave a -0.3 dBFS
-            output[i] = (0.96f * tanh(s * 1.08f)).coerceIn(-0.98f, 0.98f)
+            // Limitador transparente con techo en +/- 0.85f (cero distorsión en DAC móvil)
+            output[i] = (0.85f * tanh(s / 0.85f)).coerceIn(-0.85f, 0.85f)
         }
 
-        // 6. Rellenar la pausa pros\u00F3dica con Dither de Confort (-68 dBFS) para mantener activo el DAC/Bluetooth
-        val ditherAmp = 0.00035f
+        // 4. Silencio limpio con dither imperceptible (-74 dBFS)
+        val ditherAmp = 0.00018f
         for (i in activeLen until output.size) {
             output[i] = (Random.nextFloat() - 0.5f) * ditherAmp
         }

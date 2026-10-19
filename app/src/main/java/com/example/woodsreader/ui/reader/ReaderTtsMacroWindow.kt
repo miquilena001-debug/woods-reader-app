@@ -25,6 +25,8 @@ import com.example.woodsreader.core.tts.PronunciationLexiconManager
 import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SleepTimerPreset
+import com.example.woodsreader.core.license.ProLicenseManager
+import com.example.woodsreader.ui.common.WoodsProUnlockDialog
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -132,6 +134,7 @@ fun ReaderTtsMacroWindow(
     onUseEdgeNeuralTtsChange: (Boolean) -> Unit = {},
     selectedEdgeVoice: EdgeVoiceOption = EdgeVoiceOption.ALVARO_ES,
     onSelectEdgeVoice: (EdgeVoiceOption) -> Unit = {},
+    proLicenseManager: ProLicenseManager? = null,
     onDismiss: () -> Unit
 ) {
     val currentSentence by currentSentenceFlow.collectAsStateWithLifecycle(initialValue = "")
@@ -141,6 +144,9 @@ fun ReaderTtsMacroWindow(
     val chapterProgress = chapterInfo.progress
     val scope = rememberCoroutineScope()
     var presetInstallMessage by remember { mutableStateOf<String?>(null) }
+    var showProUnlockDialog by remember { mutableStateOf(false) }
+    val isProUnlocked by proLicenseManager?.isProUnlocked?.collectAsStateWithLifecycle(initialValue = false)
+        ?: remember { mutableStateOf(false) }
 
     var showLanguageSheet by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -1957,11 +1963,15 @@ fun ReaderTtsMacroWindow(
 
                             OutlinedButton(
                                 onClick = {
-                                    if (hasDownloadedVoice) {
-                                        showNoVoiceWarning = false
-                                        onExportAudioChapters(10)
+                                    if (isProUnlocked) {
+                                        if (hasDownloadedVoice) {
+                                            showNoVoiceWarning = false
+                                            onExportAudioChapters(10)
+                                        } else {
+                                            showNoVoiceWarning = true
+                                        }
                                     } else {
-                                        showNoVoiceWarning = true
+                                        showProUnlockDialog = true
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
@@ -1973,7 +1983,7 @@ fun ReaderTtsMacroWindow(
                                 contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp)
                             ) {
                                 Text(
-                                    text = "10 Capítulos",
+                                    text = if (isProUnlocked) "10 Capítulos" else "10 Caps ★",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
@@ -1984,11 +1994,15 @@ fun ReaderTtsMacroWindow(
 
                             OutlinedButton(
                                 onClick = {
-                                    if (hasDownloadedVoice) {
-                                        showNoVoiceWarning = false
-                                        onExportAudioChapters(9999)
+                                    if (isProUnlocked) {
+                                        if (hasDownloadedVoice) {
+                                            showNoVoiceWarning = false
+                                            onExportAudioChapters(9999)
+                                        } else {
+                                            showNoVoiceWarning = true
+                                        }
                                     } else {
-                                        showNoVoiceWarning = true
+                                        showProUnlockDialog = true
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
@@ -2000,7 +2014,7 @@ fun ReaderTtsMacroWindow(
                                 contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp)
                             ) {
                                 Text(
-                                    text = "Todo el Libro",
+                                    text = if (isProUnlocked) "Todo el Libro" else "Libro ★",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
@@ -2104,6 +2118,13 @@ fun ReaderTtsMacroWindow(
                 AddPhoneticRuleDialog(
                     onDismiss = { showAddRuleDialog = false },
                     onAdd = { orig, phon -> lexiconManager.addCustomRule(orig, phon) }
+                )
+            }
+
+            if (showProUnlockDialog && proLicenseManager != null) {
+                WoodsProUnlockDialog(
+                    proLicenseManager = proLicenseManager,
+                    onDismiss = { showProUnlockDialog = false }
                 )
             }
         }

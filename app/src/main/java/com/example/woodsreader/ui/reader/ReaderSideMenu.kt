@@ -43,6 +43,7 @@ fun ReaderSideMenu(
     isReflowMode: Boolean = false,
     currentScrollMode: ScrollMode = ScrollMode.PAGINATED,
     isCurrentPageBookmarked: Boolean = false,
+    isAutoScrollActive: Boolean = false,
     onOptionClick: (MasterMenuOption) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -90,11 +91,20 @@ fun ReaderSideMenu(
                 modifier = Modifier.padding(bottom = 20.dp)
             )
 
-            val options = remember(isReflowAvailable, currentScrollMode, isReflowMode, isCurrentPageBookmarked) {
+            val options = remember(isReflowAvailable, currentScrollMode, isReflowMode, isCurrentPageBookmarked, isAutoScrollActive) {
                 buildList {
                     add(MasterMenuOption("Narrar", Icons.AutoMirrored.Filled.VolumeUp, MasterMenuOptionType.TTS))
                     add(MasterMenuOption("Índice", Icons.Default.Menu, MasterMenuOptionType.TOC))
                     add(MasterMenuOption("Buscar", Icons.Default.Search, MasterMenuOptionType.SEARCH))
+                    add(MasterMenuOption("Rayos-X", Icons.Default.AutoAwesome, MasterMenuOptionType.XRAY))
+                    add(
+                        MasterMenuOption(
+                            label = if (isAutoScrollActive) "Teleprompter (Activo)" else "Teleprompter",
+                            icon = Icons.Default.ArrowDownward,
+                            type = MasterMenuOptionType.AUTO_SCROLL,
+                            isSelected = isAutoScrollActive
+                        )
+                    )
                     if (isReflowAvailable) {
                         val reflowLabel = if (isReflowMode) "Vista Original" else "Vista Libro"
                         val reflowIcon = if (isReflowMode) Icons.Default.PictureAsPdf else Icons.AutoMirrored.Filled.MenuBook
@@ -222,5 +232,5 @@ data class MasterMenuOption(
 )
 
 enum class MasterMenuOptionType {
-    TTS, TOC, SEARCH, SETTINGS, BOOKMARK, REFLOW, SCROLL_MODE
+    TTS, TOC, SEARCH, SETTINGS, BOOKMARK, REFLOW, SCROLL_MODE, XRAY, AUTO_SCROLL
 }

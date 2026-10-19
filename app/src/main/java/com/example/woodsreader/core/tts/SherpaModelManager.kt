@@ -256,9 +256,12 @@ class SherpaModelManager @Inject constructor(
         _downloadedModelIds.value = getCurrentlyDownloadedModelIds()
     }
 
+    fun getInstalledModels(): List<SherpaVoiceOption> {
+        return SherpaVoiceOption.entries.filter { isVoiceDownloaded(it) }
+    }
+
     fun getCurrentlyDownloadedModelIds(): Set<String> {
-        return SherpaVoiceOption.entries
-            .filter { isVoiceDownloaded(it) }
+        return getInstalledModels()
             .map { it.id }
             .toSet()
     }

@@ -69,6 +69,7 @@ import kotlinx.coroutines.Job
 import com.example.woodsreader.databinding.FragmentReaderContainerBinding
 import com.example.woodsreader.core.managers.InlineLookupManager
 import com.example.woodsreader.core.managers.LookupResult
+import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.model.TtsHighlightStyle
 import com.example.woodsreader.ui.theme.LocalHighlightColors
@@ -107,6 +108,8 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
 import com.example.woodsreader.model.TtsUiStyle
@@ -203,6 +206,14 @@ fun ReaderScreen(
     
     val interactionSource = remember { MutableInteractionSource() }
     val isUserInteracting by interactionSource.collectIsPressedAsState()
+
+    val isAutoScrollActive by viewModel.isAutoScrollActive.collectAsStateWithLifecycle()
+    val autoScrollWpm by viewModel.autoScrollWpm.collectAsStateWithLifecycle()
+    var isAutoScrollManuallyPaused by remember { mutableStateOf(false) }
+    var isFingerDown by remember { mutableStateOf(false) }
+    var lastTouchUpTime by remember { mutableLongStateOf(0L) }
+    var endOfChapterTime by remember { mutableStateOf<Long?>(null) }
+    var isAdvancingChapter by remember { mutableStateOf(false) }
     
     val currentTtsLocator by viewModel.currentTtsLocator.collectAsStateWithLifecycle()
     val currentTtsSentence by viewModel.currentTtsSentence.collectAsStateWithLifecycle(initialValue = "")
@@ -262,6 +273,8 @@ fun ReaderScreen(
     var activeTab by remember { mutableStateOf(ReaderTab.TEXT) }
     var showToc by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var showXRaySheet by remember { mutableStateOf(false) }
+    var xRayReport by remember { mutableStateOf<ChapterXRayReport?>(null) }
     var showDictionarySheet by remember { mutableStateOf(false) }
     var showTranslateSheet by remember { mutableStateOf(false) }
     var selectedTextForQuery by remember { mutableStateOf("") }
@@ -673,6 +686,66 @@ fun ReaderScreen(
         }
     }
 
+    // Corrutina de Teleprompter / Auto-Scroll suave a 60 FPS con pausa táctil inteligente
+    LaunchedEffect(isAutoScrollActive) {
+        if (!isAutoScrollActive) {
+            isAutoScrollManuallyPaused = false
+            endOfChapterTime = null
+            isAdvancingChapter = false
+        }
+    }
+
+    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, isFingerDown, lastTouchUpTime, navigatorState.value) {
+        if (!isAutoScrollActive) return@LaunchedEffect
+
+        val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
+        var accumulatedPx = 0f
+
+        while (isActive) {
+            delay(16L)
+
+            val now = System.currentTimeMillis()
+            val isTouchPaused = isFingerDown || (now - lastTouchUpTime < 1200L)
+
+            if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter) {
+                continue
+            }
+
+            val pubView = nav.safePublicationView
+            val activeWv = pubView?.let { findActiveWebView(it) }
+
+            if (activeWv != null) {
+                if (activeWv.canScrollVertically(1)) {
+                    endOfChapterTime = null
+                    val density = activeWv.resources.displayMetrics.density.coerceAtLeast(1f)
+                    val wordsPerSec = autoScrollWpm / 60.0f
+                    val pxPerWord = 9.2f * density
+                    val pxPerSec = wordsPerSec * pxPerWord
+                    val deltaPx = pxPerSec * 0.016f
+
+                    accumulatedPx += deltaPx
+                    if (accumulatedPx >= 1.0f) {
+                        val pxToScroll = accumulatedPx.toInt()
+                        activeWv.scrollBy(0, pxToScroll)
+                        accumulatedPx -= pxToScroll
+                    }
+                } else {
+                    val reachedTime = endOfChapterTime
+                    if (reachedTime == null) {
+                        endOfChapterTime = now
+                    } else if (now - reachedTime >= 2500L && !isAdvancingChapter) {
+                        isAdvancingChapter = true
+                        endOfChapterTime = null
+                        viewModel.goToNextChapter(nav)
+                        delay(800L)
+                        isAdvancingChapter = false
+                        accumulatedPx = 0f
+                    }
+                }
+            }
+        }
+    }
+
     val pageTurnState = rememberBookPageTurnState()
 
     val performPageForward: (VisualNavigator) -> Unit = { nav ->
@@ -881,6 +954,22 @@ fun ReaderScreen(
             .fillMaxSize()
             .focusRequester(focusRequester)
             .focusable()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val anyPressed = event.changes.any { it.pressed }
+                        if (anyPressed) {
+                            if (!isFingerDown) isFingerDown = true
+                        } else {
+                            if (isFingerDown) {
+                                isFingerDown = false
+                                lastTouchUpTime = System.currentTimeMillis()
+                            }
+                        }
+                    }
+                }
+            }
             .onKeyEvent { event ->
                 if (isTtsActive) {
                     // Durante TTS, permitir que el sistema operativo y MainActivity controlen el volumen multimedia
@@ -1084,6 +1173,10 @@ fun ReaderScreen(
                             viewModel.onPlay()
                         }
                     },
+                    onXRayClick = {
+                        xRayReport = viewModel.generateXRayReport()
+                        showXRaySheet = true
+                    },
                     onMenuClick = { showMasterMenu = true }
                 )
             }
@@ -1153,12 +1246,18 @@ fun ReaderScreen(
                 isReflowMode = isReflowMode,
                 currentScrollMode = userPreferences.scrollMode,
                 isCurrentPageBookmarked = isCurrentPageBookmarked,
+                isAutoScrollActive = isAutoScrollActive,
                 onOptionClick = { option ->
                     showMasterMenu = false
                     when (option.type) {
                         MasterMenuOptionType.TTS -> showTtsMacroWindow = true
                         MasterMenuOptionType.TOC -> showToc = true
                         MasterMenuOptionType.SEARCH -> showSearch = true
+                        MasterMenuOptionType.XRAY -> {
+                            xRayReport = viewModel.generateXRayReport()
+                            showXRaySheet = true
+                        }
+                        MasterMenuOptionType.AUTO_SCROLL -> viewModel.toggleAutoScroll()
                         MasterMenuOptionType.REFLOW -> viewModel.toggleReflowMode()
                         MasterMenuOptionType.SETTINGS -> {
                             activeTab = ReaderTab.TEXT
@@ -1199,6 +1298,61 @@ fun ReaderScreen(
             )
         }
         
+
+        // CAPA 2.5: Píldora Flotante Teleprompter / Auto-Scroll
+        AnimatedVisibility(
+            visible = isAutoScrollActive,
+            enter = slideInVertically { it } + fadeIn(),
+            exit = slideOutVertically { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(20f)
+                .navigationBarsPadding()
+                .padding(bottom = if (showBottomSlider) 100.dp else 24.dp)
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (endOfChapterTime != null) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF102017).copy(alpha = 0.95f),
+                        border = BorderStroke(0.8.dp, HiddenForest.Accent.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                color = HiddenForest.Accent,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = "Fin de capítulo — Avanzando...",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.5.sp
+                                ),
+                                color = HiddenForest.Text
+                            )
+                        }
+                    }
+                }
+
+                ReaderTeleprompterPill(
+                    wpm = autoScrollWpm,
+                    isPaused = isAutoScrollManuallyPaused || isFingerDown || (System.currentTimeMillis() - lastTouchUpTime < 1200L),
+                    hazeState = hazeState,
+                    onDecreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm - 10) },
+                    onIncreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm + 10) },
+                    onTogglePause = { isAutoScrollManuallyPaused = !isAutoScrollManuallyPaused },
+                    onClose = { viewModel.toggleAutoScroll() }
+                )
+            }
+        }
 
         // CAPA 3: Hoja de Control Multifuncion (Audio, Notas, Diseño)
         if (showAudioSheet) {
@@ -1313,6 +1467,7 @@ fun ReaderScreen(
                 onUseEdgeNeuralTtsChange = { viewModel.setUseEdgeNeuralTts(it) },
                 selectedEdgeVoice = selectedEdgeVoice,
                 onSelectEdgeVoice = { viewModel.selectEdgeVoice(it) },
+                proLicenseManager = viewModel.proLicenseManager,
                 onDismiss = { showTtsMacroWindow = false }
             )
         }
@@ -1401,6 +1556,19 @@ fun ReaderScreen(
                     showSearch = false
                     initialSearchQuery = ""
                 }
+            )
+        }
+
+        if (showXRaySheet) {
+            ReaderXRayBottomSheet(
+                report = xRayReport,
+                hazeState = hazeState,
+                onSearchInBook = { query ->
+                    initialSearchQuery = query
+                    showSearch = true
+                    showXRaySheet = false
+                },
+                onDismiss = { showXRaySheet = false }
             )
         }
 

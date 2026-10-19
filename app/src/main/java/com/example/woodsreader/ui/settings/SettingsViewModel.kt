@@ -36,6 +36,7 @@ import com.example.woodsreader.core.tts.PronunciationLexiconManager
 import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
+import com.example.woodsreader.core.license.ProLicenseManager
 import java.io.File
 import javax.inject.Inject
 
@@ -74,7 +75,8 @@ class SettingsViewModel @Inject constructor(
     private val ttsManager: TtsManager,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val backupManager: BackupManager,
-    private val pronunciationLexiconManager: PronunciationLexiconManager
+    private val pronunciationLexiconManager: PronunciationLexiconManager,
+    val proLicenseManager: ProLicenseManager
 ) : ViewModel() {
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow

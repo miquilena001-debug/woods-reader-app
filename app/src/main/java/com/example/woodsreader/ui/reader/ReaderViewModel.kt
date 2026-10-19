@@ -84,6 +84,10 @@ import org.readium.r2.shared.publication.services.positionsByReadingOrder
 import org.readium.r2.shared.util.asset.AssetRetriever
 import android.util.LruCache
 import com.example.woodsreader.core.pipeline.ProcessedDocument
+import com.example.woodsreader.core.pipeline.ReadingBlock
+import com.example.woodsreader.core.xray.BookXRayEngine
+import com.example.woodsreader.core.xray.ChapterXRayReport
+import com.example.woodsreader.core.license.ProLicenseManager
 
 import com.example.woodsreader.service.CoverExtractor
 import org.readium.r2.shared.publication.Link
@@ -129,7 +133,8 @@ class ReaderViewModel @Inject constructor(
     private val ttsPresetCatalog: TtsPresetCatalog,
     private val chapterAudioExporter: ChapterAudioExporter,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
-    private val pronunciationLexiconManager: PronunciationLexiconManager
+    private val pronunciationLexiconManager: PronunciationLexiconManager,
+    val proLicenseManager: ProLicenseManager
 ) : ViewModel() {
 
     companion object {
@@ -205,6 +210,32 @@ class ReaderViewModel @Inject constructor(
     private val _showEpubCoverPage = MutableStateFlow(false)
     val showEpubCoverPage = _showEpubCoverPage.asStateFlow()
     val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
+
+    // ── Teleprompter / Auto-Scroll Controller ────────────────────────────────
+    private val autoScrollPrefs by lazy {
+        context.getSharedPreferences("woods_teleprompter_prefs", Context.MODE_PRIVATE)
+    }
+    private val _isAutoScrollActive = MutableStateFlow(false)
+    val isAutoScrollActive: StateFlow<Boolean> = _isAutoScrollActive.asStateFlow()
+
+    private val _autoScrollWpm = MutableStateFlow(
+        autoScrollPrefs.getInt("auto_scroll_wpm", 220).coerceIn(100, 450)
+    )
+    val autoScrollWpm: StateFlow<Int> = _autoScrollWpm.asStateFlow()
+
+    fun toggleAutoScroll() {
+        _isAutoScrollActive.update { !it }
+    }
+
+    fun setAutoScrollActive(active: Boolean) {
+        _isAutoScrollActive.value = active
+    }
+
+    fun setAutoScrollWpm(wpm: Int) {
+        val clamped = wpm.coerceIn(100, 450)
+        _autoScrollWpm.value = clamped
+        autoScrollPrefs.edit().putInt("auto_scroll_wpm", clamped).apply()
+    }
 
     val currentTtsPage = pdfReflowManager.currentTtsPage
     val sleepTimerRemaining = combine(
@@ -2463,6 +2494,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun saveCurrentProgressBeforeExit() {
+        _isAutoScrollActive.value = false
         if (_showEpubCoverPage.value) return
         if (isReflowMode.value) {
             val page = lastKnownReflowPage.takeIf { it > 0 }
@@ -2538,6 +2570,63 @@ class ReaderViewModel @Inject constructor(
         prefetchJob?.cancel()
         prefetchJob = null
         chapterLruCache.evictAll()
+    }
+
+    fun generateXRayReport(currentParagraphIndex: Int? = null): ChapterXRayReport {
+        val title = _chapterInfo.value.title?.takeIf { it.isNotBlank() } ?: "Capítulo actual"
+
+        val epubBlocks = epubFormatManager.currentProcessedDocument.value?.displayBlocks
+        val cachedDoc = if (epubBlocks.isNullOrEmpty()) {
+            val href = (navigator as? VisualNavigator)?.currentLocator?.value?.href?.toString()
+            if (href != null) {
+                val pub = publication
+                val idx = if (pub != null) resourceIndexCache?.get(href) ?: findMatchingResourceIndex(href, pub.readingOrder) else -1
+                if (idx != -1) chapterLruCache.get(idx)?.document else null
+            } else null
+        } else null
+
+        val effectiveBlocks = epubBlocks ?: cachedDoc?.displayBlocks
+
+        val paragraphs = if (!effectiveBlocks.isNullOrEmpty()) {
+            effectiveBlocks.mapNotNull { block ->
+                when (block) {
+                    is ReadingBlock.Paragraph -> block.text
+                    is ReadingBlock.Heading -> block.text
+                    else -> null
+                }
+            }.filter { it.isNotBlank() }
+        } else {
+            pdfReflowManager.reflowState.value.items.mapNotNull { item ->
+                when (item) {
+                    is ReflowItem.Paragraph -> item.content
+                    is ReflowItem.Header -> item.content
+                    is ReflowItem.Text -> item.element.locator.text.highlight
+                    else -> null
+                }
+            }.filter { it.isNotBlank() }
+        }
+
+        val currentIdx = currentParagraphIndex ?: run {
+            val ttsIdx = if (isReflowMode.value) {
+                pdfReflowManager.ttsActiveBlockIndex.value
+            } else {
+                -1
+            }
+            if (ttsIdx in paragraphs.indices) {
+                ttsIdx
+            } else {
+                val prog = (navigator as? VisualNavigator)?.currentLocator?.value?.locations?.progression ?: 0.0
+                if (paragraphs.isNotEmpty()) {
+                    ((prog * paragraphs.size).toInt()).coerceIn(0, paragraphs.size - 1)
+                } else 0
+            }
+        }
+
+        return BookXRayEngine.analyzeChapter(
+            chapterTitle = title,
+            paragraphs = paragraphs,
+            currentParagraphIndex = currentIdx
+        )
     }
 
 }

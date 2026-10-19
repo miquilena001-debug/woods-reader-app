@@ -485,9 +485,15 @@ fun android.webkit.WebView.applyCustomTtsHighlight(
                     return "VISIBLE";
                 } else {
                     var vh = window.innerHeight || document.documentElement.clientHeight || 1;
-                    if (checkRect.top < 60 || checkRect.bottom > (vh - 80)) {
-                        var targetY = (window.pageYOffset || document.documentElement.scrollTop || 0) + checkRect.top - (vh * 0.28);
-                        window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                    var topThird = vh / 3.0;
+                    var bottomThird = (2.0 * vh) / 3.0;
+                    if (checkRect.top < topThird || checkRect.bottom > bottomThird) {
+                        try {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        } catch(e) {
+                            var targetY = (window.pageYOffset || document.documentElement.scrollTop || 0) + checkRect.top - (vh * 0.5);
+                            window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                        }
                     }
                     return "VISIBLE";
                 }

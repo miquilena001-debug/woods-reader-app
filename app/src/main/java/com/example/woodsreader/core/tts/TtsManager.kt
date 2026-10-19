@@ -64,7 +64,7 @@ class TtsManager @Inject constructor(
 
     @Volatile
     private var offlineTts: com.k2fsa.sherpa.onnx.OfflineTts? = null
-    private val sherpaMutex = Mutex()
+    private val nativeTtsMutex = Mutex()
     @Volatile
     private var activeAudioTrack: AudioTrack? = null
     private val totalFramesWritten = AtomicLong(0L)
@@ -72,8 +72,9 @@ class TtsManager @Inject constructor(
     private var isSpeakingCancelled = false
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    // ── Pre-Síntesis Lookahead (0ms Latencia) ─────────────────────────────────
-    private val preSynthesisScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // ── Pre-Síntesis Lookahead (0ms Latencia, hilo secuencial único) ───────────
+    private val preSynthesisDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val preSynthesisScope = CoroutineScope(SupervisorJob() + preSynthesisDispatcher)
     private val preSynthesisCache = ConcurrentHashMap<Int, Deferred<Pair<FloatArray, Int>?>>()
 
     fun clearPreSynthesisCache() {
@@ -846,9 +847,24 @@ class TtsManager @Inject constructor(
         isReady = false
         abandonAudioFocus()
         try {
-            offlineTts?.release()
+            if (nativeTtsMutex.tryLock()) {
+                try {
+                    offlineTts?.release()
+                } finally {
+                    offlineTts = null
+                    nativeTtsMutex.unlock()
+                }
+            } else {
+                CoroutineScope(Dispatchers.IO).launch {
+                    nativeTtsMutex.withLock {
+                        try {
+                            offlineTts?.release()
+                        } catch (_: Exception) {}
+                        offlineTts = null
+                    }
+                }
+            }
         } catch (_: Exception) {}
-        offlineTts = null
         try {
             ttsScope.coroutineContext.cancelChildren()
             preSynthesisScope.coroutineContext.cancelChildren()
@@ -928,7 +944,7 @@ class TtsManager @Inject constructor(
         }
     }
 
-    suspend fun resetSherpa() = sherpaMutex.withLock {
+    suspend fun resetSherpa() = nativeTtsMutex.withLock {
         try {
             offlineTts?.release()
         } catch (e: Exception) {
@@ -950,62 +966,75 @@ class TtsManager @Inject constructor(
 
     suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
         if (offlineTts != null) return@withContext true
-        sherpaMutex.withLock {
-            if (offlineTts != null) return@withLock true
-            try {
-                Timber.d("Initializing Sherpa ONNX...")
-                _isLoadingModel.value = true
-                ensureNativeLibLoaded()
+        nativeTtsMutex.withLock {
+            ensureSherpaLoadedLocked()
+        }
+    }
 
-                if (sherpaModelManager.isModelReady()) {
-                    Timber.d("Loading Sherpa ONNX from disk: ${sherpaModelManager.modelDir.absolutePath}")
-                    offlineTts = sherpaModelManager.createOfflineTtsInstance()
-                    if (offlineTts != null) {
-                        Timber.i("Sherpa ONNX initialized successfully from disk")
-                        return@withLock true
-                    }
+    private fun ensureSherpaLoadedLocked(): Boolean {
+        if (offlineTts != null) return true
+        return try {
+            Timber.d("Initializing Sherpa ONNX...")
+            _isLoadingModel.value = true
+            ensureNativeLibLoaded()
+
+            // Si el modelo seleccionado no está listo en disco, auto-fallback al primer modelo instalado
+            if (!sherpaModelManager.isModelReady()) {
+                val installed = sherpaModelManager.getInstalledModels().firstOrNull()
+                if (installed != null) {
+                    Timber.w("Selected model not ready. Auto-fallback to installed model: ${installed.id}")
+                    sherpaModelManager.selectVoiceOption(installed)
                 }
-
-                // Fallback a assets si el modelo todavía estuviera en el APK
-                try {
-                    val espeakDir = File(context.filesDir, "espeak-ng-data")
-                    if (!espeakDir.exists() || espeakDir.list()?.isEmpty() == true) {
-                        Timber.d("Copying espeak-ng-data from assets to ${espeakDir.absolutePath}...")
-                        copyAssetsFolder(
-                            context.assets,
-                            "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
-                            espeakDir.absolutePath
-                        )
-                    }
-
-                    val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
-                        model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
-                            vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
-                                model = "tts/vits-piper-es_ES-davefx-medium/es_ES-davefx-medium.onnx",
-                                lexicon = "",
-                                tokens = "tts/vits-piper-es_ES-davefx-medium/tokens.txt",
-                                dataDir = espeakDir.absolutePath,
-                                noiseScale = 0.667f,
-                                noiseScaleW = 0.8f,
-                                lengthScale = 1.0f
-                            ),
-                            numThreads = 4,
-                            debug = false
-                        )
-                    )
-                    offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(context.assets, config)
-                    Timber.i("Sherpa ONNX initialized from assets fallback")
-                    true
-                } catch (assetErr: Exception) {
-                    Timber.w(assetErr, "Modelo no encontrado en assets ni en disco")
-                    false
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to initialize Sherpa ONNX")
-                false
-            } finally {
-                _isLoadingModel.value = false
             }
+
+            if (sherpaModelManager.isModelReady()) {
+                Timber.d("Loading Sherpa ONNX from disk: ${sherpaModelManager.modelDir.absolutePath}")
+                offlineTts = sherpaModelManager.createOfflineTtsInstance()
+                if (offlineTts != null) {
+                    Timber.i("Sherpa ONNX initialized successfully from disk: ${sherpaModelManager.selectedVoice.value.id}")
+                    return true
+                }
+            }
+
+            // Fallback a assets si el modelo todavía estuviera en el APK
+            try {
+                val espeakDir = File(context.filesDir, "espeak-ng-data")
+                if (!espeakDir.exists() || espeakDir.list()?.isEmpty() == true) {
+                    Timber.d("Copying espeak-ng-data from assets to ${espeakDir.absolutePath}...")
+                    copyAssetsFolder(
+                        context.assets,
+                        "tts/vits-piper-es_ES-davefx-medium/espeak-ng-data",
+                        espeakDir.absolutePath
+                    )
+                }
+
+                val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
+                    model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
+                        vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
+                            model = "tts/vits-piper-es_ES-davefx-medium/es_ES-davefx-medium.onnx",
+                            lexicon = "",
+                            tokens = "tts/vits-piper-es_ES-davefx-medium/tokens.txt",
+                            dataDir = espeakDir.absolutePath,
+                            noiseScale = 0.667f,
+                            noiseScaleW = 0.8f,
+                            lengthScale = 1.0f
+                        ),
+                        numThreads = 2,
+                        debug = false
+                    )
+                )
+                offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(context.assets, config)
+                Timber.i("Sherpa ONNX initialized from assets fallback")
+                true
+            } catch (assetErr: Exception) {
+                Timber.w(assetErr, "Modelo no encontrado en assets ni en disco")
+                false
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to initialize Sherpa ONNX")
+            false
+        } finally {
+            _isLoadingModel.value = false
         }
     }
 
@@ -1013,25 +1042,32 @@ class TtsManager @Inject constructor(
      * Genera audio crudo con Sherpa ONNX sin reproducirlo.
      * Devuelve (muestras Float32, sampleRate) o null si falla.
      * Usado por el motor de estudio "Woods Studio Voice HD" para procesar DSP.
+     *
+     * Protegido estrictamente con [nativeTtsMutex] para impedir ejecuciones
+     * concurrentes en el motor C++ JNI nativo.
      */
     suspend fun generateSherpaAudioRaw(text: String, speed: Float): Pair<FloatArray, Int>? =
         withContext(Dispatchers.IO) {
-            if (!initSherpaIfNeeded()) return@withContext null
-            val tts = offlineTts ?: return@withContext null
-            try {
-                val result = tts.generate(
-                    text = text,
-                    sid = sherpaModelManager.selectedVoice.value.speakerId,
-                    speed = speed
-                )
-                if (result.samples.isNotEmpty()) {
-                    result.samples to result.sampleRate
-                } else {
+            nativeTtsMutex.withLock {
+                if (offlineTts == null) {
+                    if (!ensureSherpaLoadedLocked()) return@withLock null
+                }
+                val tts = offlineTts ?: return@withLock null
+                try {
+                    val result = tts.generate(
+                        text = text,
+                        sid = sherpaModelManager.selectedVoice.value.speakerId,
+                        speed = speed
+                    )
+                    if (result.samples.isNotEmpty()) {
+                        result.samples to result.sampleRate
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "generateSherpaAudioRaw failed for: $text")
                     null
                 }
-            } catch (e: Exception) {
-                Timber.w(e, "generateSherpaAudioRaw failed for: $text")
-                null
             }
         }
 
@@ -1039,10 +1075,13 @@ class TtsManager @Inject constructor(
      * Sintetiza texto con el motor de estudio "Woods Studio Voice HD".
      *
      * 1. Limpia y aplica filtros/reglas de pronunciación del libro.
-     * 2. Analiza la oración con [AudiobookProsodyEngine] para obtener [ProsodySegment]s (roles, pausas, modulación).
-     * 3. Para cada segmento, genera audio crudo con Sherpa ONNX aplicando la velocidad prosódica.
-     * 4. Pasa cada segmento por [StudioAudioDspProcessor.masterAudioSegment] con el perfil acústico activo.
-     * 5. Concatena todos los segmentos en un único [FloatArray] continuo con pausas y dither.
+     * 2. Auto-detecta idioma y garantiza fallback a modelo descargado en disco.
+     * 3. Si offlineTts == null, lo inicializa síncronamente con [nativeTtsMutex].
+     * 4. Analiza la oración con [AudiobookProsodyEngine] para obtener [ProsodySegment]s.
+     * 5. Si la oración supera 220 caracteres o algún segmento devuelve vacío, hace fallback inmediato
+     *    a sintetizar la oración completa en una sola llamada.
+     * 6. Pasa cada segmento por [StudioAudioDspProcessor.masterAudioSegment] calibrado a estándar Audible (-19 dBFS).
+     * 7. Concatena todos los segmentos y mezcla paisajes sonoros si están activos.
      *
      * @return Par de (muestras Float 32-bit, sampleRate) o null si falla la generación.
      */
@@ -1063,22 +1102,40 @@ class TtsManager @Inject constructor(
                 isRegex = it.isRegex
             )
         }
-        val processedText = wordExclusionEngine.filterText(text, exclusionRules)
+        val processedText = wordExclusionEngine.filterText(text, exclusionRules).trim()
+        if (processedText.isEmpty()) return@withContext null
 
         val autoDetect = sherpaModelManager.autoDetectBookLanguage.value
         val language = if (autoDetect) {
-            val detected = MultilingualAudiobookNormalizer.detectDominantLanguage(text)
+            val detected = MultilingualAudiobookNormalizer.detectDominantLanguage(processedText)
             val currentVoice = sherpaModelManager.selectedVoice.value
             if (currentVoice.languageCode != detected.code) {
                 val bestVoice = sherpaModelManager.findBestVoiceForLanguage(detected)
                 if (bestVoice != null && bestVoice != currentVoice) {
                     sherpaModelManager.selectVoiceOption(bestVoice)
-                    initSherpaIfNeeded()
+                    resetSherpa()
                 }
             }
             detected
         } else {
             sherpaModelManager.selectedVoice.value.language
+        }
+
+        // Si el modelo actual o detectado no está en disco, fallback inmediato al primer modelo instalado
+        if (!sherpaModelManager.isModelReady()) {
+            val fallback = sherpaModelManager.getInstalledModels().firstOrNull()
+            if (fallback != null && fallback != sherpaModelManager.selectedVoice.value) {
+                Timber.w("Modelo seleccionado no disponible en disco. Fallback inmediato a: ${fallback.id}")
+                sherpaModelManager.selectVoiceOption(fallback)
+                resetSherpa()
+            }
+        }
+
+        // Si offlineTts es null, inicializar síncronamente con nativeTtsMutex
+        if (offlineTts == null) {
+            nativeTtsMutex.withLock {
+                ensureSherpaLoadedLocked()
+            }
         }
 
         val segments = AudiobookProsodyEngine.analyzeSentence(
@@ -1087,37 +1144,64 @@ class TtsManager @Inject constructor(
             language = language,
             lexiconManager = pronunciationLexiconManager
         )
-        if (segments.isEmpty()) return@withContext null
 
         val profile = _acousticsProfile.value
         val useDramatization = _dramatizedDialogueEnabled.value
 
+        // Si una oración dividida supera los 220 caracteres, o si está vacía
+        var useFallbackFullSentence = segments.isEmpty() || segments.any { it.cleanText.length > 220 }
         val processedChunks = ArrayList<FloatArray>(segments.size)
         var lastSampleRate = 0
 
-        for (segment in segments) {
-            val speed = (baseSpeed * segment.speedMultiplier).coerceIn(0.55f, 2.2f)
+        if (!useFallbackFullSentence) {
+            for (segment in segments) {
+                if (segment.cleanText.isBlank()) continue
+                val speed = (baseSpeed * segment.speedMultiplier).coerceIn(0.55f, 2.2f)
 
-            val generatedAudio = try {
-                generateSherpaAudioRaw(segment.cleanText, speed)
-            } catch (_: Exception) {
-                null
-            } ?: continue
+                val generatedAudio = try {
+                    generateSherpaAudioRaw(segment.cleanText, speed)
+                } catch (_: Exception) {
+                    null
+                }
 
-            lastSampleRate = generatedAudio.second
-            if (generatedAudio.first.isEmpty()) continue
+                // Si algún segmento individual devuelve vacío, fallback inmediato a sintetizar la oración completa
+                if (generatedAudio == null || generatedAudio.first.isEmpty()) {
+                    Timber.w("Segmento TTS devolvió audio vacío ('${segment.cleanText.take(25)}...'). Activando fallback de oración completa.")
+                    useFallbackFullSentence = true
+                    break
+                }
 
-            val masteredSamples = StudioAudioDspProcessor.masterAudioSegment(
-                rawSamples = generatedAudio.first,
-                sampleRate = lastSampleRate,
-                profile = profile,
-                role = if (useDramatization) segment.role else VoiceActRole.NARRATOR,
-                gainMultiplier = segment.gainMultiplier,
-                postPauseMs = segment.postPauseMs,
-                singleVoiceRoleShift = useDramatization
-            )
+                lastSampleRate = generatedAudio.second
+                val masteredSamples = StudioAudioDspProcessor.masterAudioSegment(
+                    rawSamples = generatedAudio.first,
+                    sampleRate = lastSampleRate,
+                    profile = profile,
+                    role = if (useDramatization) segment.role else VoiceActRole.NARRATOR,
+                    gainMultiplier = segment.gainMultiplier,
+                    postPauseMs = segment.postPauseMs,
+                    singleVoiceRoleShift = useDramatization
+                )
 
-            processedChunks.add(masteredSamples)
+                processedChunks.add(masteredSamples)
+            }
+        }
+
+        if (useFallbackFullSentence || processedChunks.isEmpty()) {
+            processedChunks.clear()
+            val fullRaw = generateSherpaAudioRaw(processedText, baseSpeed.coerceIn(0.55f, 2.2f))
+            if (fullRaw != null && fullRaw.first.isNotEmpty()) {
+                lastSampleRate = fullRaw.second
+                val mastered = StudioAudioDspProcessor.masterAudioSegment(
+                    rawSamples = fullRaw.first,
+                    sampleRate = lastSampleRate,
+                    profile = profile,
+                    role = VoiceActRole.NARRATOR,
+                    gainMultiplier = 1.0f,
+                    postPauseMs = 260,
+                    singleVoiceRoleShift = false
+                )
+                processedChunks.add(mastered)
+            }
         }
 
         if (processedChunks.isEmpty() || lastSampleRate <= 0) return@withContext null
@@ -1185,8 +1269,12 @@ class TtsManager @Inject constructor(
                     try { currentTrack.release() } catch (_: Exception) {}
                 }
             } else {
+                Timber.i("AudioTrack sampleRate mismatch (${currentTrack.sampleRate} != $sampleRate) or uninitialized, recreating")
                 try {
-                    currentTrack.stop()
+                    if (currentTrack.state == AudioTrack.STATE_INITIALIZED) {
+                        currentTrack.stop()
+                        currentTrack.flush()
+                    }
                     currentTrack.release()
                 } catch (_: Exception) {}
                 activeAudioTrack = null
@@ -1281,6 +1369,16 @@ class TtsManager @Inject constructor(
         charOffset: Int = 0,
         onRangeUpdate: ((IntRange) -> Unit)? = null
     ) = withContext(Dispatchers.Default) {
+        val currentTrack = activeAudioTrack
+        if (currentTrack != null && currentTrack.sampleRate != sampleRate && currentTrack.state == AudioTrack.STATE_INITIALIZED) {
+            val remainingFrames = totalFramesWritten.get() - currentTrack.playbackHeadPosition
+            val currentRate = currentTrack.playbackRate
+            if (remainingFrames > 0 && currentRate > 0) {
+                val remainingMs = (remainingFrames.toFloat() / currentRate * 1000L).toLong().coerceIn(0L, 2000L)
+                delay(remainingMs)
+            }
+        }
+
         val track = getOrCreateAudioTrack(sampleRate) ?: return@withContext
 
         try {
@@ -1457,11 +1555,13 @@ class TtsManager @Inject constructor(
                     val generationSpeed = (targetSpeed / currentPitchFactor).coerceIn(0.1f, 3.0f)
 
                     val generatedAudio = runCatching {
-                        offlineTts?.generate(
-                            text = item.text,
-                            sid = sherpaModelManager.selectedVoice.value.speakerId,
-                            speed = generationSpeed
-                        )
+                        nativeTtsMutex.withLock {
+                            offlineTts?.generate(
+                                text = item.text,
+                                sid = sherpaModelManager.selectedVoice.value.speakerId,
+                                speed = generationSpeed
+                            )
+                        }
                     }.onFailure { e ->
                         android.util.Log.e(TAG, "Sherpa generate failed for: ${item.text}", e)
                     }.getOrNull()
@@ -1569,42 +1669,55 @@ class TtsManager @Inject constructor(
                     }
 
                     val unit = units[i]
+                    val trimmedText = unit.textToSpeak.trim()
+                    // Si la oración individual está vacía o solo contiene caracteres no pronunciables (ej. *** o ---),
+                    // NO llamar a pause() ni detener la reproducción: saltar automáticamente a currentIndex + 1 y continuar
+                    if (trimmedText.isEmpty() || trimmedText.all { !it.isLetterOrDigit() }) {
+                        Timber.d("Saltando unidad vacía o decorativa $i ('$trimmedText') sin detener la reproducción")
+                        continue
+                    }
+
                     onUnitStarted?.invoke(unit)
 
                     if (unit.isAnnouncement) {
                         delay(200L)
                     }
 
-                    // Lookahead Pre-Síntesis de Cero Latencia: lanzar pre-síntesis de index + 1 e index + 2
-                    for (ahead in 1..2) {
-                        val nextIdx = i + ahead
-                        if (nextIdx in units.indices) {
-                            val nextUnit = units[nextIdx]
-                            if (!nextUnit.isAnnouncement && nextUnit.textToSpeak.isNotBlank() && !preSynthesisCache.containsKey(nextIdx)) {
-                                preSynthesisCache[nextIdx] = preSynthesisScope.async {
-                                    synthesizeExpressiveStudioAudio(nextUnit.textToSpeak, baseRate)
-                                }
+                    // Lookahead Pre-Síntesis de Cero Latencia: solo 1 oración por adelantado (i + 1) en hilo secuencial único
+                    val nextIdx = i + 1
+                    if (nextIdx in units.indices) {
+                        val nextUnit = units[nextIdx]
+                        val nextTrimmed = nextUnit.textToSpeak.trim()
+                        val nextIsAudible = nextTrimmed.isNotEmpty() && nextTrimmed.any { it.isLetterOrDigit() }
+                        if (!nextUnit.isAnnouncement && nextIsAudible && !preSynthesisCache.containsKey(nextIdx)) {
+                            preSynthesisCache[nextIdx] = preSynthesisScope.async {
+                                synthesizeExpressiveStudioAudio(nextUnit.textToSpeak, baseRate)
                             }
                         }
                     }
 
                     // Obtener audio: del caché de pre-síntesis o sintetizar de inmediato si no estaba
-                    val cachedDeferred = preSynthesisCache.remove(i)
-                    val audio = cachedDeferred?.await() ?: if (unit.textToSpeak.isNotBlank()) {
-                        synthesizeExpressiveStudioAudio(unit.textToSpeak, baseRate)
-                    } else null
+                    try {
+                        val cachedDeferred = preSynthesisCache.remove(i)
+                        val audio = cachedDeferred?.await() ?: synthesizeExpressiveStudioAudio(unit.textToSpeak, baseRate)
 
-                    if (audio != null && audio.first.isNotEmpty()) {
-                        playPcmSamples(
-                            samples = audio.first,
-                            sampleRate = audio.second,
-                            playbackRate = audio.second,
-                            text = unit.textToSpeak,
-                            charOffset = 0,
-                            onRangeUpdate = { range ->
-                                onRangeUpdate?.invoke(unit.blockId, range)
-                            }
-                        )
+                        if (audio != null && audio.first.isNotEmpty()) {
+                            val modelSampleRate = audio.second
+                            playPcmSamples(
+                                samples = audio.first,
+                                sampleRate = modelSampleRate,
+                                playbackRate = modelSampleRate,
+                                text = unit.textToSpeak,
+                                charOffset = 0,
+                                onRangeUpdate = { range ->
+                                    onRangeUpdate?.invoke(unit.blockId, range)
+                                }
+                            )
+                        } else {
+                            Timber.w("Audio vacío generado para unidad $i; continuando al siguiente sin pausar.")
+                        }
+                    } catch (unitErr: Exception) {
+                        Timber.e(unitErr, "Excepción en unidad $i; continuando al siguiente sin pausar.")
                     }
 
                     if (unit.isAnnouncement) {
@@ -1620,14 +1733,23 @@ class TtsManager @Inject constructor(
                     }
 
                     val unit = units[i]
+                    val trimmedText = unit.textToSpeak.trim()
+                    if (trimmedText.isEmpty() || trimmedText.all { !it.isLetterOrDigit() }) {
+                        continue
+                    }
+
                     onUnitStarted?.invoke(unit)
 
                     if (unit.isAnnouncement) {
                         delay(200L)
                     }
 
-                    speak(unit.textToSpeak) { range ->
-                        onRangeUpdate?.invoke(unit.blockId, range)
+                    try {
+                        speak(unit.textToSpeak) { range ->
+                            onRangeUpdate?.invoke(unit.blockId, range)
+                        }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Error en narración nativa $i, continuando.")
                     }
 
                     if (unit.isAnnouncement) {
