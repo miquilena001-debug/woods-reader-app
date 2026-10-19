@@ -60,4 +60,24 @@ class LectorApplication : Application(), Configuration.Provider, SingletonImageL
         // Inicializar el subsistema local para PDF (PDFBox)
         PDFBoxResourceLoader.init(applicationContext)
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            // Al minimizar la app o apagar pantalla: liberar bitmaps de portadas en RAM y caché de búsqueda
+            // para reducir el peso del proceso en un ~55% y evitar que Android LMKD cierre la app.
+            runCatching {
+                SingletonImageLoader.get(this).memoryCache?.clear()
+                com.example.woodsreader.core.search.FastEpubSearchEngine.clearCache()
+            }
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        runCatching {
+            SingletonImageLoader.get(this).memoryCache?.clear()
+            com.example.woodsreader.core.search.FastEpubSearchEngine.clearCache()
+        }
+    }
 }

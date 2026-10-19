@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,8 @@ import kotlin.random.Random
 @Singleton
 class AmbientSoundscapePlayer @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val smartSleepTimerManager: SmartSleepTimerManager
+    private val smartSleepTimerManager: SmartSleepTimerManager,
+    private val woodsKeepAliveManager: WoodsKeepAliveManager
 ) {
     private val prefs = context.getSharedPreferences("woods_ambient_soundscape_prefs", Context.MODE_PRIVATE)
     private val studioPrefs = context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE)
@@ -51,7 +53,7 @@ class AmbientSoundscapePlayer @Inject constructor(
     private var isTtsSpeaking: Boolean = false
 
     @Volatile
-    private var isReaderVisible: Boolean = false
+    private var isReaderActive: Boolean = false
 
     fun setMode(newMode: SoundscapeMode) {
         _mode.value = newMode
@@ -72,13 +74,18 @@ class AmbientSoundscapePlayer @Inject constructor(
         updatePlaybackState()
     }
 
-    fun onReaderVisibilityChanged(visible: Boolean) {
-        isReaderVisible = visible
+    fun onReaderVisibilityChanged(active: Boolean) {
+        isReaderActive = active
+        updatePlaybackState()
+    }
+
+    fun setReaderActive(active: Boolean) {
+        isReaderActive = active
         updatePlaybackState()
     }
 
     private fun updatePlaybackState() {
-        val shouldPlay = _mode.value != SoundscapeMode.OFF && (isReaderVisible || isTtsSpeaking)
+        val shouldPlay = _mode.value != SoundscapeMode.OFF && (isReaderActive || isTtsSpeaking)
         if (shouldPlay) {
             startStreamingIfNeeded()
         } else {
@@ -88,6 +95,8 @@ class AmbientSoundscapePlayer @Inject constructor(
 
     private fun startStreamingIfNeeded() {
         if (streamJob?.isActive == true) return
+
+        woodsKeepAliveManager.acquireKeepAliveWakeLock()
 
         streamJob = scope.launch {
             val sampleRate = 22050
@@ -151,7 +160,7 @@ class AmbientSoundscapePlayer @Inject constructor(
 
             try {
                 track.play()
-                while (isActive && _mode.value != SoundscapeMode.OFF && (isReaderVisible || isTtsSpeaking)) {
+                while (isActive && _mode.value != SoundscapeMode.OFF && (isReaderActive || isTtsSpeaking)) {
                     val activeMode = _mode.value
                     val userVol = _volume.value
                     val sleepFade = smartSleepTimerManager.fadeMultiplier.value
@@ -251,6 +260,9 @@ class AmbientSoundscapePlayer @Inject constructor(
                     track.flush()
                     track.release()
                 }
+                if (_mode.value == SoundscapeMode.OFF || (!isReaderActive && !isTtsSpeaking)) {
+                    woodsKeepAliveManager.releaseKeepAliveWakeLock()
+                }
             }
         }
     }
@@ -258,5 +270,6 @@ class AmbientSoundscapePlayer @Inject constructor(
     fun stopStreaming() {
         streamJob?.cancel()
         streamJob = null
+        woodsKeepAliveManager.releaseKeepAliveWakeLock()
     }
 }

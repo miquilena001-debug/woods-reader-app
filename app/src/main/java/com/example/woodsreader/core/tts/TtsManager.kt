@@ -58,7 +58,8 @@ class TtsManager @Inject constructor(
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val smartSleepTimerManager: SmartSleepTimerManager,
-    val ambientSoundscapePlayer: AmbientSoundscapePlayer
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer,
+    private val woodsKeepAliveManager: com.example.woodsreader.core.system.WoodsKeepAliveManager
 ) {
     private var tts: TextToSpeech? = null
     private var isReady = false
@@ -679,6 +680,7 @@ class TtsManager @Inject constructor(
     // Ã¢â€â‚¬Ã¢â€â‚¬ GestiÃƒÂ³n del Audio Focus Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     private fun acquireAudioLocks() {
+        woodsKeepAliveManager.acquireKeepAliveWakeLock()
         runCatching {
             if (wakeLock == null) {
                 wakeLock = powerManager?.newWakeLock(
@@ -716,6 +718,7 @@ class TtsManager @Inject constructor(
     }
 
     private fun releaseAudioLocks() {
+        woodsKeepAliveManager.releaseKeepAliveWakeLock()
         releaseWakeLock()
         releaseWifiLock()
     }

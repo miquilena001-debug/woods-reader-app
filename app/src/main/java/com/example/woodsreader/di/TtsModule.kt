@@ -21,7 +21,8 @@ object TtsModule {
         edgeNeuralTtsClient: com.example.woodsreader.core.tts.EdgeNeuralTtsClient,
         pronunciationLexiconManager: com.example.woodsreader.core.tts.PronunciationLexiconManager,
         smartSleepTimerManager: com.example.woodsreader.core.tts.SmartSleepTimerManager,
-        ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer
+        ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer,
+        woodsKeepAliveManager: com.example.woodsreader.core.system.WoodsKeepAliveManager
     ): TtsManager = TtsManager(
         context,
         ttsRuleDao,
@@ -30,7 +31,8 @@ object TtsModule {
         edgeNeuralTtsClient,
         pronunciationLexiconManager,
         smartSleepTimerManager,
-        ambientSoundscapePlayer
+        ambientSoundscapePlayer,
+        woodsKeepAliveManager
     )
 
 }

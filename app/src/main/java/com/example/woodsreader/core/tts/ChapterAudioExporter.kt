@@ -9,6 +9,7 @@ import android.media.MediaMuxer
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +49,8 @@ data class ChapterTextChunk(
 class ChapterAudioExporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val sherpaModelManager: SherpaModelManager,
-    private val ttsManager: TtsManager
+    private val ttsManager: TtsManager,
+    private val woodsKeepAliveManager: WoodsKeepAliveManager
 ) {
     private val _exportState = MutableStateFlow<AudioExportState>(AudioExportState.Idle)
     val exportState: StateFlow<AudioExportState> = _exportState.asStateFlow()
@@ -93,6 +95,7 @@ class ChapterAudioExporter @Inject constructor(
             val tempM4aFile = File(context.cacheDir, "woods_export_${System.currentTimeMillis()}.m4a")
             val sampleRate = 22050
 
+            woodsKeepAliveManager.acquireKeepAliveWakeLock()
             try {
                 encodeStreamToM4a(
                     outputFile = tempM4aFile,
@@ -130,6 +133,7 @@ class ChapterAudioExporter @Inject constructor(
                 _exportState.value = AudioExportState.Completed(fileName, fileSizeKb)
                 fileName
             } finally {
+                woodsKeepAliveManager.releaseKeepAliveWakeLock()
                 if (tempM4aFile.exists()) tempM4aFile.delete()
             }
         }.onFailure { err ->

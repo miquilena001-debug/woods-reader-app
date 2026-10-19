@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- POST_NOTIFICATIONS: requerido en Android 13+ para mostrar la notificación TTS -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- BLUETOOTH_CONNECT: permite que los auriculares A40 reciban comandos AVRCP -->
