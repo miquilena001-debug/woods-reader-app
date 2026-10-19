@@ -2,6 +2,7 @@ package com.example.woodsreader.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.RoomDatabase
 import com.example.woodsreader.data.database.AppDatabase
 import com.example.woodsreader.data.database.AppTypeConverters
 import com.example.woodsreader.data.database.BookDao
@@ -37,6 +38,7 @@ object DatabaseModule {
         "lector_epub.db"
     )
         .addTypeConverter(converters)
+        .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         // << CHANGE: Registro de migraciones formales usando los objetos pre-instanciados
         .addMigrations(
             com.example.woodsreader.data.database.migration.MIGRATION_1_2,

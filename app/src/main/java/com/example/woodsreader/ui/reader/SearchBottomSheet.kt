@@ -38,7 +38,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.publication.services.search.*
+import com.example.woodsreader.core.search.FastEpubSearchEngine
+import androidx.compose.foundation.lazy.itemsIndexed
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 
@@ -74,41 +75,40 @@ fun SearchBottomSheet(
             isSearching = true
             searchFinished = false
             searchError = null
-            
-            var iterator: SearchIterator? = null
 
             try {
-                iterator = publication.search(query)
-
-                if (iterator == null) {
-                    searchError = "La búsqueda no está disponible para este libro."
-                    return@launch
-                }
-
-                val allLocators = mutableListOf<Locator>()
-
-                // Perfección M-8.2: Actualizaciones en lote (batches) para evitar recomposiciones excesivas
-                var lastUpdate = System.currentTimeMillis()
-                while (isActive) {
-                    val result = iterator.next()
-                    val collection = result.getOrNull() ?: break
-                    val locators = collection.locators
-                    if (locators.isEmpty()) break
-
-                    allLocators.addAll(locators)
-                    
-                    val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 300) { // Actualizar la UI cada 300ms (suavidad Premium)
-                        results = allLocators.toList()
-                        lastUpdate = now
+                val bookId = publication.metadata.identifier ?: publication.metadata.title ?: "epub_book"
+                FastEpubSearchEngine.searchPublicationStreaming(
+                    bookId = bookId,
+                    publication = publication,
+                    rawQuery = query
+                ).collect { progress ->
+                    results = progress.hits.map { hit ->
+                        val link = publication.readingOrder.getOrNull(hit.chapterIndex)
+                        val url = link?.url()
+                            ?: org.readium.r2.shared.util.Url(hit.chapterHref)
+                            ?: org.readium.r2.shared.util.Url("#")!!
+                        val hlStart = hit.matchStartInSnippet.coerceIn(0, hit.snippet.length)
+                        val hlEnd = (hit.matchStartInSnippet + hit.matchLength).coerceIn(hlStart, hit.snippet.length)
+                        Locator(
+                            href = url,
+                            mediaType = link?.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
+                            title = hit.chapterTitle,
+                            locations = Locator.Locations(
+                                progression = hit.approximateProgression,
+                                position = hit.chapterIndex + 1
+                            ),
+                            text = Locator.Text(
+                                highlight = hit.snippet.substring(hlStart, hlEnd),
+                                before = hit.snippet.substring(0, hlStart).removePrefix("…"),
+                                after = hit.snippet.substring(hlEnd).removeSuffix("…")
+                            )
+                        )
                     }
-                    
-                    if (allLocators.size >= 100) break // Limitar a 100 resultados por rendimiento
-                }
-
-                if (isActive) {
-                    results = allLocators.toList() // Asegurar actualización final
-                    searchFinished = true
+                    if (progress.isFinished) {
+                        searchFinished = true
+                        isSearching = false
+                    }
                 }
 
             } catch (e: CancellationException) {
@@ -120,9 +120,7 @@ fun SearchBottomSheet(
                     searchError = "Error al buscar: ${e.message}"
                 }
             } finally {
-                // Usar NonCancellable para asegurar que isSearching = false y el cierre se ejecuten
                 withContext(NonCancellable) {
-                    iterator?.close()
                     isSearching = false
                 }
             }
@@ -266,10 +264,10 @@ fun SearchBottomSheet(
                                     modifier = Modifier.padding(vertical = 8.dp)
                                 )
                             }
-                            items(
+                            itemsIndexed(
                                 items = results,
-                                key = { it.locations.totalProgression ?: it.hashCode() }
-                            ) { locator ->
+                                key = { index, _ -> index }
+                            ) { _, locator ->
                                 SearchResultItem(locator = locator, onClick = { onResultClick(locator) })
                             }
                         }

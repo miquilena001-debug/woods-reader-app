@@ -44,6 +44,9 @@ import com.example.woodsreader.core.tts.SleepTimerPreset
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.tts.AmbientSoundscapePlayer
+import com.example.woodsreader.core.search.FastEpubSearchEngine
+import com.example.woodsreader.core.search.FastInBookSearchHit
+import com.example.woodsreader.core.search.FastSearchProgress
 import com.example.woodsreader.core.managers.PdfReflowManager
 
 import com.example.woodsreader.data.model.ReflowItem
@@ -56,6 +59,7 @@ import kotlinx.coroutines.Dispatchers
 
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -2557,7 +2561,75 @@ class ReaderViewModel @Inject constructor(
         _showEpubCoverPage.value = false
     }
 
+    // ── Búsqueda En-Libro Streaming con Cero Bloqueo ─────────────────────────
+    private var inBookSearchJob: Job? = null
+    private val _inBookSearchResults = MutableStateFlow<List<FastInBookSearchHit>>(emptyList())
+    val inBookSearchResults: StateFlow<List<FastInBookSearchHit>> = _inBookSearchResults.asStateFlow()
+
+    private val _inBookSearchProgress = MutableStateFlow<FastSearchProgress?>(null)
+    val inBookSearchProgress: StateFlow<FastSearchProgress?> = _inBookSearchProgress.asStateFlow()
+
+    private val _isInBookSearching = MutableStateFlow(false)
+    val isInBookSearching: StateFlow<Boolean> = _isInBookSearching.asStateFlow()
+
+    fun getCurrentChapterIndex(): Int {
+        val pub = publication ?: return 0
+        val currentHref = (navigator as? VisualNavigator)?.currentLocator?.value?.href?.toString()
+            ?: _currentTtsLocator.value?.href?.toString().orEmpty()
+        return if (currentHref.isNotBlank()) {
+            resourceIndexCache?.get(currentHref)
+                ?: findMatchingResourceIndex(currentHref, pub.readingOrder).takeIf { it != -1 }
+                ?: 0
+        } else 0
+    }
+
+    fun searchInBook(query: String, startFromChapterIndex: Int? = null) {
+        val pub = publication ?: return
+        if (query.isBlank()) {
+            cancelInBookSearch()
+            return
+        }
+
+        inBookSearchJob?.cancel()
+        val startIndex = startFromChapterIndex ?: getCurrentChapterIndex()
+        inBookSearchJob = viewModelScope.launch {
+            _isInBookSearching.value = true
+            _inBookSearchResults.value = emptyList()
+            _inBookSearchProgress.value = null
+
+            try {
+                FastEpubSearchEngine.searchPublicationStreaming(
+                    bookId = bookId,
+                    publication = pub,
+                    rawQuery = query,
+                    startFromChapterIndex = startIndex
+                ).collect { progress ->
+                    _inBookSearchResults.value = progress.hits
+                    _inBookSearchProgress.value = progress
+                    if (progress.isFinished) {
+                        _isInBookSearching.value = false
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in searchInBook: ${e.message}", e)
+                _isInBookSearching.value = false
+            } finally {
+                _isInBookSearching.value = false
+            }
+        }
+    }
+
+    fun cancelInBookSearch() {
+        inBookSearchJob?.cancel()
+        inBookSearchJob = null
+        _isInBookSearching.value = false
+    }
+
     override fun onCleared() {
+        cancelInBookSearch()
+        FastEpubSearchEngine.clearCache()
         ambientSoundscapePlayer.onReaderVisibilityChanged(false)
         stopTts()
         ambienceEngine.stop()
