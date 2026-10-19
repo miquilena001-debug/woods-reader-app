@@ -57,7 +57,8 @@ class TtsManager @Inject constructor(
     private val sherpaModelManager: SherpaModelManager,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
-    val smartSleepTimerManager: SmartSleepTimerManager
+    val smartSleepTimerManager: SmartSleepTimerManager,
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer
 ) {
     private var tts: TextToSpeech? = null
     private var isReady = false
@@ -106,18 +107,11 @@ class TtsManager @Inject constructor(
     )
     val secondaryDialogueVoiceId: StateFlow<String?> = _secondaryDialogueVoiceId.asStateFlow()
 
-    // ── Woods Studio Voice HD: Paisajes Sonoros Procedurales ─────────────────
+    // ── Woods Studio Voice HD: Paisajes Sonoros Procedurales en Tiempo Real ──
     val ambientSoundscapeEngine = AmbientSoundscapeEngine()
 
-    private val _soundscapeMode = MutableStateFlow(
-        SoundscapeMode.fromId(studioPrefs.getString("soundscape_mode", null))
-    )
-    val soundscapeMode: StateFlow<SoundscapeMode> = _soundscapeMode.asStateFlow()
-
-    private val _soundscapeIntensity = MutableStateFlow(
-        studioPrefs.getFloat("soundscape_intensity", 0.18f)
-    )
-    val soundscapeIntensity: StateFlow<Float> = _soundscapeIntensity.asStateFlow()
+    val soundscapeMode: StateFlow<SoundscapeMode> = ambientSoundscapePlayer.mode
+    val soundscapeIntensity: StateFlow<Float> = ambientSoundscapePlayer.volume
 
     private val studioPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
         when (key) {
@@ -125,8 +119,14 @@ class TtsManager @Inject constructor(
             "expressive_prosody_enabled" -> _expressiveProsodyEnabled.value = sp.getBoolean(key, true)
             "dramatized_dialogue_enabled" -> _dramatizedDialogueEnabled.value = sp.getBoolean(key, true)
             "secondary_dialogue_voice_id" -> _secondaryDialogueVoiceId.value = sp.getString(key, null)
-            "soundscape_mode" -> _soundscapeMode.value = SoundscapeMode.fromId(sp.getString(key, null))
-            "soundscape_intensity" -> _soundscapeIntensity.value = sp.getFloat(key, 0.18f)
+            "soundscape_mode" -> {
+                val mode = SoundscapeMode.fromId(sp.getString(key, null))
+                ambientSoundscapePlayer.setMode(mode)
+            }
+            "soundscape_intensity" -> {
+                val intensity = sp.getFloat(key, 0.35f)
+                ambientSoundscapePlayer.setVolume(intensity)
+            }
         }
     }
 
@@ -155,14 +155,11 @@ class TtsManager @Inject constructor(
     }
 
     fun setSoundscapeMode(mode: SoundscapeMode) {
-        _soundscapeMode.value = mode
-        studioPrefs.edit().putString("soundscape_mode", mode.id).apply()
+        ambientSoundscapePlayer.setMode(mode)
     }
 
     fun setSoundscapeIntensity(intensity: Float) {
-        val clamped = intensity.coerceIn(0.02f, 0.45f)
-        _soundscapeIntensity.value = clamped
-        studioPrefs.edit().putFloat("soundscape_intensity", clamped).apply()
+        ambientSoundscapePlayer.setVolume(intensity)
     }
 
     // ── Woods Studio Voice HD: Filtros Multilingües y Auto-Detección ─────────
@@ -224,6 +221,11 @@ class TtsManager @Inject constructor(
             sherpaModelManager.selectedVoice.collect {
                 clearPreSynthesisCache()
                 resetSherpa()
+            }
+        }
+        ttsScope.launch {
+            _isPlaying.collect { playing ->
+                ambientSoundscapePlayer.onTtsSpeakingChanged(playing)
             }
         }
         ttsScope.launch {
@@ -1214,15 +1216,8 @@ class TtsManager @Inject constructor(
             offset += chunk.size
         }
 
-        val soundscape = _soundscapeMode.value
-        if (soundscape != SoundscapeMode.OFF) {
-            ambientSoundscapeEngine.mixWithVoiceInPlace(
-                voiceBuffer = result,
-                sampleRate = lastSampleRate,
-                mode = soundscape,
-                ambientIntensity = _soundscapeIntensity.value
-            )
-        }
+        // DESACTIVADA la mezcla pasiva para no duplicar el sonido ambiental y mantener
+        // la síntesis de voz 100% pura y rápida. El audio continuo lo gestiona AmbientSoundscapePlayer.
 
         val fade = smartSleepTimerManager.fadeMultiplier.value
         if (fade < 0.999f) {

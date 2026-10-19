@@ -20,7 +20,8 @@ object TtsModule {
         sherpaModelManager: com.example.woodsreader.core.tts.SherpaModelManager,
         edgeNeuralTtsClient: com.example.woodsreader.core.tts.EdgeNeuralTtsClient,
         pronunciationLexiconManager: com.example.woodsreader.core.tts.PronunciationLexiconManager,
-        smartSleepTimerManager: com.example.woodsreader.core.tts.SmartSleepTimerManager
+        smartSleepTimerManager: com.example.woodsreader.core.tts.SmartSleepTimerManager,
+        ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer
     ): TtsManager = TtsManager(
         context,
         ttsRuleDao,
@@ -28,7 +29,8 @@ object TtsModule {
         sherpaModelManager,
         edgeNeuralTtsClient,
         pronunciationLexiconManager,
-        smartSleepTimerManager
+        smartSleepTimerManager,
+        ambientSoundscapePlayer
     )
 
 }

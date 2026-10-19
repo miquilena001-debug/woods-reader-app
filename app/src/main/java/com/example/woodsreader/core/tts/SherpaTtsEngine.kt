@@ -57,10 +57,11 @@ class SherpaTtsEngine(
     val autoDetectBookLanguage: StateFlow<Boolean> = ttsManager.autoDetectBookLanguage
     val downloadedModelIds: StateFlow<Set<String>> = ttsManager.downloadedModelIds
 
-    // ── Paisajes Sonoros Procedurales y Temporizador Inteligente ──────────────
+    // ── Paisajes Sonoros Procedurales en Vivo y Temporizador Inteligente ────
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer = ttsManager.ambientSoundscapePlayer
     val ambientSoundscapeEngine: AmbientSoundscapeEngine = ttsManager.ambientSoundscapeEngine
-    val soundscapeMode: StateFlow<SoundscapeMode> = ttsManager.soundscapeMode
-    val soundscapeIntensity: StateFlow<Float> = ttsManager.soundscapeIntensity
+    val soundscapeMode: StateFlow<SoundscapeMode> = ambientSoundscapePlayer.mode
+    val soundscapeIntensity: StateFlow<Float> = ambientSoundscapePlayer.volume
     val smartSleepTimerManager: SmartSleepTimerManager = ttsManager.smartSleepTimerManager
 
     fun setAcousticsProfile(profile: StudioAcousticsProfile) = ttsManager.setAcousticsProfile(profile)
@@ -72,8 +73,8 @@ class SherpaTtsEngine(
     fun setAutoDetectBookLanguage(enabled: Boolean) = ttsManager.setAutoDetectBookLanguage(enabled)
     fun deleteDownloadedModel(modelId: String): Boolean = ttsManager.deleteDownloadedModel(modelId)
 
-    fun setSoundscapeMode(mode: SoundscapeMode) = ttsManager.setSoundscapeMode(mode)
-    fun setSoundscapeIntensity(intensity: Float) = ttsManager.setSoundscapeIntensity(intensity)
+    fun setSoundscapeMode(mode: SoundscapeMode) = ambientSoundscapePlayer.setMode(mode)
+    fun setSoundscapeIntensity(intensity: Float) = ambientSoundscapePlayer.setVolume(intensity)
 
     init {
         scope.launch {

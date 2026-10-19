@@ -43,6 +43,7 @@ import com.example.woodsreader.core.tts.SupportedTtsLanguage
 import com.example.woodsreader.core.tts.SleepTimerPreset
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
+import com.example.woodsreader.core.tts.AmbientSoundscapePlayer
 import com.example.woodsreader.core.managers.PdfReflowManager
 
 import com.example.woodsreader.data.model.ReflowItem
@@ -134,7 +135,8 @@ class ReaderViewModel @Inject constructor(
     private val chapterAudioExporter: ChapterAudioExporter,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
-    val proLicenseManager: ProLicenseManager
+    val proLicenseManager: ProLicenseManager,
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer
 ) : ViewModel() {
 
     companion object {
@@ -460,6 +462,7 @@ class ReaderViewModel @Inject constructor(
     // Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     init {
+        ambientSoundscapePlayer.onReaderVisibilityChanged(true)
         viewModelScope.launch {
             bookmarks.collect {
                 refreshCurrentBookmarkState()
@@ -544,6 +547,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun loadBook() {
         viewModelScope.launch {
+            ambientSoundscapePlayer.onReaderVisibilityChanged(true)
             _uiState.value = ReaderUiState.Loading
             try {
                 stopTts()
@@ -2544,6 +2548,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        ambientSoundscapePlayer.onReaderVisibilityChanged(false)
         stopTts()
         ambienceEngine.stop()
         saveCurrentProgressBeforeExit()
