@@ -37,6 +37,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.res.stringResource
 import org.readium.r2.navigator.epub.css.RsProperties
@@ -239,8 +242,17 @@ fun ReaderScreen(
         }
     }
 
-    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
-        viewModel.saveCurrentProgressBeforeExit()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                viewModel.flushReadingProgressImmediately()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     var pendingSelection by remember { mutableStateOf<Selection?>(null) }
@@ -1468,6 +1480,7 @@ fun ReaderScreen(
                 selectedEdgeVoice = selectedEdgeVoice,
                 onSelectEdgeVoice = { viewModel.selectEdgeVoice(it) },
                 proLicenseManager = viewModel.proLicenseManager,
+                keepAliveManager = viewModel.woodsKeepAliveManager,
                 onDismiss = { showTtsMacroWindow = false }
             )
         }

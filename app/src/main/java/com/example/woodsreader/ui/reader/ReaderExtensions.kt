@@ -136,6 +136,14 @@ data class ChapterInfo(
 fun applyToAllWebViews(view: android.view.View?, action: (android.webkit.WebView) -> Unit) {
     if (view == null) return
     if (view is android.webkit.WebView) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            // waivedWhenNotVisible = false obliga a Android a mantener vivo el capítulo en RAM
+            // aunque el usuario cambie de app varios minutos o apague la pantalla.
+            view.setRendererPriorityPolicy(
+                android.webkit.WebView.RENDERER_PRIORITY_IMPORTANT,
+                false
+            )
+        }
         action(view)
         return
     }

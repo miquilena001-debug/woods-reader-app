@@ -26,7 +26,11 @@ import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SleepTimerPreset
 import com.example.woodsreader.core.license.ProLicenseManager
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import com.example.woodsreader.ui.common.WoodsProUnlockDialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -135,6 +139,7 @@ fun ReaderTtsMacroWindow(
     selectedEdgeVoice: EdgeVoiceOption = EdgeVoiceOption.ALVARO_ES,
     onSelectEdgeVoice: (EdgeVoiceOption) -> Unit = {},
     proLicenseManager: ProLicenseManager? = null,
+    keepAliveManager: WoodsKeepAliveManager? = null,
     onDismiss: () -> Unit
 ) {
     val currentSentence by currentSentenceFlow.collectAsStateWithLifecycle(initialValue = "")
@@ -147,6 +152,21 @@ fun ReaderTtsMacroWindow(
     var showProUnlockDialog by remember { mutableStateOf(false) }
     val isProUnlocked by proLicenseManager?.isProUnlocked?.collectAsStateWithLifecycle(initialValue = false)
         ?: remember { mutableStateOf(false) }
+    val isUnrestrictedBattery by keepAliveManager?.isUnrestrictedBattery?.collectAsStateWithLifecycle(initialValue = true)
+        ?: remember { mutableStateOf(true) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, keepAliveManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                keepAliveManager?.refreshBatteryStatus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     var showLanguageSheet by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -259,6 +279,55 @@ fun ReaderTtsMacroWindow(
                     }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Minimizar panel", tint = HiddenForest.TextSecondary, modifier = Modifier.size(28.dp))
+                    }
+                }
+            }
+
+            if (!isUnrestrictedBattery) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF0F382A).copy(alpha = 0.95f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "🛡️ Evitar que Android cierre Woods Reader con pantalla apagada",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                ),
+                                color = Color(0xFF6EE7B7)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Activa \"Sin restricciones\" en 1 toque para que el audio y la lectura nunca se detengan en segundo plano.",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = Color.White.copy(alpha = 0.85f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Button(
+                            onClick = { keepAliveManager?.requestIgnoreBatteryOptimizations(context) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF10B981),
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                "Activar Blindaje",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
                     }
                 }
             }

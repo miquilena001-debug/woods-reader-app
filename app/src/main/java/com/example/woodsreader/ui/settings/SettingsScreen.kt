@@ -28,6 +28,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.woodsreader.ui.library.WoodsBadge
 import com.example.woodsreader.ui.theme.HiddenForest
 import com.example.woodsreader.core.tts.SherpaDownloadState
@@ -65,8 +68,22 @@ fun SettingsScreen(
     val customPhoneticRules by viewModel.customPhoneticRules.collectAsStateWithLifecycle()
     var showAddRuleDialog by remember { mutableStateOf(false) }
     val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
+    val isUnrestrictedBattery by viewModel.woodsKeepAliveManager.isUnrestrictedBattery.collectAsStateWithLifecycle()
     val isBusy = isScanning || isEnriching
     val context = LocalContext.current
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.woodsKeepAliveManager.refreshBatteryStatus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -874,6 +891,92 @@ fun SettingsScreen(
                             subtitle = "Volver a mostrar la guía de inicio al arrancar",
                             onClick = { viewModel.resetOnboarding() }
                         )
+                    }
+                }
+            }
+
+            // ── Tarjeta: Blindaje en Segundo Plano y Pantalla Apagada ──
+            item {
+                if (!isUnrestrictedBattery) {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFF0F382A).copy(alpha = 0.95f),
+                        border = BorderStroke(
+                            width = 1.2.dp,
+                            brush = Brush.horizontalGradient(
+                                listOf(Color(0xFF10B981).copy(alpha = 0.8f), Color(0xFF064E3B))
+                            )
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(text = "🛡️", fontSize = 24.sp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Evitar que Android cierre Woods Reader con pantalla apagada",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp
+                                        ),
+                                        color = Color(0xFF6EE7B7)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Activa \"Sin restricciones\" en 1 toque para que el audio y la lectura nunca se detengan en segundo plano.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
+                            Button(
+                                onClick = {
+                                    viewModel.woodsKeepAliveManager.requestIgnoreBatteryOptimizations(context)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF10B981),
+                                    contentColor = Color.Black
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    "🛡️ Activar Blindaje",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF10251B).copy(alpha = 0.7f),
+                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text("✓", color = Color(0xFF10B981), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(
+                                text = "Ejecución en segundo plano blindada (Sin restricciones de batería)",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF6EE7B7)
+                                )
+                            )
+                        }
                     }
                 }
             }

@@ -589,7 +589,21 @@ fun ReaderExternalLookupSheets(
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
-                            webViewClient = WebViewClient()
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                setRendererPriorityPolicy(
+                                    WebView.RENDERER_PRIORITY_IMPORTANT,
+                                    false
+                                )
+                            }
+                            webViewClient = object : WebViewClient() {
+                                override fun onRenderProcessGone(
+                                    view: WebView?,
+                                    detail: android.webkit.RenderProcessGoneDetail?
+                                ): Boolean {
+                                    view?.reload()
+                                    return true
+                                }
+                            }
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             loadUrl(dictUrl)
@@ -651,7 +665,21 @@ fun ReaderExternalLookupSheets(
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
-                            webViewClient = WebViewClient()
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                setRendererPriorityPolicy(
+                                    WebView.RENDERER_PRIORITY_IMPORTANT,
+                                    false
+                                )
+                            }
+                            webViewClient = object : WebViewClient() {
+                                override fun onRenderProcessGone(
+                                    view: WebView?,
+                                    detail: android.webkit.RenderProcessGoneDetail?
+                                ): Boolean {
+                                    view?.reload()
+                                    return true
+                                }
+                            }
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             loadUrl(translateUrl)

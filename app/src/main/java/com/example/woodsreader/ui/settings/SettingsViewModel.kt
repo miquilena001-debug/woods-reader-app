@@ -38,6 +38,7 @@ import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.license.ProLicenseManager
 import com.example.woodsreader.core.backup.WoodsBackupManager
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import java.io.File
 import javax.inject.Inject
 
@@ -78,7 +79,8 @@ class SettingsViewModel @Inject constructor(
     private val backupManager: BackupManager,
     private val woodsBackupManager: WoodsBackupManager,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
-    val proLicenseManager: ProLicenseManager
+    val proLicenseManager: ProLicenseManager,
+    val woodsKeepAliveManager: WoodsKeepAliveManager
 ) : ViewModel() {
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow

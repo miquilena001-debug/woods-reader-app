@@ -94,6 +94,7 @@ import com.example.woodsreader.core.xray.BookXRayEngine
 import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.core.license.ProLicenseManager
 
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import com.example.woodsreader.service.CoverExtractor
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.streamer.PublicationOpener
@@ -140,7 +141,8 @@ class ReaderViewModel @Inject constructor(
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val proLicenseManager: ProLicenseManager,
-    val ambientSoundscapePlayer: AmbientSoundscapePlayer
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer,
+    val woodsKeepAliveManager: WoodsKeepAliveManager
 ) : ViewModel() {
 
     companion object {
@@ -2511,9 +2513,31 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun saveCurrentProgressBeforeExit() {
-        _isAutoScrollActive.value = false
-        if (_showEpubCoverPage.value) return
+    /**
+     * Checkpoint instantáneo de posición al apagar pantalla o cambiar de app.
+     * Guarda de inmediato en Room y en SharedPreferences sin esperar al debounce de 1500ms.
+     */
+    fun flushReadingProgressImmediately() {
+        val nav = navigator as? VisualNavigator
+        val currentLoc = nav?.currentLocator?.value
+        val chapterIdx = getCurrentChapterIndex()
+        val locJson = currentLoc?.toJSON()?.toString() ?: ""
+        val href = currentLoc?.href?.toString() ?: ""
+        val prog = currentLoc?.locations?.totalProgression?.toFloat() ?: _globalProgress.value
+
+        // 1. Guardar de inmediato en SharedPreferences (sincrónico vía apply para supervivencia instantánea)
+        runCatching {
+            val prefs = context.getSharedPreferences("woods_last_reading_checkpoint", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putString("last_book_id", bookId)
+                .putInt("last_chapter_index_${bookId}", chapterIdx)
+                .putString("last_locator_json_${bookId}", locJson)
+                .putFloat("last_progress_${bookId}", prog)
+                .putLong("last_saved_timestamp_${bookId}", System.currentTimeMillis())
+                .apply()
+        }
+
+        // 2. Guardar de inmediato en Room DB
         if (isReflowMode.value) {
             val page = lastKnownReflowPage.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
@@ -2530,7 +2554,6 @@ class ReaderViewModel @Inject constructor(
                 )
             }
         } else if (isPdfBook) {
-            val nav = navigator as? VisualNavigator
             val navLoc = nav?.currentLocator?.value
             val page = navLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
             lastKnownReflowPage = page
@@ -2550,11 +2573,25 @@ class ReaderViewModel @Inject constructor(
                 )
             }
         } else {
-            val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value
-            if (currentLocator != null) {
-                saveProgress(currentLocator)
+            if (currentLoc != null) {
+                saveProgress(currentLoc)
+                CoroutineScope(Dispatchers.IO).launch {
+                    bookRepository.updateReadingProgressWithFallback(
+                        bookId = bookId,
+                        progress = prog,
+                        locatorJson = locJson,
+                        fallbackHref = href,
+                        fallbackPosition = currentLoc.locations.position ?: 0
+                    )
+                }
             }
         }
+    }
+
+    fun saveCurrentProgressBeforeExit() {
+        _isAutoScrollActive.value = false
+        if (_showEpubCoverPage.value) return
+        flushReadingProgressImmediately()
     }
 
     fun dismissEpubCoverPage() {
