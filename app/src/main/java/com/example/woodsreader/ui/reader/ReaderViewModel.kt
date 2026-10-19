@@ -110,6 +110,12 @@ data class ParsedChapterData(
     val document: ProcessedDocument
 )
 
+data class AutoScrollTeleprompterState(
+    val isActive: Boolean = false,
+    val wpm: Int = 220,
+    val isManuallyPaused: Boolean = false
+)
+
 @OptIn(FlowPreview::class, ExperimentalReadiumApi::class)
 
 @HiltViewModel
@@ -220,23 +226,61 @@ class ReaderViewModel @Inject constructor(
     val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // ── Teleprompter / Auto-Scroll Controller ────────────────────────────────
+    val currentNarrationUnitIndex: StateFlow<Int> = ttsManager.currentNarrationUnitIndex
+
     private val autoScrollPrefs by lazy {
         context.getSharedPreferences("woods_teleprompter_prefs", Context.MODE_PRIVATE)
     }
     private val _isAutoScrollActive = MutableStateFlow(false)
     val isAutoScrollActive: StateFlow<Boolean> = _isAutoScrollActive.asStateFlow()
 
+    private val _isAutoScrollManuallyPaused = MutableStateFlow(false)
+    val isAutoScrollManuallyPaused: StateFlow<Boolean> = _isAutoScrollManuallyPaused.asStateFlow()
+
     private val _autoScrollWpm = MutableStateFlow(
         autoScrollPrefs.getInt("auto_scroll_wpm", 220).coerceIn(100, 450)
     )
     val autoScrollWpm: StateFlow<Int> = _autoScrollWpm.asStateFlow()
 
+    val teleprompterState: StateFlow<AutoScrollTeleprompterState> = combine(
+        _isAutoScrollActive,
+        _autoScrollWpm,
+        _isAutoScrollManuallyPaused
+    ) { active, wpm, paused ->
+        AutoScrollTeleprompterState(
+            isActive = active,
+            wpm = wpm,
+            isManuallyPaused = paused
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        AutoScrollTeleprompterState()
+    )
+
     fun toggleAutoScroll() {
-        _isAutoScrollActive.update { !it }
+        val willBeActive = !_isAutoScrollActive.value
+        _isAutoScrollActive.value = willBeActive
+        if (willBeActive) {
+            _isAutoScrollManuallyPaused.value = false
+            hideControls()
+        }
+    }
+
+    fun toggleAutoScrollPause() {
+        _isAutoScrollManuallyPaused.update { !it }
+    }
+
+    fun setAutoScrollManuallyPaused(paused: Boolean) {
+        _isAutoScrollManuallyPaused.value = paused
     }
 
     fun setAutoScrollActive(active: Boolean) {
         _isAutoScrollActive.value = active
+        if (active) {
+            _isAutoScrollManuallyPaused.value = false
+            hideControls()
+        }
     }
 
     fun setAutoScrollWpm(wpm: Int) {

@@ -212,7 +212,7 @@ fun ReaderScreen(
 
     val isAutoScrollActive by viewModel.isAutoScrollActive.collectAsStateWithLifecycle()
     val autoScrollWpm by viewModel.autoScrollWpm.collectAsStateWithLifecycle()
-    var isAutoScrollManuallyPaused by remember { mutableStateOf(false) }
+    val isAutoScrollManuallyPaused by viewModel.isAutoScrollManuallyPaused.collectAsStateWithLifecycle()
     var isFingerDown by remember { mutableStateOf(false) }
     var lastTouchUpTime by remember { mutableLongStateOf(0L) }
     var endOfChapterTime by remember { mutableStateOf<Long?>(null) }
@@ -540,8 +540,22 @@ fun ReaderScreen(
             }
             lastSubmittedEpubPrefs = epubPreferences
             nav.safePublicationView?.let { pubView ->
-                applyToAllWebViews(pubView) {
-                    it.applyCustomFontFamily(userPreferences.fontFamily)
+                applyToAllWebViews(pubView) { wv ->
+                    wv.applyCustomFontFamily(userPreferences.fontFamily)
+                    wv.setOnTouchListener { _, event ->
+                        when (event.actionMasked) {
+                            android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                                if (!isFingerDown) isFingerDown = true
+                            }
+                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                if (isFingerDown) {
+                                    isFingerDown = false
+                                    lastTouchUpTime = System.currentTimeMillis()
+                                }
+                            }
+                        }
+                        false
+                    }
                 }
             }
         } else if (nav is PdfNavigatorFragment<*, *>) {
@@ -701,7 +715,7 @@ fun ReaderScreen(
     // Corrutina de Teleprompter / Auto-Scroll suave a 60 FPS con pausa táctil inteligente
     LaunchedEffect(isAutoScrollActive) {
         if (!isAutoScrollActive) {
-            isAutoScrollManuallyPaused = false
+            viewModel.setAutoScrollManuallyPaused(false)
             endOfChapterTime = null
             isAdvancingChapter = false
         }
@@ -1360,7 +1374,7 @@ fun ReaderScreen(
                     hazeState = hazeState,
                     onDecreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm - 10) },
                     onIncreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm + 10) },
-                    onTogglePause = { isAutoScrollManuallyPaused = !isAutoScrollManuallyPaused },
+                    onTogglePause = { viewModel.toggleAutoScrollPause() },
                     onClose = { viewModel.toggleAutoScroll() }
                 )
             }

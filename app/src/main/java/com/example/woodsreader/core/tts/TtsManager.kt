@@ -192,6 +192,9 @@ class TtsManager @Inject constructor(
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
 
+    private val _currentNarrationUnitIndex = MutableStateFlow<Int>(-1)
+    val currentNarrationUnitIndex: StateFlow<Int> = _currentNarrationUnitIndex.asStateFlow()
+
     @Volatile
     private var isNarratingSequence = false
 
@@ -824,6 +827,7 @@ class TtsManager @Inject constructor(
 
     fun stop() {
         _isPlaying.value = false
+        _currentNarrationUnitIndex.value = -1
         isNarratingSequence = false
         wasPlayingBeforeTransientLoss = false
         clearPreSynthesisCache()
@@ -840,6 +844,7 @@ class TtsManager @Inject constructor(
 
     fun shutdown() {
         _isPlaying.value = false
+        _currentNarrationUnitIndex.value = -1
         isNarratingSequence = false
         wasPlayingBeforeTransientLoss = false
         clearPreSynthesisCache()
@@ -1675,6 +1680,7 @@ class TtsManager @Inject constructor(
                         continue
                     }
 
+                    _currentNarrationUnitIndex.value = i
                     onUnitStarted?.invoke(unit)
 
                     if (unit.isAnnouncement) {
@@ -1736,6 +1742,7 @@ class TtsManager @Inject constructor(
                         continue
                     }
 
+                    _currentNarrationUnitIndex.value = i
                     onUnitStarted?.invoke(unit)
 
                     if (unit.isAnnouncement) {
@@ -1762,6 +1769,7 @@ class TtsManager @Inject constructor(
                 if (smartSleepTimerManager.consumeEndOfChapterStopIfNeeded()) {
                     isNarratingSequence = false
                     _isPlaying.value = false
+                    _currentNarrationUnitIndex.value = -1
                     releaseAudioLocks()
                 } else {
                     onQueueCompletedNaturally?.invoke()
@@ -1772,6 +1780,7 @@ class TtsManager @Inject constructor(
             if (!completedNormally || isSpeakingCancelled || !ttsScope.isActive) {
                 isNarratingSequence = false
                 _isPlaying.value = false
+                _currentNarrationUnitIndex.value = -1
                 releaseAudioLocks()
             }
         }

@@ -128,6 +128,15 @@ class ReaderViewModelTest {
     fun `test MasterMenuOptionType contains SCROLL_MODE`() {
         val types = MasterMenuOptionType.values()
         assertTrue(types.contains(MasterMenuOptionType.SCROLL_MODE))
+        assertTrue(types.contains(MasterMenuOptionType.AUTO_SCROLL))
+    }
+
+    @Test
+    fun `test AutoScrollTeleprompterState default values`() {
+        val state = AutoScrollTeleprompterState()
+        assertEquals(false, state.isActive)
+        assertEquals(220, state.wpm)
+        assertEquals(false, state.isManuallyPaused)
     }
 
     @Test

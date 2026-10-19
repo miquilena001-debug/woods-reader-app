@@ -492,12 +492,13 @@ fun android.webkit.WebView.applyCustomTtsHighlight(
                     }
                     return "VISIBLE";
                 } else {
+                    var element = target;
                     var vh = window.innerHeight || document.documentElement.clientHeight || 1;
                     var topThird = vh / 3.0;
                     var bottomThird = (2.0 * vh) / 3.0;
                     if (checkRect.top < topThird || checkRect.bottom > bottomThird) {
                         try {
-                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         } catch(e) {
                             var targetY = (window.pageYOffset || document.documentElement.scrollTop || 0) + checkRect.top - (vh * 0.5);
                             window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
@@ -538,13 +539,19 @@ fun android.webkit.WebView.smoothScrollToTtsHighlight() {
     val js = """
         (function() {
             try {
-                var el = document.querySelector('.woods-tts-active');
-                if (!el) return;
-                var rect = el.getBoundingClientRect();
+                var element = document.querySelector('.woods-tts-active');
+                if (!element) return;
+                var rect = element.getBoundingClientRect();
                 var vh = window.innerHeight || document.documentElement.clientHeight || 1;
-                if (rect.top < 60 || rect.bottom > (vh - 80)) {
-                    var targetY = (window.pageYOffset || document.documentElement.scrollTop || 0) + rect.top - (vh * 0.28);
-                    window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                var topThird = vh / 3.0;
+                var bottomThird = (2.0 * vh) / 3.0;
+                if (rect.top < topThird || rect.bottom > bottomThird) {
+                    try {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } catch(e) {
+                        var targetY = (window.pageYOffset || document.documentElement.scrollTop || 0) + rect.top - (vh * 0.5);
+                        window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                    }
                 }
             } catch(e) {}
         })()
