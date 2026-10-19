@@ -323,10 +323,11 @@ class ReaderTtsService : MediaSessionService() {
                 userPreferencesRepository = userPreferencesRepository
             )
 
+            val safePub = EpubPackageSanitizer.toLightweightNavPublication(pub)
             val factory = try {
                 TtsNavigatorFactory(
                     application = application,
-                    publication = pub,
+                    publication = safePub,
                     ttsEngineProvider = engineProvider
                 )
             } catch (t: Throwable) {
@@ -334,7 +335,7 @@ class ReaderTtsService : MediaSessionService() {
                 try {
                     TtsNavigatorFactory(
                         application = application,
-                        publication = pub
+                        publication = safePub
                     )
                 } catch (t2: Throwable) {
                     android.util.Log.e("ReaderTtsService", "Failed to create default TtsNavigatorFactory", t2)
@@ -556,6 +557,7 @@ class ReaderTtsService : MediaSessionService() {
 
     // ── Controles públicos (llamados desde ReaderViewModel / EpubFormatManager) ─
     fun play() {
+        ttsManager.resume()
         val nav = _ttsNavigator.value
         if (nav != null) {
             nav.play()
@@ -568,6 +570,7 @@ class ReaderTtsService : MediaSessionService() {
     fun pause() {
         pendingPlayOnReady = false
         _ttsNavigator.value?.pause()
+        ttsManager.pause()
     }
 
     fun stop() {
@@ -575,6 +578,7 @@ class ReaderTtsService : MediaSessionService() {
         _ttsNavigator.value?.pause()
         _playbackState.value = null
         _currentLocator.value = null
+        ttsManager.stop()
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {}
@@ -703,10 +707,11 @@ class ReaderTtsService : MediaSessionService() {
         units: List<com.example.woodsreader.core.pipeline.TtsNarrationUnit>,
         startIndex: Int = 0,
         onUnitStarted: ((com.example.woodsreader.core.pipeline.TtsNarrationUnit) -> Unit)? = null,
-        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null
+        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null,
+        onChapterFinished: (suspend () -> Unit)? = null
     ) {
         serviceScope.launch {
-            ttsManager.speakNarrationUnits(units, startIndex, onUnitStarted, onRangeUpdate)
+            ttsManager.speakNarrationUnits(units, startIndex, onUnitStarted, onRangeUpdate, onChapterFinished)
         }
     }
 }

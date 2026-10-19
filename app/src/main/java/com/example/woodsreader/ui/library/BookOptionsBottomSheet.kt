@@ -108,7 +108,7 @@ fun BookOptionsBottomSheet(
                         )
                     } else {
                         Text(
-                            text = book.title.take(2).uppercase(),
+                            text = book.title.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "L",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = HiddenForest.Accent
@@ -174,8 +174,14 @@ fun BookOptionsBottomSheet(
                         Triple(ReadingStatus.ABANDONED, "Abandonado", Semantic.Error)
                     )
 
+                    val effectiveStatus = if (book.readingStatus == ReadingStatus.NOT_STARTED && book.readingProgressPercent > 0f) {
+                        ReadingStatus.IN_PROGRESS
+                    } else {
+                        book.readingStatus
+                    }
+
                     statuses.forEach { (status, label, color) ->
-                        val isSelected = book.readingStatus == status
+                        val isSelected = effectiveStatus == status
                         Box(
                             modifier = Modifier
                                 .weight(1f)

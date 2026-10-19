@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +38,12 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.compose.collectAsLazyPagingItems
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import java.io.File
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.ui.library.LibraryViewModel
 import com.example.woodsreader.ui.theme.HiddenForest
@@ -166,7 +173,7 @@ fun SearchScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 100.dp),
+                contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 128.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // ── Campo de Búsqueda ──────────────────────────────────────────
@@ -379,7 +386,10 @@ fun SearchScreen(
                                 // FORMAT FILTERS
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("Formato de Archivo", style = MaterialTheme.typography.labelSmall, color = HiddenForest.TextLow)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
                                         listOf("ALL" to "Cualquiera", "EPUB" to "EPUB", "PDF" to "PDF").forEach { (code, label) ->
                                             val isSelected = searchFormat == code
                                             Box(
@@ -489,7 +499,7 @@ fun SearchScreen(
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Text("Orden: ${sortLabels[searchSort] ?: "Reciente"}", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                Icon(Icons.Default.Sort, null, modifier = Modifier.size(16.dp))
+                                                Icon(Icons.AutoMirrored.Filled.Sort, null, modifier = Modifier.size(16.dp))
                                             }
                                         }
                                         DropdownMenu(
@@ -608,24 +618,46 @@ private fun SearchResultCard(
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Portada
-            Box(
-                modifier = Modifier
-                    .width(42.dp)
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(HiddenForest.Accent.copy(0.3f), HiddenForest.Surface)
-                        )
-                    )
-                    .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(6.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    book.title.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
-                    color = HiddenForest.Accent
+            val coverFile = remember(book.coverCachePath) {
+                book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() }
+            }
+            if (coverFile != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(coverFile)
+                        .memoryCacheKey("cover-search-${book.id}")
+                        .diskCacheKey("cover-search-${book.id}")
+                        .size(126, 168)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = book.title,
+                    modifier = Modifier
+                        .width(42.dp)
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(6.dp)),
+                    contentScale = ContentScale.Crop
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .width(42.dp)
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(HiddenForest.Accent.copy(0.3f), HiddenForest.Surface)
+                            )
+                        )
+                        .border(1.dp, HiddenForest.Accent.copy(0.3f), RoundedCornerShape(6.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = book.title.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "L",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                        color = HiddenForest.Accent
+                    )
+                }
             }
 
             Column(modifier = Modifier.weight(1f)) {

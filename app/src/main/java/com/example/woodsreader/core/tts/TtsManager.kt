@@ -1,15 +1,19 @@
 package com.example.woodsreader.core.tts
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.PowerManager
+import android.net.wifi.WifiManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.annotation.WorkerThread
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -17,8 +21,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
@@ -36,6 +43,7 @@ import java.io.IOException
 import android.content.res.AssetManager
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 
@@ -47,7 +55,9 @@ class TtsManager @Inject constructor(
     private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
     private val userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
     private val sherpaModelManager: SherpaModelManager,
-    private val edgeNeuralTtsClient: EdgeNeuralTtsClient
+    private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
+    private val pronunciationLexiconManager: PronunciationLexiconManager,
+    val smartSleepTimerManager: SmartSleepTimerManager
 ) {
     private var tts: TextToSpeech? = null
     private var isReady = false
@@ -62,10 +72,136 @@ class TtsManager @Inject constructor(
     private var isSpeakingCancelled = false
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // ── Pre-Síntesis Lookahead (0ms Latencia) ─────────────────────────────────
+    private val preSynthesisScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val preSynthesisCache = ConcurrentHashMap<Int, Deferred<Pair<FloatArray, Int>?>>()
+
+    fun clearPreSynthesisCache() {
+        preSynthesisCache.values.forEach { it.cancel() }
+        preSynthesisCache.clear()
+    }
+
+    // ── Woods Studio Voice HD: Configuración Acústica y Prosodia ──────────────
+    private val studioPrefs: SharedPreferences =
+        context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE)
+
+    private val _acousticsProfile = MutableStateFlow(
+        StudioAcousticsProfile.fromId(studioPrefs.getString("acoustics_profile", null))
+    )
+    val acousticsProfile: StateFlow<StudioAcousticsProfile> = _acousticsProfile.asStateFlow()
+
+    private val _expressiveProsodyEnabled = MutableStateFlow(
+        studioPrefs.getBoolean("expressive_prosody_enabled", true)
+    )
+    val expressiveProsodyEnabled: StateFlow<Boolean> = _expressiveProsodyEnabled.asStateFlow()
+
+    private val _dramatizedDialogueEnabled = MutableStateFlow(
+        studioPrefs.getBoolean("dramatized_dialogue_enabled", true)
+    )
+    val dramatizedDialogueEnabled: StateFlow<Boolean> = _dramatizedDialogueEnabled.asStateFlow()
+
+    private val _secondaryDialogueVoiceId = MutableStateFlow<String?>(
+        studioPrefs.getString("secondary_dialogue_voice_id", null)
+    )
+    val secondaryDialogueVoiceId: StateFlow<String?> = _secondaryDialogueVoiceId.asStateFlow()
+
+    // ── Woods Studio Voice HD: Paisajes Sonoros Procedurales ─────────────────
+    val ambientSoundscapeEngine = AmbientSoundscapeEngine()
+
+    private val _soundscapeMode = MutableStateFlow(
+        SoundscapeMode.fromId(studioPrefs.getString("soundscape_mode", null))
+    )
+    val soundscapeMode: StateFlow<SoundscapeMode> = _soundscapeMode.asStateFlow()
+
+    private val _soundscapeIntensity = MutableStateFlow(
+        studioPrefs.getFloat("soundscape_intensity", 0.18f)
+    )
+    val soundscapeIntensity: StateFlow<Float> = _soundscapeIntensity.asStateFlow()
+
+    private val studioPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
+        when (key) {
+            "acoustics_profile" -> _acousticsProfile.value = StudioAcousticsProfile.fromId(sp.getString(key, null))
+            "expressive_prosody_enabled" -> _expressiveProsodyEnabled.value = sp.getBoolean(key, true)
+            "dramatized_dialogue_enabled" -> _dramatizedDialogueEnabled.value = sp.getBoolean(key, true)
+            "secondary_dialogue_voice_id" -> _secondaryDialogueVoiceId.value = sp.getString(key, null)
+            "soundscape_mode" -> _soundscapeMode.value = SoundscapeMode.fromId(sp.getString(key, null))
+            "soundscape_intensity" -> _soundscapeIntensity.value = sp.getFloat(key, 0.18f)
+        }
+    }
+
+    fun setAcousticsProfile(profile: StudioAcousticsProfile) {
+        _acousticsProfile.value = profile
+        studioPrefs.edit().putString("acoustics_profile", profile.id).apply()
+    }
+
+    fun setExpressiveProsodyEnabled(enabled: Boolean) {
+        _expressiveProsodyEnabled.value = enabled
+        studioPrefs.edit().putBoolean("expressive_prosody_enabled", enabled).apply()
+    }
+
+    fun setDramatizedDialogueEnabled(enabled: Boolean) {
+        _dramatizedDialogueEnabled.value = enabled
+        studioPrefs.edit().putBoolean("dramatized_dialogue_enabled", enabled).apply()
+    }
+
+    fun setSecondaryDialogueVoiceId(voiceId: String?) {
+        _secondaryDialogueVoiceId.value = voiceId
+        if (voiceId != null) {
+            studioPrefs.edit().putString("secondary_dialogue_voice_id", voiceId).apply()
+        } else {
+            studioPrefs.edit().remove("secondary_dialogue_voice_id").apply()
+        }
+    }
+
+    fun setSoundscapeMode(mode: SoundscapeMode) {
+        _soundscapeMode.value = mode
+        studioPrefs.edit().putString("soundscape_mode", mode.id).apply()
+    }
+
+    fun setSoundscapeIntensity(intensity: Float) {
+        val clamped = intensity.coerceIn(0.02f, 0.45f)
+        _soundscapeIntensity.value = clamped
+        studioPrefs.edit().putFloat("soundscape_intensity", clamped).apply()
+    }
+
+    // ── Woods Studio Voice HD: Filtros Multilingües y Auto-Detección ─────────
+    val selectedLanguageFilter: StateFlow<SupportedTtsLanguage> = sherpaModelManager.selectedLanguageFilter
+    val autoDetectBookLanguage: StateFlow<Boolean> = sherpaModelManager.autoDetectBookLanguage
+    val downloadedModelIds: StateFlow<Set<String>> = sherpaModelManager.downloadedModelIds
+
+    fun setSelectedLanguageFilter(language: SupportedTtsLanguage) {
+        sherpaModelManager.setSelectedLanguageFilter(language)
+    }
+
+    fun setAutoDetectBookLanguage(enabled: Boolean) {
+        sherpaModelManager.setAutoDetectBookLanguage(enabled)
+    }
+
+    fun deleteDownloadedModel(modelId: String): Boolean {
+        return sherpaModelManager.deleteDownloadedModel(modelId)
+    }
+
     private val _isLoadingModel = MutableStateFlow(false)
     val isLoadingModel = _isLoadingModel.asStateFlow()
 
-    
+    private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private val _isPlaying = MutableStateFlow(false)
+    val isPlaying = _isPlaying.asStateFlow()
+
+    @Volatile
+    private var isNarratingSequence = false
+
+    @Volatile
+    private var wasPlayingBeforeTransientLoss = false
+
+    @Volatile
+    var onQueueCompletedNaturally: (() -> Unit)? = null
+
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
 
@@ -73,6 +209,31 @@ class TtsManager @Inject constructor(
     private var baseRate: Float = 1.0f
     @Volatile
     private var currentBookId: String? = null
+
+    init {
+        // Desactivación forzada de TTS online por internet (Edge Neural TTS)
+        edgeNeuralTtsClient.setEnabled(false)
+        studioPrefs.registerOnSharedPreferenceChangeListener(studioPrefsListener)
+
+        smartSleepTimerManager.onTimerExpiredPauseAudio = {
+            pause()
+        }
+
+        ttsScope.launch {
+            sherpaModelManager.selectedVoice.collect {
+                clearPreSynthesisCache()
+                resetSherpa()
+            }
+        }
+        ttsScope.launch {
+            userPreferencesRepository.userPreferencesFlow.collect { prefs ->
+                if (!prefs.useSherpaTts) {
+                    clearPreSynthesisCache()
+                    resetSherpa()
+                }
+            }
+        }
+    }
 
     fun setCurrentBookId(bookId: String?) {
         currentBookId = bookId
@@ -107,15 +268,25 @@ class TtsManager @Inject constructor(
 
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                wasPlayingBeforeTransientLoss = false
+                stop() // Parar inmediatamente si perdemos el foco permanentemente
+            }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                stop() // Parar inmediatamente si perdemos el foco
+                if (_isPlaying.value) {
+                    wasPlayingBeforeTransientLoss = true
+                    pause() // Pausar limpiamente ante llamada o audio temporal
+                }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
                 setRate(0.8f * baseRate) // Reducir velocidad si el sistema pide "ducking"
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 setRate(baseRate) // Restaurar velocidad original
+                if (wasPlayingBeforeTransientLoss) {
+                    wasPlayingBeforeTransientLoss = false
+                    resume() // Reanudar automáticamente al recuperar el foco
+                }
             }
         }
     }
@@ -133,7 +304,7 @@ class TtsManager @Inject constructor(
                     tts?.setLanguage(locale)
                     if (voiceName != null) setVoice(voiceName)
                 }
-                cont.resume(isReady) { }
+                cont.resume(isReady)
             }
             cont.invokeOnCancellation {
                 tts?.stop()
@@ -145,12 +316,42 @@ class TtsManager @Inject constructor(
     }
 
     suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null) {
-        if (edgeNeuralTtsClient.isEnabled.value) {
+        if (!isNarratingSequence) {
+            _isPlaying.value = true
+            acquireAudioLocks()
+        }
+        try {
+            val useSherpa = try {
+                userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
+            } catch (_: Exception) {
+                false
+            } || (sherpaModelManager.isModelReady() && !isReady)
+
+            if (useSherpa && initSherpaIfNeeded()) {
+                isSpeakingCancelled = false
+                requestAudioFocus()
+                val audio = synthesizeExpressiveStudioAudio(text, baseRate)
+                if (audio != null && audio.first.isNotEmpty()) {
+                    playPcmSamples(
+                        samples = audio.first,
+                        sampleRate = audio.second,
+                        playbackRate = audio.second,
+                        text = text,
+                        charOffset = 0,
+                        onRangeUpdate = onRangeUpdate
+                    )
+                    return
+                }
+            }
+
+            if (!isReady || tts == null) return
+
             val activeRules = try {
                 ttsRuleDao.getActiveRulesForBook(currentBookId)
             } catch (_: Exception) {
                 emptyList()
             }
+
             val exclusionRules = activeRules.map {
                 com.example.woodsreader.core.pipeline.WordExclusionRule(
                     id = it.id.toString(),
@@ -160,64 +361,23 @@ class TtsManager @Inject constructor(
                 )
             }
             val processedText = wordExclusionEngine.filterText(text, exclusionRules)
+
+            // Segmentación y orquestación contextual
+            val items = parseTextToPlaybackItems(processedText)
+            var dialogueCount = 0
+
             isSpeakingCancelled = false
             requestAudioFocus()
-            val success = edgeNeuralTtsClient.speakSentence(processedText, baseRate, basePitch)
-            if (success) {
-                return
-            }
-            // Fallback inteligente: si falla (ej. sin internet), continúa hacia Sherpa o TTS del sistema
-        }
-
-        val useSherpa = try {
-            userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
-        } catch (_: Exception) {
-            false
-        }
-
-        if (useSherpa) {
-            if (initSherpaIfNeeded()) {
-                speakWithSherpa(text, onRangeUpdate)
-                return
-            }
-        }
-
-        if (!isReady || tts == null) return
-
-        
-        val activeRules = try {
-            ttsRuleDao.getActiveRulesForBook(currentBookId)
-        } catch (_: Exception) {
-            emptyList()
-        }
-        
-        val exclusionRules = activeRules.map {
-            com.example.woodsreader.core.pipeline.WordExclusionRule(
-                id = it.id.toString(),
-                target = it.pattern,
-                replacement = it.replacement,
-                isRegex = it.isRegex
-            )
-        }
-        val processedText = wordExclusionEngine.filterText(text, exclusionRules)
-        
-        // Ã¢â€â‚¬Ã¢â€â‚¬ SegmentaciÃƒÂ³n y orquestaciÃƒÂ³n contextual Ã¢â€â‚¬Ã¢â€â‚¬
-        val items = parseTextToPlaybackItems(processedText)
-        var dialogueCount = 0
-        
-        isSpeakingCancelled = false
-        requestAudioFocus()
-        try {
             for (item in items) {
                 // Verificar cancelación de corrutinas en cada paso del bucle
                 if (isSpeakingCancelled || !currentCoroutineContext().isActive || !isReady || tts == null) break
-                
+
                 // Si es un item de pausa pura, aplicar delay y continuar
                 if (item.type == ChunkType.PAUSE || item.text.isBlank()) {
                     kotlinx.coroutines.delay(item.pauseMs)
                     continue
                 }
-                
+
                 val rolePitchModifier = when {
                     item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.08f
                     item.type == ChunkType.DIALOGUE && item.isQuestion -> 1.06f
@@ -232,49 +392,53 @@ class TtsManager @Inject constructor(
                 }
                 tts?.setPitch((basePitch * rolePitchModifier).coerceIn(0.5f, 2.0f))
                 tts?.setSpeechRate((baseRate * speechRateMultiplier).coerceIn(0.1f, 3.0f))
-                
+
                 val id = "utterance_${System.currentTimeMillis()}"
-                
+
                 suspendCancellableCoroutine<Unit> { cont ->
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {}
                         override fun onDone(utteranceId: String?) {
-                            if (cont.isActive) cont.resume(Unit) { }
+                            if (cont.isActive) cont.resume(Unit)
                         }
                         override fun onError(utteranceId: String?) {
-                            if (cont.isActive) cont.resume(Unit) { }
+                            if (cont.isActive) cont.resume(Unit)
                         }
                         override fun onStop(utteranceId: String?, interrupted: Boolean) {
                             if (cont.isActive) {
                                 if (isSpeakingCancelled) {
                                     cont.cancel()
                                 } else {
-                                    cont.resume(Unit) { }
+                                    cont.resume(Unit)
                                 }
                             }
                         }
                     })
-                    
+
                     tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, null, id)
-                    
+
                     cont.invokeOnCancellation {
                         stop()
                     }
                 }
-                
+
                 if (isSpeakingCancelled || !currentCoroutineContext().isActive) break
-                
+
                 // Restaurar los valores por defecto del lector
                 tts?.setPitch(basePitch)
                 tts?.setSpeechRate(baseRate)
-                
-                // Retraso pos-oraciÃƒÂ³n para pausas naturales
+
+                // Retraso pos-oración para pausas naturales
                 if (item.pauseMs > 0) {
                     kotlinx.coroutines.delay(item.pauseMs)
                 }
             }
         } finally {
-            abandonAudioFocus()
+            if (!isNarratingSequence) {
+                _isPlaying.value = false
+                releaseAudioLocks()
+                abandonAudioFocus()
+            }
         }
     }
 
@@ -511,12 +675,77 @@ class TtsManager @Inject constructor(
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ GestiÃƒÂ³n del Audio Focus Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
+    private fun acquireAudioLocks() {
+        runCatching {
+            if (wakeLock == null) {
+                wakeLock = powerManager?.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "WoodsReader:TtsWakeLock"
+                )?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            wakeLock?.acquire(45 * 60 * 1000L) // Timeout de 45 min, renovable en cada capítulo
+        }
+
+        runCatching {
+            if (edgeNeuralTtsClient.isEnabled.value) {
+                if (wifiLock == null) {
+                    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    }
+                    wifiLock = wifiManager?.createWifiLock(mode, "WoodsReader:TtsWifiLock")?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                wifiLock?.let {
+                    if (!it.isHeld) {
+                        it.acquire()
+                    }
+                }
+            } else {
+                releaseWifiLock()
+            }
+        }
+    }
+
+    private fun releaseAudioLocks() {
+        releaseWakeLock()
+        releaseWifiLock()
+    }
+
+    private fun acquireLocks() = acquireAudioLocks()
+    private fun releaseLocks() = releaseAudioLocks()
+
+    private fun releaseWakeLock() {
+        runCatching {
+            wakeLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+        }
+    }
+
+    private fun releaseWifiLock() {
+        runCatching {
+            wifiLock?.let {
+                if (it.isHeld) {
+                    it.release()
+                }
+            }
+        }
+    }
+
     private fun requestAudioFocus(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 )
@@ -530,7 +759,7 @@ class TtsManager @Inject constructor(
             audioManager.requestAudioFocus(
                 focusChangeListener,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                AudioManager.AUDIOFOCUS_GAIN
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
     }
@@ -559,14 +788,56 @@ class TtsManager @Inject constructor(
         }
     }
 
+    fun pause() {
+        _isPlaying.value = false
+        clearPreSynthesisCache()
+        releaseAudioLocks()
+        runCatching {
+            activeAudioTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED && it.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    it.pause()
+                }
+            }
+        }
+        edgeNeuralTtsClient.pausePlayback()
+        tts?.stop()
+    }
+
+    fun resume() {
+        _isPlaying.value = true
+        acquireAudioLocks()
+        runCatching {
+            activeAudioTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED && it.playState == AudioTrack.PLAYSTATE_PAUSED) {
+                    it.play()
+                }
+            }
+        }
+        edgeNeuralTtsClient.resumePlayback()
+    }
+
     fun stop() {
+        _isPlaying.value = false
+        isNarratingSequence = false
+        wasPlayingBeforeTransientLoss = false
+        clearPreSynthesisCache()
+        releaseAudioLocks()
         edgeNeuralTtsClient.stopPlayback()
         isSpeakingCancelled = true
         tts?.stop()
         abandonAudioFocus()
     }
 
+    fun release() {
+        shutdown()
+    }
+
     fun shutdown() {
+        _isPlaying.value = false
+        isNarratingSequence = false
+        wasPlayingBeforeTransientLoss = false
+        clearPreSynthesisCache()
+        releaseAudioLocks()
         edgeNeuralTtsClient.stopPlayback()
         isSpeakingCancelled = true
         tts?.stop()
@@ -580,11 +851,15 @@ class TtsManager @Inject constructor(
         offlineTts = null
         try {
             ttsScope.coroutineContext.cancelChildren()
+            preSynthesisScope.coroutineContext.cancelChildren()
         } catch (_: Exception) {}
     }
 
 
     fun setRate(rate: Float) { 
+        if (baseRate != rate) {
+            clearPreSynthesisCache()
+        }
         baseRate = rate
         if (isReady) tts?.setSpeechRate(rate) 
     }
@@ -732,6 +1007,147 @@ class TtsManager @Inject constructor(
                 _isLoadingModel.value = false
             }
         }
+    }
+
+    /**
+     * Genera audio crudo con Sherpa ONNX sin reproducirlo.
+     * Devuelve (muestras Float32, sampleRate) o null si falla.
+     * Usado por el motor de estudio "Woods Studio Voice HD" para procesar DSP.
+     */
+    suspend fun generateSherpaAudioRaw(text: String, speed: Float): Pair<FloatArray, Int>? =
+        withContext(Dispatchers.IO) {
+            if (!initSherpaIfNeeded()) return@withContext null
+            val tts = offlineTts ?: return@withContext null
+            try {
+                val result = tts.generate(
+                    text = text,
+                    sid = sherpaModelManager.selectedVoice.value.speakerId,
+                    speed = speed
+                )
+                if (result.samples.isNotEmpty()) {
+                    result.samples to result.sampleRate
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "generateSherpaAudioRaw failed for: $text")
+                null
+            }
+        }
+
+    /**
+     * Sintetiza texto con el motor de estudio "Woods Studio Voice HD".
+     *
+     * 1. Limpia y aplica filtros/reglas de pronunciación del libro.
+     * 2. Analiza la oración con [AudiobookProsodyEngine] para obtener [ProsodySegment]s (roles, pausas, modulación).
+     * 3. Para cada segmento, genera audio crudo con Sherpa ONNX aplicando la velocidad prosódica.
+     * 4. Pasa cada segmento por [StudioAudioDspProcessor.masterAudioSegment] con el perfil acústico activo.
+     * 5. Concatena todos los segmentos en un único [FloatArray] continuo con pausas y dither.
+     *
+     * @return Par de (muestras Float 32-bit, sampleRate) o null si falla la generación.
+     */
+    suspend fun synthesizeExpressiveStudioAudio(
+        text: String,
+        baseSpeed: Float = baseRate
+    ): Pair<FloatArray, Int>? = withContext(Dispatchers.Default) {
+        val activeRules = try {
+            ttsRuleDao.getActiveRulesForBook(currentBookId)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val exclusionRules = activeRules.map {
+            com.example.woodsreader.core.pipeline.WordExclusionRule(
+                id = it.id.toString(),
+                target = it.pattern,
+                replacement = it.replacement,
+                isRegex = it.isRegex
+            )
+        }
+        val processedText = wordExclusionEngine.filterText(text, exclusionRules)
+
+        val autoDetect = sherpaModelManager.autoDetectBookLanguage.value
+        val language = if (autoDetect) {
+            val detected = MultilingualAudiobookNormalizer.detectDominantLanguage(text)
+            val currentVoice = sherpaModelManager.selectedVoice.value
+            if (currentVoice.languageCode != detected.code) {
+                val bestVoice = sherpaModelManager.findBestVoiceForLanguage(detected)
+                if (bestVoice != null && bestVoice != currentVoice) {
+                    sherpaModelManager.selectVoiceOption(bestVoice)
+                    initSherpaIfNeeded()
+                }
+            }
+            detected
+        } else {
+            sherpaModelManager.selectedVoice.value.language
+        }
+
+        val segments = AudiobookProsodyEngine.analyzeSentence(
+            rawSentence = processedText,
+            expressiveProsodyEnabled = _expressiveProsodyEnabled.value,
+            language = language,
+            lexiconManager = pronunciationLexiconManager
+        )
+        if (segments.isEmpty()) return@withContext null
+
+        val profile = _acousticsProfile.value
+        val useDramatization = _dramatizedDialogueEnabled.value
+
+        val processedChunks = ArrayList<FloatArray>(segments.size)
+        var lastSampleRate = 0
+
+        for (segment in segments) {
+            val speed = (baseSpeed * segment.speedMultiplier).coerceIn(0.55f, 2.2f)
+
+            val generatedAudio = try {
+                generateSherpaAudioRaw(segment.cleanText, speed)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+
+            lastSampleRate = generatedAudio.second
+            if (generatedAudio.first.isEmpty()) continue
+
+            val masteredSamples = StudioAudioDspProcessor.masterAudioSegment(
+                rawSamples = generatedAudio.first,
+                sampleRate = lastSampleRate,
+                profile = profile,
+                role = if (useDramatization) segment.role else VoiceActRole.NARRATOR,
+                gainMultiplier = segment.gainMultiplier,
+                postPauseMs = segment.postPauseMs,
+                singleVoiceRoleShift = useDramatization
+            )
+
+            processedChunks.add(masteredSamples)
+        }
+
+        if (processedChunks.isEmpty() || lastSampleRate <= 0) return@withContext null
+
+        val totalSize = processedChunks.sumOf { it.size }
+        val result = FloatArray(totalSize)
+        var offset = 0
+        for (chunk in processedChunks) {
+            System.arraycopy(chunk, 0, result, offset, chunk.size)
+            offset += chunk.size
+        }
+
+        val soundscape = _soundscapeMode.value
+        if (soundscape != SoundscapeMode.OFF) {
+            ambientSoundscapeEngine.mixWithVoiceInPlace(
+                voiceBuffer = result,
+                sampleRate = lastSampleRate,
+                mode = soundscape,
+                ambientIntensity = _soundscapeIntensity.value
+            )
+        }
+
+        val fade = smartSleepTimerManager.fadeMultiplier.value
+        if (fade < 0.999f) {
+            for (i in result.indices) {
+                result[i] *= fade
+            }
+        }
+
+        result to lastSampleRate
     }
 
     companion object {
@@ -967,7 +1383,39 @@ class TtsManager @Inject constructor(
         }
         val processedText = wordExclusionEngine.filterText(text, exclusionRules)
 
-        val items = parseTextToPlaybackItemsForSherpa(processedText)
+        val maxClauseChars = 180
+        val safeClauses = sherpaModelManager.splitIntoSafeClauses(processedText, maxChars = maxClauseChars)
+
+        val items = mutableListOf<PlaybackItem>()
+        var currentSearchIndex = 0
+        for (clause in safeClauses) {
+            val foundIndex = processedText.indexOf(clause, currentSearchIndex)
+            val offset = if (foundIndex != -1) {
+                currentSearchIndex = foundIndex + clause.length
+                foundIndex
+            } else currentSearchIndex
+
+            val trimmed = clause.trim()
+            val isExclamation = trimmed.endsWith("!") || trimmed.endsWith("¡")
+            val isQuestion = trimmed.endsWith("?") || trimmed.endsWith("¿")
+            val isDialogue = trimmed.startsWith("—") || trimmed.startsWith("\"") || trimmed.startsWith("“") || trimmed.startsWith("«")
+            val chunkType = if (isDialogue) ChunkType.DIALOGUE else ChunkType.NARRATOR
+            val pauseMs = if (trimmed.endsWith(".") || trimmed.endsWith("?") || trimmed.endsWith("!")) 250L else 90L
+
+            items.add(
+                PlaybackItem(
+                    text = clause,
+                    type = chunkType,
+                    pauseMs = pauseMs,
+                    isExclamation = isExclamation,
+                    isQuestion = isQuestion,
+                    charOffset = offset
+                )
+            )
+        }
+        if (items.isEmpty() && processedText.isNotBlank()) {
+            items.add(PlaybackItem(text = processedText, type = ChunkType.NARRATOR, pauseMs = 0L, charOffset = 0))
+        }
 
         class GeneratedAudioItem(
             val samples: FloatArray?,
@@ -978,7 +1426,7 @@ class TtsManager @Inject constructor(
             val charOffset: Int
         )
 
-        val audioChannel = Channel<GeneratedAudioItem>(capacity = 2)
+        val audioChannel = Channel<GeneratedAudioItem>(capacity = 1)
         var dialogueCount = 0
 
         val producerJob = launch(Dispatchers.Default) {
@@ -1008,16 +1456,15 @@ class TtsManager @Inject constructor(
                     val targetSpeed = (baseRate * speedMultiplier).coerceIn(0.1f, 3.0f)
                     val generationSpeed = (targetSpeed / currentPitchFactor).coerceIn(0.1f, 3.0f)
 
-                    val generatedAudio = try {
+                    val generatedAudio = runCatching {
                         offlineTts?.generate(
                             text = item.text,
                             sid = sherpaModelManager.selectedVoice.value.speakerId,
                             speed = generationSpeed
                         )
-                    } catch (e: Exception) {
+                    }.onFailure { e ->
                         android.util.Log.e(TAG, "Sherpa generate failed for: ${item.text}", e)
-                        null
-                    }
+                    }.getOrNull()
 
                     if (generatedAudio != null && generatedAudio.samples.isNotEmpty()) {
                         val playbackRate = (generatedAudio.sampleRate * currentPitchFactor).toInt()
@@ -1095,26 +1542,117 @@ class TtsManager @Inject constructor(
         units: List<com.example.woodsreader.core.pipeline.TtsNarrationUnit>,
         startIndex: Int = 0,
         onUnitStarted: ((com.example.woodsreader.core.pipeline.TtsNarrationUnit) -> Unit)? = null,
-        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null
+        onRangeUpdate: ((blockId: String, range: IntRange) -> Unit)? = null,
+        onChapterFinished: (suspend () -> Unit)? = null
     ) {
         if (units.isEmpty() || startIndex !in units.indices) return
 
-        for (i in startIndex until units.size) {
-            if (!ttsScope.isActive) break
+        isNarratingSequence = true
+        _isPlaying.value = true
+        acquireAudioLocks()
+        clearPreSynthesisCache()
 
-            val unit = units[i]
-            onUnitStarted?.invoke(unit)
+        var completedNormally = true
+        try {
+            val useSherpa = try {
+                userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
+            } catch (_: Exception) {
+                false
+            } || (sherpaModelManager.isModelReady() && !isReady)
 
-            if (unit.isAnnouncement) {
-                delay(200L)
+            if (useSherpa && initSherpaIfNeeded()) {
+                requestAudioFocus()
+                for (i in startIndex until units.size) {
+                    if (!ttsScope.isActive || isSpeakingCancelled) {
+                        completedNormally = false
+                        break
+                    }
+
+                    val unit = units[i]
+                    onUnitStarted?.invoke(unit)
+
+                    if (unit.isAnnouncement) {
+                        delay(200L)
+                    }
+
+                    // Lookahead Pre-Síntesis de Cero Latencia: lanzar pre-síntesis de index + 1 e index + 2
+                    for (ahead in 1..2) {
+                        val nextIdx = i + ahead
+                        if (nextIdx in units.indices) {
+                            val nextUnit = units[nextIdx]
+                            if (!nextUnit.isAnnouncement && nextUnit.textToSpeak.isNotBlank() && !preSynthesisCache.containsKey(nextIdx)) {
+                                preSynthesisCache[nextIdx] = preSynthesisScope.async {
+                                    synthesizeExpressiveStudioAudio(nextUnit.textToSpeak, baseRate)
+                                }
+                            }
+                        }
+                    }
+
+                    // Obtener audio: del caché de pre-síntesis o sintetizar de inmediato si no estaba
+                    val cachedDeferred = preSynthesisCache.remove(i)
+                    val audio = cachedDeferred?.await() ?: if (unit.textToSpeak.isNotBlank()) {
+                        synthesizeExpressiveStudioAudio(unit.textToSpeak, baseRate)
+                    } else null
+
+                    if (audio != null && audio.first.isNotEmpty()) {
+                        playPcmSamples(
+                            samples = audio.first,
+                            sampleRate = audio.second,
+                            playbackRate = audio.second,
+                            text = unit.textToSpeak,
+                            charOffset = 0,
+                            onRangeUpdate = { range ->
+                                onRangeUpdate?.invoke(unit.blockId, range)
+                            }
+                        )
+                    }
+
+                    if (unit.isAnnouncement) {
+                        delay(300L)
+                    }
+                }
+            } else {
+                // Modo Sistema Android nativo
+                for (i in startIndex until units.size) {
+                    if (!ttsScope.isActive || isSpeakingCancelled) {
+                        completedNormally = false
+                        break
+                    }
+
+                    val unit = units[i]
+                    onUnitStarted?.invoke(unit)
+
+                    if (unit.isAnnouncement) {
+                        delay(200L)
+                    }
+
+                    speak(unit.textToSpeak) { range ->
+                        onRangeUpdate?.invoke(unit.blockId, range)
+                    }
+
+                    if (unit.isAnnouncement) {
+                        delay(300L)
+                    }
+                }
             }
 
-            speak(unit.textToSpeak) { range ->
-                onRangeUpdate?.invoke(unit.blockId, range)
+            if (completedNormally && !isSpeakingCancelled && ttsScope.isActive) {
+                acquireAudioLocks()
+                onChapterFinished?.invoke()
+                if (smartSleepTimerManager.consumeEndOfChapterStopIfNeeded()) {
+                    isNarratingSequence = false
+                    _isPlaying.value = false
+                    releaseAudioLocks()
+                } else {
+                    onQueueCompletedNaturally?.invoke()
+                }
             }
-
-            if (unit.isAnnouncement) {
-                delay(300L)
+        } finally {
+            clearPreSynthesisCache()
+            if (!completedNormally || isSpeakingCancelled || !ttsScope.isActive) {
+                isNarratingSequence = false
+                _isPlaying.value = false
+                releaseAudioLocks()
             }
         }
     }

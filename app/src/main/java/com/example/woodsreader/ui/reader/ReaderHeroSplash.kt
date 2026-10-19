@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -39,20 +40,8 @@ fun ReaderHeroSplash(
     AnimatedVisibility(
         visible = uiState is ReaderUiState.Loading || uiState is ReaderUiState.InitialLoading,
         enter = fadeIn(tween(400)),
-        exit = fadeOut(tween(800, easing = LinearOutSlowInEasing)) + scaleOut(targetScale = 1.05f, animationSpec = tween(800))
+        exit = fadeOut(tween(250)) + scaleOut(targetScale = 1.02f, animationSpec = tween(250))
     ) {
-        var scale by remember { mutableFloatStateOf(1.08f) }
-        LaunchedEffect(uiState) {
-            if (uiState is ReaderUiState.Loading || uiState is ReaderUiState.InitialLoading) {
-                scale = 1.08f
-                androidx.compose.animation.core.animate(
-                    initialValue = 1.08f,
-                    targetValue = 1f,
-                    animationSpec = tween(8000, easing = LinearOutSlowInEasing)
-                ) { value, _ -> scale = value }
-            }
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -60,7 +49,7 @@ fun ReaderHeroSplash(
             contentAlignment = Alignment.Center
         ) {
             heroBook?.let { book ->
-                // Fondo difuminado con baja opacidad para dar profundidad
+                // Fondo difuminado estático con baja opacidad para dar profundidad sin saturar texturas EGL Mali
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(book.coverCachePath?.let { java.io.File(it) })
@@ -75,8 +64,6 @@ fun ReaderHeroSplash(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
                             alpha = 0.25f
                         },
                     contentScale = ContentScale.Crop
@@ -147,7 +134,7 @@ fun ReaderHeroSplash(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = book.title.take(2).uppercase(),
+                                    text = book.title.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "L",
                                     style = MaterialTheme.typography.headlineLarge,
                                     color = HiddenForest.Accent,
                                     fontWeight = FontWeight.Bold
@@ -191,6 +178,15 @@ fun ReaderHeroSplash(
                             fontWeight = FontWeight.Bold
                         ),
                         color = HiddenForest.Accent
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .width(140.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = HiddenForest.Accent,
+                        trackColor = HiddenForest.Accent.copy(alpha = 0.2f)
                     )
                 }
             } ?: CircularProgressIndicator(color = HiddenForest.Accent)

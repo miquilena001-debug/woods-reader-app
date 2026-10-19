@@ -8,6 +8,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -55,8 +57,8 @@ fun ReaderTopBar(
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0A140F).copy(alpha = 0.92f),
-                        Color(0xFF0A140F).copy(alpha = 0.86f)
+                        Color(0xFF0A140F).copy(alpha = 0.96f),
+                        Color(0xFF0A140F).copy(alpha = 0.96f)
                     )
                 )
             )
@@ -133,7 +135,7 @@ fun ReaderTopBar(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
                             Icon(
-                                imageVector = if (isReflowMode) Icons.Default.MenuBook else Icons.Default.PictureAsPdf,
+                                imageVector = if (isReflowMode) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.PictureAsPdf,
                                 contentDescription = null,
                                 tint = if (isReflowMode) HiddenForest.Accent else HiddenForest.TextSecondary,
                                 modifier = Modifier.size(14.dp)
@@ -176,7 +178,7 @@ fun ReaderTopBar(
                 Spacer(modifier = Modifier.width(4.dp))
 
                 ReaderIconButton(
-                    icon = Icons.Default.MenuOpen,
+                    icon = Icons.AutoMirrored.Filled.MenuOpen,
                     contentDescription = stringResource(R.string.reader_menu),
                     onClick = onMenuClick,
                     tint = HiddenForest.Accent

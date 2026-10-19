@@ -92,6 +92,7 @@ fun ReaderNotesTab(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedFilter by remember { mutableStateOf(NotesFilter.TODOS) }
+    var quoteToShare by remember { mutableStateOf<UnifiedNote?>(null) }
 
     val unifiedFeed = remember(highlights, bookmarks) {
         val list = mutableListOf<UnifiedNote>()
@@ -208,6 +209,8 @@ fun ReaderNotesTab(
                             fontSize = 12.sp
                         ),
                         color = if (isSelected) Color(0xFF080B08) else HiddenForest.TextSecondary,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                     )
                 }
@@ -257,22 +260,24 @@ fun ReaderNotesTab(
                             else onDeleteBookmark(note.originalBookmark!!)
                         },
                         onShareClick = {
-                            val highlight = note.originalHighlight
-                            if (highlight != null) {
-                                scope.launch {
-                                    QuoteCardGenerator.shareQuoteCard(
-                                        context = context,
-                                        quoteText = highlight.highlightedText,
-                                        bookTitle = bookTitle,
-                                        bookAuthor = bookAuthor,
-                                        chapterTitle = highlight.chapterTitle
-                                    )
-                                }
+                            if (note.content.isNotBlank()) {
+                                quoteToShare = note
                             }
                         }
                     )
                 }
             }
+        }
+
+        val noteForQuote = quoteToShare
+        if (noteForQuote != null) {
+            QuoteShareDialog(
+                quoteText = noteForQuote.content,
+                bookTitle = bookTitle,
+                bookAuthor = bookAuthor,
+                chapterTitle = noteForQuote.title,
+                onDismiss = { quoteToShare = null }
+            )
         }
     }
 }

@@ -173,6 +173,7 @@ class BookRepository @Inject constructor(
     suspend fun bookExistsByHash(hash: String)         = bookDao.existsByHash(hash)
     suspend fun getBookByHash(hash: String)            = bookDao.getByHash(hash)
     suspend fun getBookByPath(path: String): BookEntity? = bookDao.getByPath(path)
+    suspend fun existsByPath(path: String): Boolean = bookDao.existsByPath(path)
 
     // ── Incremental scan support ──────────────────────────────────────────────
     suspend fun getImportedAtByPath(path: String): Long? = bookDao.getImportedAtByPath(path)

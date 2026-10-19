@@ -52,6 +52,22 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
+import com.example.woodsreader.data.repository.BookRepository
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hilt Entry Point
+// ─────────────────────────────────────────────────────────────────────────────
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface BookDetailEntryPoint {
+    fun bookRepository(): BookRepository
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
@@ -65,6 +81,13 @@ fun BookDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val bookRepository = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            BookDetailEntryPoint::class.java
+        ).bookRepository()
+    }
 
     Box(
         modifier = Modifier
@@ -81,6 +104,19 @@ fun BookDetailScreen(
                 uiState = uiState,
                 onNavigateUp = onNavigateUp,
                 onOpenReader = { onOpenReader(uiState.book!!.id) },
+                onOpenAtPosition = { locatorJson ->
+                    val currentBook = uiState.book
+                    if (currentBook != null) {
+                        coroutineScope.launch {
+                            bookRepository.updateReadingProgress(
+                                currentBook.id,
+                                currentBook.readingProgressPercent,
+                                locatorJson
+                            )
+                            onOpenReader(currentBook.id)
+                        }
+                    }
+                },
                 onUpdateStatus = viewModel::updateReadingStatus,
                 onUpdateRating = viewModel::updateRating,
                 onUpdateNotes = viewModel::updateUserNotes,
@@ -104,6 +140,7 @@ private fun BookDetailContent(
     uiState: BookDetailUiState,
     onNavigateUp: () -> Unit,
     onOpenReader: () -> Unit,
+    onOpenAtPosition: (String) -> Unit,
     onUpdateStatus: (ReadingStatus) -> Unit,
     onUpdateRating: (Int?) -> Unit,
     onUpdateNotes: (String) -> Unit,
@@ -154,11 +191,12 @@ private fun BookDetailContent(
                 bookmarks = uiState.bookmarks,
                 sessions = uiState.sessions,
                 stats = uiState.stats,
+                onOpenAtPosition = onOpenAtPosition,
                 onDeleteHighlight = onDeleteHighlight,
                 onDeleteBookmark = onDeleteBookmark,
                 onShareHighlights = onShareHighlights
             )
-            Spacer(modifier = Modifier.height(120.dp))
+            Spacer(modifier = Modifier.height(130.dp))
         }
 
         // ── Top Bar (overlay) ────────────────────────────────────────────────
@@ -758,20 +796,23 @@ private fun DescriptionCard(
                     }
                 }
                 else -> {
+                    val formattedDescription = remember(description) {
+                        description.replace(Regex("""(?<!^)\s*(?=Cap[íi]tulo\s+\d+)""", RegexOption.IGNORE_CASE), "\n• ")
+                    }
                     Text(
-                        text = description,
+                        text = formattedDescription,
                         style = MaterialTheme.typography.bodySmall,
                         color = HiddenForest.TextSecondary,
                         maxLines = if (expanded) Int.MAX_VALUE else 4,
                         overflow = if (expanded) TextOverflow.Visible else TextOverflow.Ellipsis
                     )
-                    if (description.length > 200) {
+                    if (formattedDescription.length > 200) {
                         TextButton(
                             onClick = { expanded = !expanded },
                             contentPadding = PaddingValues(0.dp)
                         ) {
                             Text(
-                                text = if (expanded) "Ver menos" else "Ver m\u00e1s",
+                                text = if (expanded) "Ver menos" else "Ver más",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = HiddenForest.Accent
                             )
@@ -921,6 +962,7 @@ private fun TabbedAnnotations(
     bookmarks: List<BookmarkEntity>,
     sessions: List<ReadingSessionEntity>,
     stats: BookStats,
+    onOpenAtPosition: (String) -> Unit,
     onDeleteHighlight: (HighlightEntity) -> Unit,
     onDeleteBookmark: (BookmarkEntity) -> Unit,
     onShareHighlights: () -> Unit
@@ -937,7 +979,7 @@ private fun TabbedAnnotations(
             selectedTabIndex = selectedTab,
             containerColor = Color.Transparent,
             contentColor = HiddenForest.Accent,
-            edgePadding = 16.dp,
+            edgePadding = 20.dp,
             divider = { HorizontalDivider(color = HiddenForest.Outline) },
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
@@ -954,9 +996,9 @@ private fun TabbedAnnotations(
                     modifier = Modifier.padding(vertical = 4.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(
                             icon,
@@ -978,7 +1020,7 @@ private fun TabbedAnnotations(
                                     text = "$count",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (selectedTab == index) HiddenForest.Accent else HiddenForest.TextLow,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -993,14 +1035,20 @@ private fun TabbedAnnotations(
         when (selectedTab) {
             0 -> HighlightsTab(
                 highlights = highlights,
+                onOpenAtPosition = onOpenAtPosition,
                 onDelete = onDeleteHighlight,
                 onShare = onShareHighlights
             )
             1 -> BookmarksTab(
                 bookmarks = bookmarks,
+                onOpenAtPosition = onOpenAtPosition,
                 onDelete = onDeleteBookmark
             )
-            2 -> SessionsTab(sessions = sessions, stats = stats)
+            2 -> SessionsTab(
+                sessions = sessions,
+                stats = stats,
+                onOpenAtPosition = onOpenAtPosition
+            )
         }
     }
 }
@@ -1008,6 +1056,7 @@ private fun TabbedAnnotations(
 @Composable
 private fun HighlightsTab(
     highlights: List<HighlightEntity>,
+    onOpenAtPosition: (String) -> Unit,
     onDelete: (HighlightEntity) -> Unit,
     onShare: () -> Unit
 ) {
@@ -1038,7 +1087,11 @@ private fun HighlightsTab(
             )
         } else {
             highlights.forEach { highlight ->
-                HighlightCard(highlight = highlight, onDelete = onDelete)
+                HighlightCard(
+                    highlight = highlight,
+                    onOpenAtPosition = onOpenAtPosition,
+                    onDelete = onDelete
+                )
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -1046,7 +1099,11 @@ private fun HighlightsTab(
 }
 
 @Composable
-private fun HighlightCard(highlight: HighlightEntity, onDelete: (HighlightEntity) -> Unit) {
+private fun HighlightCard(
+    highlight: HighlightEntity,
+    onOpenAtPosition: (String) -> Unit,
+    onDelete: (HighlightEntity) -> Unit
+) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     val accentColor = when (highlight.color.name) {
@@ -1058,7 +1115,9 @@ private fun HighlightCard(highlight: HighlightEntity, onDelete: (HighlightEntity
     }
 
     GlassCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenAtPosition(highlight.locatorJson) },
         accentColor = accentColor
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1135,7 +1194,11 @@ private fun HighlightCard(highlight: HighlightEntity, onDelete: (HighlightEntity
 }
 
 @Composable
-private fun BookmarksTab(bookmarks: List<BookmarkEntity>, onDelete: (BookmarkEntity) -> Unit) {
+private fun BookmarksTab(
+    bookmarks: List<BookmarkEntity>,
+    onOpenAtPosition: (String) -> Unit,
+    onDelete: (BookmarkEntity) -> Unit
+) {
     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
         if (bookmarks.isEmpty()) {
             EmptyTabMessage(
@@ -1145,7 +1208,11 @@ private fun BookmarksTab(bookmarks: List<BookmarkEntity>, onDelete: (BookmarkEnt
             )
         } else {
             bookmarks.forEach { bookmark ->
-                BookmarkCard(bookmark = bookmark, onDelete = onDelete)
+                BookmarkCard(
+                    bookmark = bookmark,
+                    onOpenAtPosition = onOpenAtPosition,
+                    onDelete = onDelete
+                )
                 Spacer(modifier = Modifier.height(8.dp))
             }
         }
@@ -1153,9 +1220,17 @@ private fun BookmarksTab(bookmarks: List<BookmarkEntity>, onDelete: (BookmarkEnt
 }
 
 @Composable
-private fun BookmarkCard(bookmark: BookmarkEntity, onDelete: (BookmarkEntity) -> Unit) {
+private fun BookmarkCard(
+    bookmark: BookmarkEntity,
+    onOpenAtPosition: (String) -> Unit,
+    onDelete: (BookmarkEntity) -> Unit
+) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    GlassCard {
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenAtPosition(bookmark.locatorJson) }
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1219,7 +1294,11 @@ private fun BookmarkCard(bookmark: BookmarkEntity, onDelete: (BookmarkEntity) ->
 }
 
 @Composable
-private fun SessionsTab(sessions: List<ReadingSessionEntity>, stats: BookStats) {
+private fun SessionsTab(
+    sessions: List<ReadingSessionEntity>,
+    stats: BookStats,
+    onOpenAtPosition: (String) -> Unit
+) {
     Column(
         modifier = Modifier.padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1252,7 +1331,7 @@ private fun SessionsTab(sessions: List<ReadingSessionEntity>, stats: BookStats) 
             )
         } else {
             completedSessions.forEach { session ->
-                SessionCard(session = session)
+                SessionCard(session = session, onOpenAtPosition = onOpenAtPosition)
             }
         }
     }
@@ -1532,13 +1611,23 @@ private fun ReadingStyleDistribution(stats: BookStats) {
 }
 
 @Composable
-private fun SessionCard(session: ReadingSessionEntity) {
+private fun SessionCard(
+    session: ReadingSessionEntity,
+    onOpenAtPosition: (String) -> Unit
+) {
     val durationMs = (session.endAt ?: System.currentTimeMillis()) - session.startAt
     val wpm = if (durationMs > 0 && session.wordsRead > 0) {
         (session.wordsRead.toDouble() / (durationMs.toDouble() / 60000.0)).roundToInt()
     } else null
+    val targetLocator = session.endLocatorJson ?: session.startLocatorJson
 
-    GlassCard {
+    GlassCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = targetLocator.isNotBlank()) {
+                if (targetLocator.isNotBlank()) onOpenAtPosition(targetLocator)
+            }
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1681,7 +1770,7 @@ private fun ReadNowFab(progressPercent: Float, onClick: () -> Unit) {
         containerColor = HiddenForest.Accent,
         contentColor = HiddenForest.OnAccent,
         shape = RoundedCornerShape(20.dp),
-        modifier = Modifier.ambientGlow(HiddenForest.Accent, radius = 32.dp, alpha = 0.4f)
+        modifier = Modifier.ambientGlow(HiddenForest.Accent, radius = 16.dp, alpha = 0.22f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 20.dp),

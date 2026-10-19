@@ -187,7 +187,8 @@ class BookScannerService @Inject constructor(
         var newCount   = 0
 
         // ── Pre-load all known paths into memory (1 single DB query) ───────────
-        val knownPaths = repository.getAllKnownPaths()
+        val knownPaths = (repository.getAllKnownPaths() as? HashSet<String>)
+            ?: repository.getAllKnownPaths().toHashSet()
         Log.d(TAG, "QuickScan: ${knownPaths.size} books already known")
 
         // Shared set to de-duplicate between MediaStore and DeepScanner
@@ -212,6 +213,7 @@ class BookScannerService @Inject constructor(
             if (path !in knownPaths) {
                 val entity = createLightweightEntity(path, result.displayName, result.sizeBytes, result.dateModified)
                 newBooksBatch.add(entity)
+                knownPaths.add(path)
                 newCount++
 
                 // Flush batch every 100 books
@@ -230,11 +232,13 @@ class BookScannerService @Inject constructor(
         Log.d(TAG, "QuickScan [2/3]: FileSystem...")
         _scanProgress.value = "Fase 2/3 · Explorando carpetas…"
         deepScanner.scanAllDevice().collect { file ->
-            if (seenPaths.add(file.absolutePath) && file.absolutePath !in knownPaths) {
+            val path = file.absolutePath
+            if (seenPaths.add(path) && path !in knownPaths) {
                 val entity = createLightweightEntity(
-                    file.absolutePath, file.name, file.length(), file.lastModified()
+                    path, file.name, file.length(), file.lastModified()
                 )
                 newBooksBatch.add(entity)
+                knownPaths.add(path)
                 newCount++
 
                 if (newBooksBatch.size >= 100) {
@@ -582,17 +586,19 @@ class BookScannerService @Inject constructor(
         if (!processingFiles.add(identifier)) return false // Already being processed
 
         return try {
-            // â”€â”€ Incremental check: skip hash if path already registered and hasn't changed â”€â”€â”€â”€â”€â”€
-            val existingBook = repository.getBookByPath(identifier)
-            if (existingBook != null) {
-                // Book already exists at this path. Check if it has been modified.
-                if (lastModified > 0 && lastModified <= existingBook.importedAt) {
-                    // Not modified, skip hash computation and processing
-                    return false
-                }
+            // ── Incremental check: fast existsByPath check to avoid heavy entity queries ──
+            val pathExists = repository.existsByPath(identifier)
+            if (pathExists) {
+                val existingBook = repository.getBookByPath(identifier)
+                if (existingBook != null) {
+                    // Book already exists at this path. Check if it has been modified.
+                    if (lastModified > 0 && lastModified <= existingBook.importedAt) {
+                        // Not modified, skip hash computation and processing
+                        return false
+                    }
 
-                // If it HAS been modified, compute the hash
-                val hash = computePartialHash(uri)
+                    // If it HAS been modified, compute the hash
+                    val hash = computePartialHash(uri)
                 if (hash == existingBook.fileHash) {
                     // File timestamp changed, but content hash is identical. Just update importedAt.
                     repository.upsertBook(existingBook.copy(importedAt = System.currentTimeMillis()))
@@ -621,8 +627,9 @@ class BookScannerService @Inject constructor(
                 }
                 return false
             }
+        }
 
-            val hash = computePartialHash(uri)
+        val hash = computePartialHash(uri)
             val existing = repository.getBookByHash(hash)
 
             if (existing != null) {
@@ -695,6 +702,7 @@ class BookScannerService @Inject constructor(
                                 path, file.name ?: "Unknown", file.length(), file.lastModified()
                             )
                             newBooksBatch.add(entity)
+                            (knownPaths as? MutableSet<String>)?.add(path)
                             newCount++
 
                             if (newBooksBatch.size >= 100) {

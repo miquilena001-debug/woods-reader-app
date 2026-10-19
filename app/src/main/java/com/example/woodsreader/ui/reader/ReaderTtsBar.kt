@@ -96,8 +96,8 @@ fun ReaderTtsBar(
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF102218).copy(alpha = 0.95f),
-                        Color(0xFF09130E).copy(alpha = 0.98f)
+                        Color(0xFF102218).copy(alpha = 0.96f),
+                        Color(0xFF09130E).copy(alpha = 0.96f)
                     )
                 )
             )
@@ -185,14 +185,14 @@ fun ReaderTtsBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 1. [⏹ Stop]
+                // 1. [✕ Detener/Cerrar]
                 IconButton(
                     onClick = onStop,
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = "Detener",
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Detener y cerrar",
                         tint = HiddenForest.TextSecondary,
                         modifier = Modifier.size(20.dp)
                     )

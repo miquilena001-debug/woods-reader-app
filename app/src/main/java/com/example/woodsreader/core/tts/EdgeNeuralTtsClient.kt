@@ -24,6 +24,12 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 enum class EdgeVoiceOption(
     val shortName: String,
@@ -66,6 +72,9 @@ class EdgeNeuralTtsClient @Inject constructor(
     @Volatile
     private var activePlayer: MediaPlayer? = null
 
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlightRequests = ConcurrentHashMap<String, Deferred<ByteArray?>>()
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -74,7 +83,9 @@ class EdgeNeuralTtsClient @Inject constructor(
     fun setEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("use_edge_neural_tts", enabled).apply()
         _isEnabled.value = enabled
-        if (!enabled) stopPlayback()
+        if (!enabled) {
+            stopPlayback()
+        }
     }
 
     fun setVoice(option: EdgeVoiceOption) {
@@ -92,6 +103,38 @@ class EdgeNeuralTtsClient @Inject constructor(
             try {
                 player.release()
             } catch (_: Exception) {}
+        }
+    }
+
+    fun pausePlayback() {
+        runCatching {
+            activePlayer?.let {
+                if (it.isPlaying) {
+                    it.pause()
+                }
+            }
+        }
+    }
+
+    fun resumePlayback() {
+        runCatching {
+            activePlayer?.let {
+                it.start()
+            }
+        }
+    }
+
+    fun prefetchSentence(
+        text: String,
+        speed: Float = 1.0f,
+        pitch: Float = 1.0f
+    ) {
+        val cleanText = text.trim()
+        if (cleanText.isEmpty() || !_isEnabled.value) return
+        prefetchScope.launch {
+            runCatching {
+                synthesizeToMp3Bytes(cleanText, _selectedVoice.value, speed, pitch)
+            }
         }
     }
 
@@ -124,14 +167,24 @@ class EdgeNeuralTtsClient @Inject constructor(
             return@withContext runCatching { cachedFile.readBytes() }.getOrNull()
         }
 
-        val bytes = fetchMp3ViaWebSocket(cleanText, voice.shortName, rateStr, pitchStr)
-        if (bytes != null && bytes.size > 256) {
-            runCatching {
-                cleanOldCacheIfNeeded()
-                cachedFile.writeBytes(bytes)
+        // Si ya hay una solicitud en curso para esta clave (por prefetch o llamada previa), reusar el Deferred
+        val deferred = inFlightRequests.computeIfAbsent(cacheKey) {
+            prefetchScope.async(Dispatchers.IO) {
+                try {
+                    val bytes = fetchMp3ViaWebSocket(cleanText, voice.shortName, rateStr, pitchStr)
+                    if (bytes != null && bytes.size > 256) {
+                        runCatching {
+                            cleanOldCacheIfNeeded()
+                            cachedFile.writeBytes(bytes)
+                        }
+                    }
+                    bytes
+                } finally {
+                    inFlightRequests.remove(cacheKey)
+                }
             }
         }
-        bytes
+        deferred.await()
     }
 
     suspend fun speakSentence(

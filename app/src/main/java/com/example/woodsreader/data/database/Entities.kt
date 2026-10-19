@@ -23,7 +23,9 @@ import java.util.UUID
         Index("readingStatus"),            // Filtrar por estado
         Index("title"),                    // Índice para orden vertical alfabético
         Index("author"),                   // Índice para filtrado por autor
-        Index("collectionId")              // Índice para filtrado por colecciones
+        Index("collectionId"),             // Índice para filtrado por colecciones
+        Index("filePath"),                 // Búsqueda rápida por ruta de archivo
+        Index("coverCachePath")            // Búsqueda rápida por carátula en caché
     ]
 )
 data class BookEntity(
@@ -147,7 +149,10 @@ data class CollectionEntity(
 @Immutable
 @Entity(
     tableName = "tts_rules",
-    indices = [Index("bookId")]
+    indices = [
+        Index("bookId"),
+        Index(value = ["isEnabled", "bookId"])
+    ]
 )
 data class TtsRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

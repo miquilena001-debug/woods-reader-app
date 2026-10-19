@@ -72,7 +72,8 @@ class SherpaTtsEngineProvider(
             SherpaTtsEngine(
                 delegate = androidEngine,
                 ttsManager = ttsManager,
-                userPreferencesRepository = userPreferencesRepository
+                userPreferencesRepository = userPreferencesRepository,
+                context = context
             )
         }
     }

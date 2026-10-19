@@ -13,11 +13,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
@@ -106,9 +109,42 @@ fun ReaderFloatingTtsButton(
     val isPlaying = ttsState == TtsState.PLAYING
     val haptic = LocalHapticFeedback.current
 
-    // Drag offsets for free positioning
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    val minOffsetX = with(density) { -(screenWidthPx - 210.dp.toPx()) }
+    val maxOffsetX = with(density) { 10.dp.toPx() }
+    val minOffsetY = with(density) { -(screenHeightPx - 180.dp.toPx()) }
+    val maxOffsetY = with(density) { 10.dp.toPx() }
+
+    // Drag offsets for free positioning (bounded within safe screen margins)
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // Subtle green breathing animation while narrating actively
+    val infiniteTransition = rememberInfiniteTransition(label = "floatingPulse")
+    val pulseGlow by infiniteTransition.animateFloat(
+        initialValue = 0.40f,
+        targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseGlow"
+    )
+
+    val activeBorderColor = if (isPlaying) {
+        HiddenForest.Accent.copy(alpha = pulseGlow)
+    } else {
+        HiddenForest.Accent.copy(alpha = 0.35f)
+    }
+    val ambientGlow = if (isPlaying) {
+        HiddenForest.Accent.copy(alpha = pulseGlow * 0.45f)
+    } else {
+        HiddenForest.Accent.copy(alpha = 0.20f)
+    }
 
     // Progress arc animation
     val animatedProgress by animateFloatAsState(
@@ -132,25 +168,25 @@ fun ReaderFloatingTtsButton(
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
-                    offsetX += dragAmount.x
-                    offsetY += dragAmount.y
+                    offsetX = (offsetX + dragAmount.x).coerceIn(minOffsetX, maxOffsetX)
+                    offsetY = (offsetY + dragAmount.y).coerceIn(minOffsetY, maxOffsetY)
                 }
             }
     ) {
         Box(
             modifier = Modifier
                 .shadow(
-                    elevation = 16.dp,
+                    elevation = if (isPlaying) 16.dp else 8.dp,
                     shape = RoundedCornerShape(28.dp),
-                    ambientColor = HiddenForest.Accent.copy(alpha = 0.35f),
-                    spotColor = HiddenForest.Accent.copy(alpha = 0.35f)
+                    ambientColor = ambientGlow,
+                    spotColor = ambientGlow
                 )
                 .clip(RoundedCornerShape(28.dp))
                 .hazeChild(state = hazeState, style = ReaderDesign.DeepGlassStyle)
-                .background(Color(0xFF0E1F16).copy(alpha = 0.92f))
+                .background(Color(0xFF0E1F16).copy(alpha = 0.94f))
                 .border(
-                    width = 1.dp,
-                    color = HiddenForest.Accent.copy(alpha = 0.45f),
+                    width = if (isPlaying) 1.5.dp else 1.dp,
+                    color = activeBorderColor,
                     shape = RoundedCornerShape(28.dp)
                 )
                 .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -199,6 +235,26 @@ fun ReaderFloatingTtsButton(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = HiddenForest.Accent
+                    )
+                }
+
+                // 3. Botón compacto para expandir panel completo
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onOpenSettings()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = "Abrir panel completo",
+                        tint = HiddenForest.TextSecondary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
 

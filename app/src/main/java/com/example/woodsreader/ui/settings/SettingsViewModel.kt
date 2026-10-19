@@ -30,7 +30,10 @@ import kotlinx.serialization.json.Json
 import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.SherpaVoiceOption
+import com.example.woodsreader.core.tts.SupportedTtsLanguage
 import com.example.woodsreader.core.tts.TtsManager
+import com.example.woodsreader.core.tts.PronunciationLexiconManager
+import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import java.io.File
@@ -53,6 +56,12 @@ data class StorageSizes(
     val totalBytes: Long get() = databaseBytes + coversBytes + espeakBytes + sherpaBytes
 }
 
+enum class TtsEngineMode {
+    EDGE_ONLINE,
+    SHERPA_OFFLINE,
+    SYSTEM
+}
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val preferencesRepository: UserPreferencesRepository,
@@ -64,7 +73,8 @@ class SettingsViewModel @Inject constructor(
     private val sherpaModelManager: SherpaModelManager,
     private val ttsManager: TtsManager,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
-    private val backupManager: BackupManager
+    private val backupManager: BackupManager,
+    private val pronunciationLexiconManager: PronunciationLexiconManager
 ) : ViewModel() {
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.userPreferencesFlow
@@ -139,8 +149,43 @@ class SettingsViewModel @Inject constructor(
     val useEdgeNeuralTts = edgeNeuralTtsClient.isEnabled
     val selectedEdgeVoice = edgeNeuralTtsClient.selectedVoice
 
+    val acousticsProfile = ttsManager.acousticsProfile
+    val expressiveProsodyEnabled = ttsManager.expressiveProsodyEnabled
+    val dramatizedDialogueEnabled = ttsManager.dramatizedDialogueEnabled
+
+    fun setAcousticsProfile(profile: com.example.woodsreader.core.tts.StudioAcousticsProfile) {
+        ttsManager.setAcousticsProfile(profile)
+    }
+
+    fun setExpressiveProsodyEnabled(enabled: Boolean) {
+        ttsManager.setExpressiveProsodyEnabled(enabled)
+    }
+
+    fun setDramatizedDialogueEnabled(enabled: Boolean) {
+        ttsManager.setDramatizedDialogueEnabled(enabled)
+    }
+
+    fun setTtsEngineMode(mode: TtsEngineMode) {
+        viewModelScope.launch {
+            when (mode) {
+                TtsEngineMode.SHERPA_OFFLINE, TtsEngineMode.EDGE_ONLINE -> {
+                    edgeNeuralTtsClient.setEnabled(false)
+                    preferencesRepository.updateUseSherpaTts(true)
+                    if (sherpaModelManager.isModelReady()) {
+                        ttsManager.initSherpaIfNeeded()
+                    }
+                }
+                TtsEngineMode.SYSTEM -> {
+                    edgeNeuralTtsClient.setEnabled(false)
+                    preferencesRepository.updateUseSherpaTts(false)
+                    ttsManager.resetSherpa()
+                }
+            }
+        }
+    }
+
     fun setUseEdgeNeuralTts(enabled: Boolean) {
-        edgeNeuralTtsClient.setEnabled(enabled)
+        edgeNeuralTtsClient.setEnabled(false)
     }
 
     fun selectEdgeVoice(option: EdgeVoiceOption) {
@@ -171,10 +216,40 @@ class SettingsViewModel @Inject constructor(
     fun deleteSherpaVoice(option: SherpaVoiceOption) {
         viewModelScope.launch {
             ttsManager.stop()
-            sherpaModelManager.selectVoiceOption(option)
-            sherpaModelManager.deleteModel()
+            sherpaModelManager.deleteVoice(option)
             ttsManager.resetSherpa()
         }
+    }
+
+    val builtInLexiconEnabled = pronunciationLexiconManager.builtInEnabled
+    val customPhoneticRules = pronunciationLexiconManager.customRules
+
+    fun setBuiltInLexiconEnabled(enabled: Boolean) {
+        pronunciationLexiconManager.setBuiltInEnabled(enabled)
+    }
+
+    fun addCustomPhoneticRule(original: String, phonetic: String, caseSensitive: Boolean = false) {
+        pronunciationLexiconManager.addCustomRule(original, phonetic, caseSensitive)
+    }
+
+    fun removeCustomPhoneticRule(id: String) {
+        pronunciationLexiconManager.removeCustomRule(id)
+    }
+
+    fun getVoiceSizeBytes(option: SherpaVoiceOption): Long {
+        return sherpaModelManager.getVoiceSizeBytes(option)
+    }
+
+    val selectedLanguageFilter = sherpaModelManager.selectedLanguageFilter
+    val autoDetectBookLanguage = sherpaModelManager.autoDetectBookLanguage
+    val downloadedModelIds = sherpaModelManager.downloadedModelIds
+
+    fun setSelectedLanguageFilter(language: SupportedTtsLanguage) {
+        sherpaModelManager.setSelectedLanguageFilter(language)
+    }
+
+    fun setAutoDetectBookLanguage(enabled: Boolean) {
+        sherpaModelManager.setAutoDetectBookLanguage(enabled)
     }
 
     private val _showSherpaDownloadDialog = MutableStateFlow(false)

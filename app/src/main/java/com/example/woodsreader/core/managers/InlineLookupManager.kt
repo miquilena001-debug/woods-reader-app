@@ -259,10 +259,15 @@ class InlineLookupManager @Inject constructor() {
                 )
             }
 
+            val fallbackDef = if (spanishEquivalent.equals(rawClean, ignoreCase = true)) {
+                "Término: «$rawClean». Consulta acepciones adicionales en el navegador si requieres más detalles."
+            } else {
+                spanishEquivalent
+            }
             LookupResult.Success(
                 modeTitle = "Definición · $rawClean",
                 originalText = rawClean,
-                primaryResult = spanishEquivalent
+                primaryResult = fallbackDef
             )
         }.getOrElse {
             LookupResult.Error("Definición", "Sin conexión para consultar el diccionario")
@@ -283,17 +288,18 @@ class InlineLookupManager @Inject constructor() {
                 val json = JSONObject(response.body?.string().orEmpty())
                 val esArray = json.optJSONArray("es") ?: return emptyList()
                 val results = mutableListOf<String>()
+                val cleanTerm = term.trim()
                 for (s in 0 until minOf(esArray.length(), 2)) {
                     val section = esArray.optJSONObject(s) ?: continue
                     val pos = section.optString("partOfSpeech").trim()
                     val defs = section.optJSONArray("definitions") ?: continue
-                    for (i in 0 until minOf(defs.length(), 3)) {
+                    for (i in 0 until minOf(defs.length(), 4)) {
                         val rawDef = defs.optJSONObject(i)?.optString("definition").orEmpty()
                         val stripped = rawDef
                             .replace(Regex("<[^>]*>"), "")
                             .replace(Regex("""\s+"""), " ")
                             .trim()
-                        if (stripped.isNotBlank() && results.size < 3) {
+                        if (stripped.isNotBlank() && !stripped.equals(cleanTerm, ignoreCase = true) && results.size < 3) {
                             val prefix = if (pos.isNotBlank()) "[$pos] " else ""
                             results.add("${results.size + 1}. $prefix$stripped")
                         }

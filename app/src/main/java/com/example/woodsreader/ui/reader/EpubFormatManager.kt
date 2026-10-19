@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.util.Log
+import android.util.LruCache
 import com.example.woodsreader.data.model.ReadingMode
 import com.example.woodsreader.service.ReaderTtsService
 import kotlinx.coroutines.CoroutineScope
@@ -79,9 +80,28 @@ class EpubFormatManager @Inject constructor(
     @Volatile
     private var cacheGeneration: Int = 0
 
+    private val resourceLruCache = LruCache<String, ProcessedDocument>(10)
+
+    fun putCachedDocument(href: String, document: ProcessedDocument) {
+        val targetRes = href.substringAfterLast('/').substringBefore('#')
+        resourceLruCache.put(targetRes, document)
+        resourceLruCache.put(href.substringBefore('#'), document)
+        resourceLruCache.put(href, document)
+        lastProcessedHref = href
+        _currentProcessedDocument.value = document
+    }
+
+    fun getCachedDocument(href: String): ProcessedDocument? {
+        val targetRes = href.substringAfterLast('/').substringBefore('#')
+        return resourceLruCache.get(targetRes)
+            ?: resourceLruCache.get(href.substringBefore('#'))
+            ?: resourceLruCache.get(href)
+    }
+
     fun invalidateCache() {
         cacheGeneration++
         lastProcessedHref = null
+        resourceLruCache.evictAll()
     }
 
     private val _isServiceBound = MutableStateFlow(false)
@@ -109,6 +129,7 @@ class EpubFormatManager @Inject constructor(
     
     private var onTtsStateChanged: ((ReadingMode, String) -> Unit)? = null
     private var onLocatorChanged: ((Locator) -> Unit)? = null
+    private var onChapterFinished: (() -> Unit)? = null
 
     fun updateNavigator(nav: Navigator?) {
         currentNavigator = nav
@@ -135,9 +156,15 @@ class EpubFormatManager @Inject constructor(
         }
     }
 
-    fun initialize(context: Context, stateChanged: (ReadingMode, String) -> Unit, locatorChanged: (Locator) -> Unit) {
+    fun initialize(
+        context: Context,
+        stateChanged: (ReadingMode, String) -> Unit,
+        locatorChanged: (Locator) -> Unit,
+        chapterFinished: (() -> Unit)? = null
+    ) {
         onTtsStateChanged = stateChanged
         onLocatorChanged = locatorChanged
+        onChapterFinished = chapterFinished
         val intent = Intent(context, ReaderTtsService::class.java)
         // Solo vinculamos el servicio al inicio. startForegroundService() se llamará 
         // únicamente cuando el usuario inicie la reproducción (playTts),
@@ -209,6 +236,19 @@ class EpubFormatManager @Inject constructor(
         if (targetRes.isNotEmpty() && targetRes == lastRes && _currentProcessedDocument.value != null && rules.isEmpty()) {
             return@withContext _currentProcessedDocument.value
         }
+
+        // Consultar la caché LRU en memoria antes de leer/parsear el HTML del zip EPUB
+        if (rules.isEmpty()) {
+            val cachedDoc = getCachedDocument(href)
+            if (cachedDoc != null) {
+                if (startGeneration == cacheGeneration) {
+                    lastProcessedHref = href
+                    _currentProcessedDocument.value = cachedDoc
+                }
+                return@withContext cachedDoc
+            }
+        }
+
         val pub = currentPublication ?: return@withContext null
         val baseHref = href.substringBefore('#')
         val link = pub.readingOrder.find { 
@@ -247,6 +287,7 @@ class EpubFormatManager @Inject constructor(
         if (startGeneration == cacheGeneration) {
             lastProcessedHref = href
             _currentProcessedDocument.value = processed
+            putCachedDocument(href, processed)
         }
         processed
     }
@@ -281,7 +322,37 @@ class EpubFormatManager @Inject constructor(
                             }
                         }
                         is MediaNavigator.State.Ended -> {
+                            Log.d(TAG, "TTS reached MediaNavigator.State.Ended, ttsUserStopped=$ttsUserStopped")
+                            if (!ttsUserStopped) {
+                                val pub = currentPublication
+                                val order = pub?.readingOrder
+                                val currentLoc = _currentTtsLocator.value ?: (currentNavigator as? VisualNavigator)?.currentLocator?.value
+                                val currentHref = currentLoc?.href?.toString()
+                                val currentIdx = if (order != null && currentHref != null) {
+                                    val targetRes = currentHref.substringAfterLast('/').substringBefore('#')
+                                    order.indexOfFirst { 
+                                        it.href.toString() == currentHref || 
+                                        it.href.toString().substringAfterLast('/') == targetRes 
+                                    }
+                                } else -1
+
+                                if (pub != null && order != null && currentIdx != -1 && currentIdx + 1 < order.size) {
+                                    val nextLink = order[currentIdx + 1]
+                                    val nextLoc = pub.locatorFromLink(nextLink)
+                                    if (nextLoc != null) {
+                                        Log.d(TAG, "TTS auto-advance: starting next chapter (${currentIdx + 1}/${order.size}): ${nextLink.title ?: nextLink.href}")
+                                        val appContext = ttsService?.applicationContext
+                                        if (appContext != null) {
+                                            (currentNavigator as? VisualNavigator)?.go(nextLoc, animated = false)
+                                            playTts(appContext, nextLoc, currentNavigator, currentScope, pub)
+                                            onChapterFinished?.invoke()
+                                            return@collectLatest
+                                        }
+                                    }
+                                }
+                            }
                             hasEverStartedTts = false
+                            onChapterFinished?.invoke()
                             TtsState.STOPPED
                         }
                         is MediaNavigator.State.Failure -> {
@@ -501,6 +572,7 @@ class EpubFormatManager @Inject constructor(
         _ttsState.value = TtsState.IDLE
         onTtsStateChanged = null
         onLocatorChanged = null
+        onChapterFinished = null
     }
 }
 

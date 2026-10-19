@@ -205,4 +205,36 @@ object EpubPackageSanitizer {
         return mediaType.equals("application/x-dtbncx+xml", ignoreCase = true) ||
             href.substringBefore('#').substringBefore('?').endsWith(".ncx", ignoreCase = true)
     }
+
+    /**
+     * Crea una versión ligera de Publication para EpubNavigatorFactory / EpubNavigatorFragment.
+     * ⚠️ SOLUCIÓN CRÍTICA PARA LIBROS CON CIENTOS O MILES DE CAPÍTULOS:
+     * Readium 3.0.3 tiene un bug severo en EpubNavigatorFragment.tableOfContentsTitleByHref$2 donde
+     * realiza copias recursivas con el operador '+' sobre HashMaps por cada enlace del TOC en el hilo principal.
+     * En libros con > 80 capítulos (ej. web novels con 2,225 capítulos), esto genera más de 2.5 millones de
+     * entradas de mapa y congela la UI durante más de 40 segundos hasta provocar java.lang.OutOfMemoryError.
+     * EpubNavigatorFragment solo usa tableOfContents para nombrar el Locator, no para renderizar el libro
+     * (el renderizado se hace 100% sobre readingOrder).
+     * Pasando tableOfContents vacío al navegador, el libro abre de forma INSTANTÁNEA (0 ms).
+     * El TOC completo original se mantiene intacto en state.publication para TocBottomSheet.
+     */
+    fun toLightweightNavPublication(publication: Publication): Publication {
+        if (publication.tableOfContents.size <= 60) return publication
+        return try {
+            val containerField = Publication::class.java.getDeclaredField("container").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val container = containerField.get(publication) as org.readium.r2.shared.util.data.Container<org.readium.r2.shared.util.resource.Resource>
+            val servicesBuilderField = Publication::class.java.getDeclaredField("servicesBuilder").apply { isAccessible = true }
+            val servicesBuilder = servicesBuilderField.get(publication) as? Publication.ServicesBuilder
+            val safeManifest = publication.manifest.copy(tableOfContents = emptyList())
+            Publication(
+                manifest = safeManifest,
+                container = container,
+                servicesBuilder = servicesBuilder ?: Publication.ServicesBuilder()
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("EpubPackageSanitizer", "No se pudo crear publicación ligera para Navigator, usando original", e)
+            publication
+        }
+    }
 }

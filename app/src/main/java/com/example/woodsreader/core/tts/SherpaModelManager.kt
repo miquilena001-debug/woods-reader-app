@@ -2,10 +2,12 @@ package com.example.woodsreader.core.tts
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -32,76 +34,152 @@ enum class SherpaVoiceOption(
     val onnxFileName: String,
     val downloadUrl: String,
     val minBytes: Long = 40_000_000L,
-    val isKokoro: Boolean = false,
-    val voicesBinFileName: String = "voices.bin",
-    val speakerId: Int = 0
+    val speakerId: Int = 0,
+    val languageCode: String = "es"
 ) {
-    KOKORO_DORA_ES(
-        id = "kokoro-es-dora",
-        displayName = "✨ Kokoro Dora (Ultra-Realista Femenina)",
-        accent = "Español · Kokoro-82M Studio",
-        dirName = "kokoro-multi-lang-v1_0",
-        onnxFileName = "model.onnx",
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
-        minBytes = 250_000_000L,
-        isKokoro = true,
-        voicesBinFileName = "voices.bin",
-        speakerId = 28 // ef_dora en kokoro-multi-lang-v1_0
-    ),
-    KOKORO_ALEX_ES(
-        id = "kokoro-es-alex",
-        displayName = "✨ Kokoro Alex (Ultra-Realista Masculina)",
-        accent = "Español · Kokoro-82M Studio",
-        dirName = "kokoro-multi-lang-v1_0",
-        onnxFileName = "model.onnx",
-        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
-        minBytes = 250_000_000L,
-        isKokoro = true,
-        voicesBinFileName = "voices.bin",
-        speakerId = 29 // em_alex en kokoro-multi-lang-v1_0
-    ),
+    // 🇪🇸 Español (es)
     CLAUDE_MX(
         id = "es_MX-claude-high",
-        displayName = "Claudia (Voz Femenina Alta Definición)",
-        accent = "Español (México / Latam)",
+        displayName = "Claudia (Estudio Latam HD)",
+        accent = "Español (México / Latam) · Femenina Cálida",
         dirName = "vits-piper-es_MX-claude-high",
         onnxFileName = "es_MX-claude-high.onnx",
         downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-claude-high.tar.bz2",
-        minBytes = 50_000_000L
+        minBytes = 50_000_000L,
+        languageCode = "es"
     ),
     ALD_MX(
         id = "es_MX-ald-medium",
-        displayName = "Alejandro (Latino Neutro)",
-        accent = "Español (México / Latam)",
+        displayName = "Alejandro (Narrador Latam)",
+        accent = "Español (México / Latam) · Masculina Firme",
         dirName = "vits-piper-es_MX-ald-medium",
         onnxFileName = "es_MX-ald-medium.onnx",
         downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_MX-ald-medium.tar.bz2",
-        minBytes = 45_000_000L
+        minBytes = 45_000_000L,
+        languageCode = "es"
     ),
     DAVEFX_ES(
         id = "es_ES-davefx-medium",
-        displayName = "David (Narrador Clásico)",
-        accent = "Español (España)",
+        displayName = "David (Estudio España)",
+        accent = "Español (España) · Masculina Documental",
         dirName = "vits-piper-es_ES-davefx-medium",
         onnxFileName = "es_ES-davefx-medium.onnx",
         downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-davefx-medium.tar.bz2",
-        minBytes = 50_000_000L
+        minBytes = 45_000_000L,
+        languageCode = "es"
     ),
     CARLFM_ES(
         id = "es_ES-carlfm-x_low",
-        displayName = "Carlos (Ultraligero y Rápido)",
-        accent = "Español (España)",
+        displayName = "Carlos (Ultra-Rápido)",
+        accent = "Español (España) · Masculina Ligera",
         dirName = "vits-piper-es_ES-carlfm-x_low",
         onnxFileName = "es_ES-carlfm-x_low.onnx",
         downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-es_ES-carlfm-x_low.tar.bz2",
-        minBytes = 15_000_000L
+        minBytes = 15_000_000L,
+        languageCode = "es"
+    ),
+
+    // 🇺🇸🇬🇧 Inglés (en)
+    LESSAC_US(
+        id = "en_US-lessac-medium",
+        displayName = "Lessac (Audiobook US HD)",
+        accent = "English (US) · Femenina Expresiva",
+        dirName = "vits-piper-en_US-lessac-medium",
+        onnxFileName = "en_US-lessac-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "en"
+    ),
+    RYAN_US(
+        id = "en_US-ryan-medium",
+        displayName = "Ryan (Narrator US)",
+        accent = "English (US) · Masculina Profunda",
+        dirName = "vits-piper-en_US-ryan-medium",
+        onnxFileName = "en_US-ryan-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "en"
+    ),
+    AMY_US(
+        id = "en_US-amy-medium",
+        displayName = "Amy (Storyteller US)",
+        accent = "English (US) · Femenina Suave",
+        dirName = "vits-piper-en_US-amy-medium",
+        onnxFileName = "en_US-amy-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "en"
+    ),
+    ALAN_GB(
+        id = "en_GB-alan-medium",
+        displayName = "Alan (British Studio)",
+        accent = "English (UK) · Masculina Británica",
+        dirName = "vits-piper-en_GB-alan-medium",
+        onnxFileName = "en_GB-alan-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-alan-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "en"
+    ),
+
+    // 🇧🇷 Portugués (pt)
+    FABER_BR(
+        id = "pt_BR-faber-medium",
+        displayName = "Faber (Estúdio Brasil)",
+        accent = "Português (Brasil) · Masculina Natural",
+        dirName = "vits-piper-pt_BR-faber-medium",
+        onnxFileName = "pt_BR-faber-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-pt_BR-faber-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "pt"
+    ),
+
+    // 🇫🇷 Francés (fr)
+    SIWIS_FR(
+        id = "fr_FR-siwis-medium",
+        displayName = "Siwis (Studio France)",
+        accent = "Français (France) · Femenina Clara",
+        dirName = "vits-piper-fr_FR-siwis-medium",
+        onnxFileName = "fr_FR-siwis-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "fr"
+    ),
+
+    // 🇩🇪 Alemán (de)
+    THORSTEN_DE(
+        id = "de_DE-thorsten-medium",
+        displayName = "Thorsten (Studio Deutschland)",
+        accent = "Deutsch (Deutschland) · Masculina Cálida",
+        dirName = "vits-piper-de_DE-thorsten-medium",
+        onnxFileName = "de_DE-thorsten-medium.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-de_DE-thorsten-medium.tar.bz2",
+        minBytes = 45_000_000L,
+        languageCode = "de"
+    ),
+
+    // 🇮🇹 Italiano (it)
+    RICCARDO_IT(
+        id = "it_IT-riccardo-x_low",
+        displayName = "Riccardo (Studio Italia)",
+        accent = "Italiano (Italia) · Masculina Fluida",
+        dirName = "vits-piper-it_IT-riccardo-x_low",
+        onnxFileName = "it_IT-riccardo-x_low.onnx",
+        downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-it_IT-riccardo-x_low.tar.bz2",
+        minBytes = 15_000_000L,
+        languageCode = "it"
     );
 
+    val language: SupportedTtsLanguage get() = SupportedTtsLanguage.fromCode(languageCode)
+
     companion object {
+        val AVAILABLE_MODELS: List<SherpaVoiceOption> = entries
+
         fun fromId(id: String?): SherpaVoiceOption =
-            entries.find { it.id == id } ?: DAVEFX_ES
+            entries.find { it.id == id } ?: ALD_MX
     }
 }
+
+typealias LocalVoiceModel = SherpaVoiceOption
 
 sealed interface SherpaDownloadState {
     data object Idle : SherpaDownloadState
@@ -154,6 +232,37 @@ class SherpaModelManager @Inject constructor(
     )
     val downloadState: StateFlow<SherpaDownloadState> = _downloadState.asStateFlow()
 
+    private val _selectedLanguageFilter = MutableStateFlow(SupportedTtsLanguage.SPANISH)
+    val selectedLanguageFilter: StateFlow<SupportedTtsLanguage> = _selectedLanguageFilter.asStateFlow()
+
+    fun setSelectedLanguageFilter(language: SupportedTtsLanguage) {
+        _selectedLanguageFilter.value = language
+    }
+
+    private val _autoDetectBookLanguage = MutableStateFlow(
+        prefs.getBoolean("auto_detect_book_language", true)
+    )
+    val autoDetectBookLanguage: StateFlow<Boolean> = _autoDetectBookLanguage.asStateFlow()
+
+    fun setAutoDetectBookLanguage(enabled: Boolean) {
+        _autoDetectBookLanguage.value = enabled
+        prefs.edit().putBoolean("auto_detect_book_language", enabled).apply()
+    }
+
+    private val _downloadedModelIds = MutableStateFlow<Set<String>>(getCurrentlyDownloadedModelIds())
+    val downloadedModelIds: StateFlow<Set<String>> = _downloadedModelIds.asStateFlow()
+
+    fun refreshDownloadedModels() {
+        _downloadedModelIds.value = getCurrentlyDownloadedModelIds()
+    }
+
+    fun getCurrentlyDownloadedModelIds(): Set<String> {
+        return SherpaVoiceOption.entries
+            .filter { isVoiceDownloaded(it) }
+            .map { it.id }
+            .toSet()
+    }
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -161,17 +270,33 @@ class SherpaModelManager @Inject constructor(
         .followSslRedirects(true)
         .build()
 
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val kokoroDir = File(baseDir, "kokoro-multi-lang-v1_0")
+                if (kokoroDir.exists()) {
+                    val deleted = kokoroDir.deleteRecursively()
+                    Timber.i("Directorio de Kokoro-82M eliminado para liberar espacio: $deleted")
+                }
+                val kokoroArchive = File(baseDir, "kokoro-multi-lang-v1_0.tar.bz2")
+                if (kokoroArchive.exists()) {
+                    kokoroArchive.delete()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error al limpiar archivos residuales de Kokoro-82M")
+            }
+        }
+    }
+
     fun isVoiceDownloaded(option: SherpaVoiceOption): Boolean {
         val dir = File(baseDir, option.dirName)
         val onnx = File(dir, option.onnxFileName)
         val tokens = File(dir, TOKENS_FILE_NAME)
         val espeak = File(dir, ESPEAK_DIR_NAME)
-        val voicesOk = if (option.isKokoro) File(dir, option.voicesBinFileName).exists() else true
         return onnx.exists() &&
                 onnx.length() > option.minBytes &&
                 tokens.exists() &&
                 tokens.length() > 0 &&
-                voicesOk &&
                 espeak.exists() &&
                 espeak.isDirectory &&
                 (espeak.list()?.isNotEmpty() == true)
@@ -189,41 +314,6 @@ class SherpaModelManager @Inject constructor(
         val tokensPath = File(dir, TOKENS_FILE_NAME).absolutePath
         val espeakPath = File(dir, ESPEAK_DIR_NAME).absolutePath
 
-        if (voice.isKokoro) {
-            return try {
-                val voicesPath = File(dir, voice.voicesBinFileName).absolutePath
-                val kokoroClass = Class.forName("com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig")
-                val kokoroInstance = runCatching {
-                    val inst = kokoroClass.getDeclaredConstructor().newInstance()
-                    kokoroClass.getDeclaredField("model").apply { isAccessible = true }.set(inst, onnxPath)
-                    kokoroClass.getDeclaredField("voices").apply { isAccessible = true }.set(inst, voicesPath)
-                    kokoroClass.getDeclaredField("tokens").apply { isAccessible = true }.set(inst, tokensPath)
-                    kokoroClass.getDeclaredField("dataDir").apply { isAccessible = true }.set(inst, espeakPath)
-                    inst
-                }.getOrElse {
-                    val ctor = kokoroClass.constructors.first { it.parameterTypes.size == 7 }
-                    ctor.newInstance(onnxPath, voicesPath, tokensPath, espeakPath, "", "", 1.0f)
-                }
-                runCatching {
-                    kokoroClass.getDeclaredField("lang").apply { isAccessible = true; set(kokoroInstance, "es") }
-                }
-
-                val modelConfig = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
-                    numThreads = 4,
-                    debug = false
-                )
-                modelConfig.javaClass.getDeclaredField("kokoro").apply {
-                    isAccessible = true
-                    set(modelConfig, kokoroInstance)
-                }
-                val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(model = modelConfig)
-                com.k2fsa.sherpa.onnx.OfflineTts(null, config)
-            } catch (e: Exception) {
-                Timber.e(e, "Tu versión de sherpa-onnx.aar no incluye soporte nativo para Kokoro")
-                null
-            }
-        }
-
         val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
             model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
                 vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
@@ -235,11 +325,52 @@ class SherpaModelManager @Inject constructor(
                     noiseScaleW = 0.8f,
                     lengthScale = 1.0f
                 ),
-                numThreads = 4,
+                numThreads = 2,
                 debug = false
             )
         )
         return com.k2fsa.sherpa.onnx.OfflineTts(null, config)
+    }
+
+    fun splitIntoSafeClauses(text: String, maxChars: Int = 110): List<String> {
+        val cleaned = text.replace(Regex("""\s+"""), " ").trim()
+        if (cleaned.isEmpty()) return emptyList()
+        if (cleaned.length <= maxChars) return listOf(cleaned)
+
+        val result = mutableListOf<String>()
+        val primaryParts = cleaned.split(Regex("""(?<=[.!?;:…—])\s+|(?<=,)\s+"""))
+        var current = StringBuilder()
+
+        for (part in primaryParts) {
+            val trimmed = part.trim()
+            if (trimmed.isEmpty()) continue
+            if (current.isEmpty()) {
+                if (trimmed.length <= maxChars) {
+                    current.append(trimmed)
+                } else {
+                    // Cortar por palabras si una cláusula sin comas supera maxChars
+                    val words = trimmed.split(" ")
+                    for (w in words) {
+                        if (current.length + w.length + 1 > maxChars && current.isNotEmpty()) {
+                            result.add(current.toString().trim())
+                            current = StringBuilder(w)
+                        } else {
+                            if (current.isNotEmpty()) current.append(" ")
+                            current.append(w)
+                        }
+                    }
+                }
+            } else if (current.length + 1 + trimmed.length <= maxChars) {
+                current.append(" ").append(trimmed)
+            } else {
+                result.add(current.toString().trim())
+                current = StringBuilder(trimmed)
+            }
+        }
+        if (current.isNotEmpty()) {
+            result.add(current.toString().trim())
+        }
+        return result.filter { it.isNotBlank() }
     }
 
     fun selectVoiceOption(option: SherpaVoiceOption) {
@@ -369,6 +500,7 @@ class SherpaModelManager @Inject constructor(
 
                 if (isModelReady()) {
                     Timber.i("Modelo Sherpa ONNX extraído y verificado con éxito en ${modelDir.absolutePath}")
+                    refreshDownloadedModels()
                     _downloadState.value = SherpaDownloadState.Ready
                     Result.success(Unit)
                 } else {
@@ -393,6 +525,7 @@ class SherpaModelManager @Inject constructor(
     fun deleteModel(): Boolean {
         return try {
             val deleted = modelDir.deleteRecursively()
+            refreshDownloadedModels()
             _downloadState.value = SherpaDownloadState.Idle
             Timber.i("Modelo Sherpa ONNX eliminado: $deleted")
             deleted
@@ -406,6 +539,7 @@ class SherpaModelManager @Inject constructor(
         return try {
             val dir = File(baseDir, option.dirName)
             val deleted = dir.deleteRecursively()
+            refreshDownloadedModels()
             if (_selectedVoice.value == option) {
                 _downloadState.value = SherpaDownloadState.Idle
             }
@@ -417,9 +551,29 @@ class SherpaModelManager @Inject constructor(
         }
     }
 
+    fun deleteDownloadedModel(modelId: String): Boolean {
+        val option = SherpaVoiceOption.fromId(modelId)
+        return deleteVoice(option)
+    }
+
+    fun findBestVoiceForLanguage(language: SupportedTtsLanguage): SherpaVoiceOption? {
+        return SherpaVoiceOption.entries
+            .filter { it.languageCode == language.code && isVoiceDownloaded(it) }
+            .firstOrNull()
+    }
+
     fun getModelSizeBytes(): Long {
         if (!modelDir.exists()) return 0L
         return modelDir.walkTopDown()
+            .filter { it.isFile }
+            .map { it.length() }
+            .sum()
+    }
+
+    fun getVoiceSizeBytes(option: SherpaVoiceOption): Long {
+        val dir = File(baseDir, option.dirName)
+        if (!dir.exists()) return 0L
+        return dir.walkTopDown()
             .filter { it.isFile }
             .map { it.length() }
             .sum()

@@ -28,8 +28,8 @@ fun ReaderBottomBar(
             .background(
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        Color(0xFF0A140F).copy(alpha = 0.92f),
-                        Color(0xFF0A140F).copy(alpha = 0.86f)
+                        Color(0xFF0A140F).copy(alpha = 0.96f),
+                        Color(0xFF0A140F).copy(alpha = 0.96f)
                     )
                 )
             )
@@ -48,7 +48,7 @@ fun ReaderBottomBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ReaderTab.values().forEach { tab ->
+                ReaderTab.entries.forEach { tab ->
                     val isActive = activeTab == tab
                     Box(
                         modifier = Modifier

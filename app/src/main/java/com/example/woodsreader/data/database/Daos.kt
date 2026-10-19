@@ -70,7 +70,12 @@ interface BookDao {
         UPDATE books SET
             readingProgressPercent = :progress,
             currentLocatorJson = :locator,
-            lastOpenedAt = :time
+            lastOpenedAt = :time,
+            readingStatus = CASE
+                WHEN :progress >= 0.99 THEN 'COMPLETED'
+                WHEN :progress > 0.0 AND readingStatus = 'NOT_STARTED' THEN 'IN_PROGRESS'
+                ELSE readingStatus
+            END
         WHERE id = :id
     """)
     suspend fun updateProgress(id: String, progress: Float, locator: String, time: Long)
@@ -81,7 +86,12 @@ interface BookDao {
             currentLocatorJson = :locator,
             fallbackLocatorHref = :fallbackHref,
             fallbackLocatorPosition = :fallbackPosition,
-            lastOpenedAt = :time
+            lastOpenedAt = :time,
+            readingStatus = CASE
+                WHEN :progress >= 0.99 THEN 'COMPLETED'
+                WHEN :progress > 0.0 AND readingStatus = 'NOT_STARTED' THEN 'IN_PROGRESS'
+                ELSE readingStatus
+            END
         WHERE id = :id
     """)
     suspend fun updateProgressWithFallback(

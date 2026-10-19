@@ -1,6 +1,7 @@
 package com.example.woodsreader.core.tts
 
 import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +14,8 @@ import org.readium.navigator.media.tts.android.AndroidTtsSettings
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.util.Language
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
+
+typealias SherpaOnnxTtsEngine = SherpaTtsEngine
 
 /**
  * Motor TTS personalizado que envuelve [AndroidTtsEngine] y redirige la síntesis
@@ -28,7 +31,9 @@ import com.example.woodsreader.data.datastore.UserPreferencesRepository
 class SherpaTtsEngine(
     private val delegate: TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>,
     private val ttsManager: TtsManager,
-    private val userPreferencesRepository: UserPreferencesRepository
+    private val userPreferencesRepository: UserPreferencesRepository,
+    context: Context,
+    val pronunciationLexiconManager: PronunciationLexiconManager? = null
 ) : TtsEngine<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice> {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -38,6 +43,34 @@ class SherpaTtsEngine(
 
     // Listener que Readium inyecta en nuestro engine para recibir eventos
     private var engineListener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
+
+    // ── Woods Studio Voice HD: Delegación al TtsManager centralizado ───────────
+    val acousticsProfile: StateFlow<StudioAcousticsProfile> = ttsManager.acousticsProfile
+    val expressiveProsodyEnabled: StateFlow<Boolean> = ttsManager.expressiveProsodyEnabled
+    val dramatizedDialogueEnabled: StateFlow<Boolean> = ttsManager.dramatizedDialogueEnabled
+    val secondaryDialogueVoiceId: StateFlow<String?> = ttsManager.secondaryDialogueVoiceId
+
+    val selectedLanguageFilter: StateFlow<SupportedTtsLanguage> = ttsManager.selectedLanguageFilter
+    val autoDetectBookLanguage: StateFlow<Boolean> = ttsManager.autoDetectBookLanguage
+    val downloadedModelIds: StateFlow<Set<String>> = ttsManager.downloadedModelIds
+
+    // ── Paisajes Sonoros Procedurales y Temporizador Inteligente ──────────────
+    val ambientSoundscapeEngine: AmbientSoundscapeEngine = ttsManager.ambientSoundscapeEngine
+    val soundscapeMode: StateFlow<SoundscapeMode> = ttsManager.soundscapeMode
+    val soundscapeIntensity: StateFlow<Float> = ttsManager.soundscapeIntensity
+    val smartSleepTimerManager: SmartSleepTimerManager = ttsManager.smartSleepTimerManager
+
+    fun setAcousticsProfile(profile: StudioAcousticsProfile) = ttsManager.setAcousticsProfile(profile)
+    fun setExpressiveProsodyEnabled(enabled: Boolean) = ttsManager.setExpressiveProsodyEnabled(enabled)
+    fun setDramatizedDialogueEnabled(enabled: Boolean) = ttsManager.setDramatizedDialogueEnabled(enabled)
+    fun setSecondaryDialogueVoiceId(voiceId: String?) = ttsManager.setSecondaryDialogueVoiceId(voiceId)
+
+    fun setSelectedLanguageFilter(language: SupportedTtsLanguage) = ttsManager.setSelectedLanguageFilter(language)
+    fun setAutoDetectBookLanguage(enabled: Boolean) = ttsManager.setAutoDetectBookLanguage(enabled)
+    fun deleteDownloadedModel(modelId: String): Boolean = ttsManager.deleteDownloadedModel(modelId)
+
+    fun setSoundscapeMode(mode: SoundscapeMode) = ttsManager.setSoundscapeMode(mode)
+    fun setSoundscapeIntensity(intensity: Float) = ttsManager.setSoundscapeIntensity(intensity)
 
     init {
         scope.launch {
@@ -130,6 +163,21 @@ class SherpaTtsEngine(
             }
         }
     }
+
+    /**
+     * Sintetiza texto con el motor de estudio "Woods Studio Voice HD".
+     *
+     * 1. Analiza la oración con [AudiobookProsodyEngine] para obtener [ProsodySegment]s.
+     * 2. Para cada segmento, genera audio crudo con Sherpa ONNX aplicando la velocidad prosódica.
+     * 3. Pasa cada segmento por [StudioAudioDspProcessor.masterAudioSegment] con el perfil acústico activo.
+     * 4. Concatena todos los segmentos en un único [FloatArray] continuo.
+     *
+     * @return Par de (muestras Float 32-bit, sampleRate) o null si falla la generación.
+     */
+    suspend fun synthesizeExpressiveStudioAudio(
+        text: String,
+        baseSpeed: Float
+    ): Pair<FloatArray, Int>? = ttsManager.synthesizeExpressiveStudioAudio(text, baseSpeed)
 
     override fun stop() {
         activeJob?.cancel()

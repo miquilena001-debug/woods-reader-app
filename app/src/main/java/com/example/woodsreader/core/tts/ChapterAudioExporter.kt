@@ -47,7 +47,8 @@ data class ChapterTextChunk(
 @Singleton
 class ChapterAudioExporter @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val sherpaModelManager: SherpaModelManager
+    private val sherpaModelManager: SherpaModelManager,
+    private val ttsManager: TtsManager
 ) {
     private val _exportState = MutableStateFlow<AudioExportState>(AudioExportState.Idle)
     val exportState: StateFlow<AudioExportState> = _exportState.asStateFlow()
@@ -85,15 +86,15 @@ class ChapterAudioExporter @Inject constructor(
             _exportState.value = AudioExportState.Exporting(0f, 1, totalChaptersCount, 0, 1, "Inicializando motor IA y compresor AAC...")
             TtsManager.ensureNativeLibLoaded()
 
-            val tts = sherpaModelManager.createOfflineTtsInstance()
-                ?: throw IllegalStateException("No se pudo inicializar el motor Sherpa ONNX")
+            if (!ttsManager.initSherpaIfNeeded()) {
+                throw IllegalStateException("No se pudo inicializar el motor Sherpa ONNX")
+            }
 
             val tempM4aFile = File(context.cacheDir, "woods_export_${System.currentTimeMillis()}.m4a")
-            val sampleRate = tts.sampleRate().takeIf { it > 0 } ?: 22050
+            val sampleRate = 22050
 
             try {
                 encodeStreamToM4a(
-                    tts = tts,
                     outputFile = tempM4aFile,
                     sampleRate = sampleRate,
                     totalChapters = totalChaptersCount,
@@ -129,7 +130,6 @@ class ChapterAudioExporter @Inject constructor(
                 _exportState.value = AudioExportState.Completed(fileName, fileSizeKb)
                 fileName
             } finally {
-                try { tts.release() } catch (_: Exception) {}
                 if (tempM4aFile.exists()) tempM4aFile.delete()
             }
         }.onFailure { err ->
@@ -142,7 +142,6 @@ class ChapterAudioExporter @Inject constructor(
     }
 
     private suspend fun encodeStreamToM4a(
-        tts: com.k2fsa.sherpa.onnx.OfflineTts,
         outputFile: File,
         sampleRate: Int,
         totalChapters: Int,
@@ -229,15 +228,15 @@ class ChapterAudioExporter @Inject constructor(
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
 
-            val silenceBetweenSentences = FloatArray((sampleRate * 0.22f).toInt())
             val silenceBetweenChapters = FloatArray((sampleRate * 0.80f).toInt())
-            val speakerId = sherpaModelManager.selectedVoice.value.speakerId
 
             for (chapIdx in 0 until totalChapters) {
                 if (!coroutineContext.isActive) throw CancellationException()
                 val chunk = chapterProvider(chapIdx) ?: continue
                 val sentences = chunk.paragraphs
-                    .flatMap { it.split(Regex("""(?<=[.!?…])\s+""")) }
+                    .flatMap { paragraph ->
+                        sherpaModelManager.splitIntoSafeClauses(paragraph, maxChars = 110)
+                    }
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
 
@@ -255,10 +254,9 @@ class ChapterAudioExporter @Inject constructor(
                         label = chunk.chapterTitle
                     )
 
-                    val audio = tts.generate(text = sentence, sid = speakerId, speed = speed)
-                    if (audio.samples.isNotEmpty()) {
-                        feedSamples(audio.samples)
-                        feedSamples(silenceBetweenSentences)
+                    val audio = ttsManager.synthesizeExpressiveStudioAudio(sentence, speed)
+                    if (audio != null && audio.first.isNotEmpty()) {
+                        feedSamples(audio.first)
                     }
                 }
                 feedSamples(silenceBetweenChapters)

@@ -87,7 +87,6 @@ fun ReaderControlBottomSheet(
             .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
             .hazeChild(
                 state = hazeState,
-                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                 style = ReaderDesign.GlassStyle
             )
     ) {
@@ -633,19 +632,20 @@ private fun FontPreviewCard(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.width(72.dp)
+        modifier = Modifier.width(76.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(bgColor)
             .border(1.5.dp, borderColor, RoundedCornerShape(14.dp))
             .clickable { onClick() }
-            .padding(vertical = 12.dp, horizontal = 8.dp)
+            .padding(vertical = 12.dp, horizontal = 6.dp)
     ) {
         Text("Aa", fontFamily = fontFamily,
             style = MaterialTheme.typography.headlineSmall.copy(
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal, fontSize = 22.sp),
             color = if (isSelected) HiddenForest.Accent else HiddenForest.Text)
-        Text(name, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-            color = if (isSelected) HiddenForest.Accent else HiddenForest.TextLow, textAlign = TextAlign.Center)
+        Text(name, style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            color = if (isSelected) HiddenForest.Accent else HiddenForest.TextLow, textAlign = TextAlign.Center,
+            maxLines = 1, softWrap = false)
     }
 }
 

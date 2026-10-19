@@ -1,8 +1,10 @@
 package com.example.woodsreader.ui.reader
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.ContextWrapper
+import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -118,14 +120,7 @@ import com.example.woodsreader.ui.theme.LiterataFamily
 
 
 
-private fun Context.findFragmentActivity(): FragmentActivity? {
-    var ctx = this
-    while (ctx is ContextWrapper) {
-        if (ctx is FragmentActivity) return ctx
-        ctx = ctx.baseContext
-    }
-    return null
-}
+
 
 private fun resolveTocTargetPage(link: Link, locator: Locator?): Int? {
     // 1. Posición directa en el locator
@@ -211,7 +206,6 @@ fun ReaderScreen(
     
     val currentTtsLocator by viewModel.currentTtsLocator.collectAsStateWithLifecycle()
     val currentTtsSentence by viewModel.currentTtsSentence.collectAsStateWithLifecycle(initialValue = "")
-    val currentTtsRange by viewModel.currentTtsRange.collectAsStateWithLifecycle(initialValue = null)
     val globalProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
 
 
@@ -219,6 +213,7 @@ fun ReaderScreen(
     val ttsRules by viewModel.ttsRules.collectAsStateWithLifecycle()
     val bookTimeRemaining by viewModel.bookTimeRemaining.collectAsStateWithLifecycle()
     val chapterTimeRemaining by viewModel.chapterTimeRemaining.collectAsStateWithLifecycle()
+    val chapterInfoForTts by viewModel.chapterInfo.collectAsStateWithLifecycle()
     var showTtsRulesSheet by remember { mutableStateOf(false) }
     
     val navigatorState = remember { mutableStateOf<Navigator?>(null) }
@@ -237,7 +232,9 @@ fun ReaderScreen(
         viewModel.saveCurrentProgressBeforeExit()
     }
 
+    var pendingSelection by remember { mutableStateOf<Selection?>(null) }
     var showHighlightMenu by remember { mutableStateOf<Selection?>(null) }
+    var selectionVersion by remember { mutableLongStateOf(0L) }
     var initialSearchQuery by remember { mutableStateOf("") }
     var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     
@@ -268,6 +265,7 @@ fun ReaderScreen(
     var showDictionarySheet by remember { mutableStateOf(false) }
     var showTranslateSheet by remember { mutableStateOf(false) }
     var selectedTextForQuery by remember { mutableStateOf("") }
+    var quoteToShare by remember { mutableStateOf<String?>(null) }
     var pullProgress by remember { mutableFloatStateOf(0f) }
     var footnoteContent by remember { mutableStateOf<String?>(null) }
 
@@ -297,14 +295,32 @@ fun ReaderScreen(
 
     var activeActionMode by remember { mutableStateOf<ActionMode?>(null) }
     var isLongPressSelecting by remember { mutableStateOf(false) }
+
     val isSelectionModeActive = isLongPressSelecting ||
+        pendingSelection != null ||
         showHighlightMenu != null ||
         activeActionMode != null
     val isSelectionModeActiveState = rememberUpdatedState(isSelectionModeActive)
 
+    LaunchedEffect(selectionVersion) {
+        val target = pendingSelection
+        if (target == null) {
+            showHighlightMenu = null
+        } else {
+            showHighlightMenu = null // Mantener oculto mientras el usuario sigue ajustando los cursores
+            delay(2200L) // Retardo de 2.2 segundos para que se estabilice la selección sin tapar el texto
+            val current = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+            showHighlightMenu = current ?: target
+            viewModel.hideControls()
+        }
+    }
+
     val clearActiveSelection: () -> Unit = {
         lookupState = LookupResult.Idle
         isLongPressSelecting = false
+        pendingSelection = null
+        selectionVersion++
+        showHighlightMenu = null
         try {
             activeActionMode?.finish()
             activeActionMode = null
@@ -312,12 +328,9 @@ fun ReaderScreen(
         try {
             (navigatorState.value as? SelectableNavigator)?.clearSelection()
         } catch (_: Exception) {}
-        showHighlightMenu = null
         val pubView = (navigatorState.value as? VisualNavigator)?.safePublicationView
         if (pubView != null) {
-            pubView.parent?.requestDisallowInterceptTouchEvent(false)
             applyToAllWebViews(pubView) { wv ->
-                wv.clearFocus()
                 wv.evaluateJavascript("if (window.getSelection) { window.getSelection().removeAllRanges(); }", null)
             }
         }
@@ -332,17 +345,13 @@ fun ReaderScreen(
                 (navigatorState.value as? VisualNavigator)?.safePublicationView
                     ?.parent?.requestDisallowInterceptTouchEvent(true)
                 scope.launch {
-                    delay(180L)
-                    repeat(5) { attempt ->
-                        val selection =
-                            (navigatorState.value as? SelectableNavigator)?.currentSelection()
-                        if (selection != null) {
-                            showHighlightMenu = selection
-                            viewModel.hideControls()
-                            isLongPressSelecting = false
-                            return@launch
-                        }
-                        if (attempt < 4) delay(50)
+                    delay(100L)
+                    val selection =
+                        (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                    if (selection != null) {
+                        pendingSelection = selection
+                        selectionVersion++
+                        isLongPressSelecting = false
                     }
                 }
                 return true
@@ -351,7 +360,7 @@ fun ReaderScreen(
                 when (item.itemId) {
                     MENU_ITEM_HIGHLIGHT_ID -> {
                         scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
                             if (sel != null) {
                                 showHighlightMenu = sel
                                 viewModel.hideControls()
@@ -363,7 +372,7 @@ fun ReaderScreen(
                     }
                     MENU_ITEM_TTS_ID -> {
                         scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
                             if (sel != null) {
                                 viewModel.playTts(sel.locator)
                                 viewModel.hideControls()
@@ -376,7 +385,7 @@ fun ReaderScreen(
                     }
                     MENU_ITEM_DICTIONARY_ID -> {
                         scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
                             val text = sel?.locator?.text?.highlight ?: ""
                             if (text.isNotBlank()) {
                                 selectedTextForQuery = text
@@ -390,7 +399,7 @@ fun ReaderScreen(
                     }
                     MENU_ITEM_TRANSLATE_ID -> {
                         scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
                             val text = sel?.locator?.text?.highlight ?: ""
                             if (text.isNotBlank()) {
                                 selectedTextForQuery = text
@@ -413,14 +422,16 @@ fun ReaderScreen(
                 (navigatorState.value as? VisualNavigator)?.safePublicationView
                     ?.parent?.requestDisallowInterceptTouchEvent(false)
             }
-            override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
-        }
-    }
-
-    LaunchedEffect(showHighlightMenu) {
-        if (showHighlightMenu != null) {
-            activeActionMode?.finish()
-            activeActionMode = null
+            override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+                scope.launch {
+                    val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                    if (sel != null) {
+                        pendingSelection = sel
+                        selectionVersion++
+                    }
+                }
+                return false
+            }
         }
     }
 
@@ -485,12 +496,8 @@ fun ReaderScreen(
 
     // Sin esto, cualquier recomposiciÃƒÂ³n dispara submitPreferences() innecesariamente.
     val isRtl by viewModel.isRtl.collectAsStateWithLifecycle()
-    val showEpubCoverPage by viewModel.showEpubCoverPage.collectAsStateWithLifecycle()
-    LaunchedEffect(showEpubCoverPage) {
-        if (showEpubCoverPage) viewModel.dismissEpubCoverPage()
-    }
     val epubPreferences = remember(userPreferences, isRtl) {
-        userPreferences.copy(scrollMode = ScrollMode.CONTINUOUS_VERTICAL).toEpubPreferences().let { prefs ->
+        userPreferences.toEpubPreferences().let { prefs ->
             if (isRtl) prefs.copy(readingProgression = org.readium.r2.navigator.preferences.ReadingProgression.RTL)
             else prefs
         }
@@ -499,10 +506,14 @@ fun ReaderScreen(
     // Envolvemos TODO en una Box para permitir la capa Splash
     Box(modifier = Modifier.fillMaxSize()) {
 
+    var lastSubmittedEpubPrefs by remember { mutableStateOf<org.readium.r2.navigator.epub.EpubPreferences?>(null) }
     LaunchedEffect(navigatorState.value, epubPreferences) {
         val nav = navigatorState.value ?: return@LaunchedEffect
         if (nav is EpubNavigatorFragment) {
-            nav.submitPreferences(epubPreferences)
+            if (lastSubmittedEpubPrefs != null && lastSubmittedEpubPrefs != epubPreferences) {
+                nav.submitPreferences(epubPreferences)
+            }
+            lastSubmittedEpubPrefs = epubPreferences
             nav.safePublicationView?.let { pubView ->
                 applyToAllWebViews(pubView) {
                     it.applyCustomFontFamily(userPreferences.fontFamily)
@@ -511,15 +522,6 @@ fun ReaderScreen(
         } else if (nav is PdfNavigatorFragment<*, *>) {
             @Suppress("UNCHECKED_CAST")
             (nav as PdfNavigatorFragment<*, org.readium.adapter.pdfium.navigator.PdfiumPreferences>).submitPreferences(userPreferences.toPdfPreferences())
-        }
-    }
-
-    LaunchedEffect(userPreferences.fontFamily) {
-        val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
-        nav.safePublicationView?.let { pubView ->
-            applyToAllWebViews(pubView) {
-                it.applyCustomFontFamily(userPreferences.fontFamily)
-            }
         }
     }
 
@@ -573,7 +575,7 @@ fun ReaderScreen(
                 }
 
                 val cssSelector = locator.locations.otherLocations["cssSelector"] as? String
-                val isPaginated = false
+                val isPaginated = false // En modo unificado el layout base es vertical continuo para scroll libre y fluido
 
                 // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
                 val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
@@ -860,7 +862,7 @@ fun ReaderScreen(
                 if (!isSelectionModeActiveState.value) turnPageBackward(nav, wv)
             },
             onClearSelection = {
-                if (!isSelectionModeActiveState.value) clearActiveSelection()
+                if (isSelectionModeActiveState.value) clearActiveSelection()
             }
         )
         detector.attach()
@@ -924,174 +926,128 @@ fun ReaderScreen(
                                       userPreferences.theme == com.example.woodsreader.model.ReaderTheme.AMOLED || 
                                       userPreferences.theme == com.example.woodsreader.model.ReaderTheme.SUNSET
                     
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .border(
-                                width = if (ttsState == TtsState.PLAYING && isPdf && !isReflowMode) 2.dp else 0.dp,
-                                color = HiddenForest.Accent.copy(alpha = 0.5f)
-                            )
-                    ) {
-                        AndroidViewBinding(FragmentReaderContainerBinding::inflate) {
-                            val isPdf = state.book.format.name == "PDF"
-                            val isDarkTheme = userPreferences.theme == com.example.woodsreader.model.ReaderTheme.HIDDEN_FOREST || 
-                                              userPreferences.theme == com.example.woodsreader.model.ReaderTheme.AMOLED || 
-                                              userPreferences.theme == com.example.woodsreader.model.ReaderTheme.SUNSET
-                            
-                            if (isPdf && isDarkTheme) {
-                                val colorMatrix = android.graphics.ColorMatrix(
-                                    floatArrayOf(
-                                        -1f,  0f,  0f, 0f, 255f,
-                                         0f, -1f,  0f, 0f, 255f,
-                                         0f,  0f, -1f, 0f, 255f,
-                                         0f,  0f,  0f, 1f,   0f
-                                    )
-                                )
-                                val paint = android.graphics.Paint().apply {
-                                    colorFilter = android.graphics.ColorMatrixColorFilter(colorMatrix)
-                                }
-                                this.readerFragmentContainer.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, paint)
-                            } else {
-                                this.readerFragmentContainer.setLayerType(android.view.View.LAYER_TYPE_NONE, null)
-                            }
-                            val containerId = this.readerFragmentContainer.id
-                            if (fm != null && fm.findFragmentById(containerId) == null) {
-                                val initialLocator = state.initialLocator
-                                    ?: state.initialLocatorJson?.let {
-                                        try { org.readium.r2.shared.publication.Locator.fromJSON(org.json.JSONObject(it)) } catch (_: Exception) { null }
-                                    }
-                                    ?: state.book.fallbackLocatorHref?.let { href ->
-                                        state.publication.readingOrder.find { it.href.toString() == href }?.let { link ->
-                                            state.publication.locatorFromLink(link)
-                                        }
-                                    }
-                                    ?: if (state.book.format.name == "PDF" && (state.book.fallbackLocatorPosition ?: 0) > 0) {
-                                        val link = state.publication.readingOrder.firstOrNull()
-                                        if (link != null) {
-                                            state.publication.locatorFromLink(link)?.copy(
-                                                locations = org.readium.r2.shared.publication.Locator.Locations(position = state.book.fallbackLocatorPosition)
-                                            )
-                                        } else null
-                                    } else null
-                                
-                                val magnetProperties = RsProperties()
-
-                                val factory = when (state.book.format.name) {
-                                    "EPUB" -> EpubNavigatorFactory(state.publication).createFragmentFactory(
-                                        initialLocator = initialLocator,
-                                        initialPreferences = epubPreferences,
-                                        listener = object : EpubNavigatorFragment.Listener {
-                                            override fun onExternalLinkActivated(url: AbsoluteUrl) {}
-                                        },
-                                        configuration = EpubNavigatorFragment.Configuration(
-                                            selectionActionModeCallback = ttsSelectionCallback,
-                                            readiumCssRsProperties = magnetProperties
-                                        )
-                                    )
-                                    "PDF" -> PdfNavigatorFragment.createFactory(
-                                        publication = state.publication,
-                                        initialLocator = initialLocator,
-                                        listener = object : PdfNavigatorFragment.Listener {},
-                                        pdfEngineProvider = org.readium.adapter.pdfium.navigator.PdfiumEngineProvider(),
-                                        preferences = userPreferences.toPdfPreferences()
-                                    )
-                                    else -> null
-                                }
-                                if (factory != null) {
-                                    fm.fragmentFactory = factory
-                                    val fragmentClass = if (state.book.format.name == "EPUB") EpubNavigatorFragment::class.java.name else PdfNavigatorFragment::class.java.name
-                                    val newFragment = fm.fragmentFactory.instantiate(context.classLoader, fragmentClass)
-                                    fm.commit { replace(containerId, newFragment) }
-                                }
-                            }
-                        }
-
-                        // ── Capa de animación 3D de paso de página ───────────
-                        BookPageTurnOverlay(
-                            state = pageTurnState,
-                            style = userPreferences.pageTurnStyle,
-                            theme = userPreferences.theme,
-                            modifier = Modifier.fillMaxSize().zIndex(15f)
-                        )
-                    }
+                    ReaderNavigatorContainer(
+                        state = state,
+                        userPreferences = userPreferences,
+                        epubPreferences = epubPreferences,
+                        pageTurnState = pageTurnState,
+                        ttsSelectionCallback = ttsSelectionCallback,
+                        ttsState = ttsState,
+                        isReflowMode = isReflowMode,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
 
         // CAPA 1: Menu de Resaltado (Opcional)
-        val selection = showHighlightMenu
-        if (selection != null) {
-            val locator = selection.locator
-            val highlightedText = locator.text.highlight ?: ""
-
-            HighlightColorMenu(
-                hazeState = hazeState,
-                selectedText = highlightedText,
-                lookupState = lookupState,
-                onColorSelected = { color ->
-                    viewModel.addHighlight(locator, color, highlightedText)
-                    clearActiveSelection()
-                },
-                onSaveCharacter = { name, role, noteText ->
+        ReaderHighlightOverlay(
+            selection = showHighlightMenu,
+            lookupState = lookupState,
+            hazeState = hazeState,
+            quoteToShare = quoteToShare,
+            bookTitle = successState?.book?.title ?: "",
+            bookAuthor = successState?.book?.author ?: "",
+            chapterTitle = chapterInfoForTts.title ?: "",
+            onColorSelected = { color ->
+                showHighlightMenu?.locator?.let { loc ->
+                    viewModel.addHighlight(loc, color, loc.text.highlight ?: "")
+                }
+                clearActiveSelection()
+            },
+            onSaveCharacter = { name, role, noteText ->
+                showHighlightMenu?.locator?.let { loc ->
                     val customNote = if (noteText.isNotBlank()) "[PERSONAJE: $role] $noteText" else "[PERSONAJE: $role]"
                     viewModel.addHighlight(
-                        locator = locator,
+                        locator = loc,
                         color = com.example.woodsreader.data.model.HighlightColor.BLUE,
                         text = name,
                         note = customNote
                     )
-                    clearActiveSelection()
-                },
-                onPlayTts = {
-                    viewModel.playTts(locator)
-                    clearActiveSelection()
-                    showTtsMacroWindow = true
-                },
-                onSearch = {
-                    initialSearchQuery = highlightedText
-                    clearActiveSelection()
-                    showSearch = true
-                },
-                onTranslate = {
-                    scope.launch {
-                        lookupState = LookupResult.Loading("Traduciendo...")
-                        lookupState = inlineLookupManager.translateToSpanish(highlightedText)
-                    }
-                },
-                onDictionary = {
-                    scope.launch {
-                        lookupState = LookupResult.Loading("Buscando definición...")
-                        lookupState = inlineLookupManager.defineTerm(highlightedText)
-                    }
-                },
-                onIgnoreTts = {
-                    if (highlightedText.isNotBlank()) {
-                        viewModel.addWordExclusionRule(
-                            pattern = highlightedText.trim(),
-                            isExactMatch = true,
-                            applyToAllBooks = false
+                }
+                clearActiveSelection()
+            },
+            onCopy = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val text = showHighlightMenu?.locator?.text?.highlight ?: ""
+                val clip = ClipData.newPlainText("Texto seleccionado", text)
+                clipboard?.setPrimaryClip(clip)
+                Toast.makeText(context, "Texto copiado", Toast.LENGTH_SHORT).show()
+                clearActiveSelection()
+            },
+            onShare = { text ->
+                quoteToShare = text
+                clearActiveSelection()
+            },
+            onExpandToSentence = {
+                val pubView = (navigatorState.value as? VisualNavigator)?.safePublicationView
+                if (pubView != null) {
+                    applyToAllWebViews(pubView) { wv ->
+                        wv.evaluateJavascript(
+                            "if (window.getSelection) { var s = window.getSelection(); s.modify('move', 'backward', 'sentence'); s.modify('extend', 'forward', 'sentence'); }",
+                            null
                         )
                     }
-                    clearActiveSelection()
-                },
-                onErrorOpenBrowser = {
-                    val encoded = Uri.encode(highlightedText.trim())
-                    val url = if (lookupState is LookupResult.Error && (lookupState as LookupResult.Error).modeTitle.contains("Definición", ignoreCase = true)) {
-                        "https://es.wiktionary.org/wiki/$encoded"
-                    } else {
-                        "https://translate.google.com/?sl=auto&tl=es&text=$encoded"
+                    scope.launch {
+                        delay(120L)
+                        val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection()
+                        if (sel != null) {
+                            pendingSelection = sel
+                            selectionVersion++
+                        }
                     }
-                    try {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    } catch (_: Exception) {}
-                },
-                onSpeakSnippet = { viewModel.speakSnippet(it) },
-                onDismiss = {
-                    lookupState = LookupResult.Idle
-                    clearActiveSelection()
                 }
-            )
-        }
+            },
+            onPlayTts = { loc ->
+                viewModel.playTts(loc)
+                clearActiveSelection()
+                showTtsMacroWindow = true
+            },
+            onSearch = { text ->
+                initialSearchQuery = text
+                clearActiveSelection()
+                showSearch = true
+            },
+            onTranslate = { text ->
+                scope.launch {
+                    lookupState = LookupResult.Loading("Traduciendo...")
+                    lookupState = inlineLookupManager.translateToSpanish(text)
+                }
+            },
+            onDictionary = { text ->
+                scope.launch {
+                    lookupState = LookupResult.Loading("Buscando definición...")
+                    lookupState = inlineLookupManager.defineTerm(text)
+                }
+            },
+            onIgnoreTts = { text ->
+                if (text.isNotBlank()) {
+                    viewModel.addWordExclusionRule(
+                        pattern = text.trim(),
+                        isExactMatch = true,
+                        applyToAllBooks = false
+                    )
+                }
+                clearActiveSelection()
+            },
+            onErrorOpenBrowser = { text ->
+                val encoded = Uri.encode(text.trim())
+                val url = if (lookupState is LookupResult.Error && (lookupState as LookupResult.Error).modeTitle.contains("Definición", ignoreCase = true)) {
+                    "https://es.wiktionary.org/wiki/$encoded"
+                } else {
+                    "https://translate.google.com/?sl=auto&tl=es&text=$encoded"
+                }
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                } catch (_: Exception) {}
+            },
+            onSpeakSnippet = { viewModel.speakSnippet(it) },
+            onDismissHighlight = {
+                lookupState = LookupResult.Idle
+                clearActiveSelection()
+            },
+            onDismissQuoteShare = { quoteToShare = null }
+        )
 
         // CAPA 2: Controles Superpuestos Solidos (TopBar)
         AnimatedVisibility(
@@ -1173,107 +1129,16 @@ fun ReaderScreen(
 
         // CAPA 1.8: Indicador de Lectura y Oración TTS (Solo PDF Normal)
         val ttsHudBottomPadding = if (userPreferences.ttsUiStyle == TtsUiStyle.BAR) 96.dp else 130.dp
-
-        AnimatedVisibility(
+        ReaderPdfTtsHud(
             visible = !isReflowMode && isPdf && (ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED),
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = ttsHudBottomPadding)
-                .zIndex(4f)
-        ) {
-            Surface(
-                color = HiddenForest.Surface.copy(alpha = 0.94f),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f)),
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .widthIn(max = 520.dp)
-                    .padding(horizontal = 16.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Headset,
-                                contentDescription = null,
-                                tint = HiddenForest.Accent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "PÁGINA $currentTtsPage",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp
-                                ),
-                                color = HiddenForest.Accent
-                            )
-                        }
-                        if (ttsState == TtsState.PAUSED) {
-                            Surface(
-                                color = HiddenForest.TextSecondary.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = "EN PAUSA",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = HiddenForest.TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (currentTtsSentence.isNotBlank()) {
-                        val isDarkTheme = userPreferences.theme != com.example.woodsreader.model.ReaderTheme.DAY && 
-                                          userPreferences.theme != com.example.woodsreader.model.ReaderTheme.SEPIA
-                        val hudHighlightColor = when (userPreferences.ttsHighlightStyle) {
-                            TtsHighlightStyle.BACKGROUND_YELLOW -> if (isDarkTheme) Color(0xFFFFD600) else Color(0xFF9E6500)
-                            TtsHighlightStyle.BACKGROUND_ACCENT -> if (isDarkTheme) Color(0xFF2ECC71) else Color(0xFF1B663E)
-                            TtsHighlightStyle.BACKGROUND_BLUE -> if (isDarkTheme) Color(0xFF2196F3) else Color(0xFF0D47A1)
-                            TtsHighlightStyle.BACKGROUND_ORANGE -> if (isDarkTheme) Color(0xFFFF7A45) else Color(0xFFB03A00)
-                            TtsHighlightStyle.UNDERLINE -> if (isDarkTheme) HiddenForest.Text else Color(0xFF1B1B1B)
-                            TtsHighlightStyle.NONE -> if (isDarkTheme) HiddenForest.Text else Color(0xFF1B1B1B)
-                        }
-                        val hudBgColor = Color.Transparent
-                        val hudUnderline = if (userPreferences.ttsHighlightStyle == TtsHighlightStyle.UNDERLINE) TextDecoration.Underline else TextDecoration.None
-                        val hudWeight = if (userPreferences.ttsHighlightStyle == TtsHighlightStyle.NONE) FontWeight.Normal else FontWeight.Medium
-
-                        Surface(
-                            color = hudBgColor,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = currentTtsSentence,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontFamily = LiterataFamily,
-                                    fontSize = 14.sp,
-                                    lineHeight = 20.sp,
-                                    fontWeight = hudWeight
-                                ),
-                                color = hudHighlightColor,
-                                textDecoration = hudUnderline,
-                                maxLines = 4,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
+            currentTtsPage = currentTtsPage,
+            isPaused = ttsState == TtsState.PAUSED,
+            currentTtsSentence = currentTtsSentence,
+            ttsHighlightStyle = userPreferences.ttsHighlightStyle,
+            theme = userPreferences.theme,
+            bottomPadding = ttsHudBottomPadding,
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
 
         // CAPA 4: Master Menu (Panel Lateral)
         AnimatedVisibility(
@@ -1549,7 +1414,6 @@ fun ReaderScreen(
         }
 
         // CAPA 5: TTS Controls (style-dependent)
-        val chapterInfoForTts by viewModel.chapterInfo.collectAsStateWithLifecycle()
         val chapterProgressForTts = chapterInfoForTts.progress
 
         val floatingBottomPadding by animateDpAsState(
@@ -1558,128 +1422,38 @@ fun ReaderScreen(
             label = "floatingBottomPadding"
         )
 
-        when (userPreferences.ttsUiStyle) {
-            TtsUiStyle.BAR -> {
-                // Compact bottom bar — Moon+ Reader style
-                AnimatedVisibility(
-                    visible = isTtsActive && !showTtsMacroWindow,
-                    enter = fadeIn() + slideInVertically { it },
-                    exit = fadeOut() + slideOutVertically { it },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .zIndex(50f)
-                ) {
-                    ReaderTtsBar(
-                        ttsState = ttsState,
-                        isLoadingTtsModel = isLoadingTtsModel,
-                        currentSentenceFlow = viewModel.currentTtsSentence,
-                        currentTtsRangeFlow = viewModel.currentTtsRange,
-                        chapterInfoFlow = viewModel.chapterInfo,
-                        currentSpeed = currentSpeed,
-                        hazeState = hazeState,
-                        onPlay = {
-                            if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                                viewModel.onPlay()
-                            } else {
-                                viewModel.resumeTts()
-                            }
-                        },
-                        onPause = { viewModel.pauseTts() },
-                        onStop = { viewModel.stopTts() },
-                        onSkipForward = { viewModel.skipTtsSentenceForward() },
-                        onSkipBackward = { viewModel.skipTtsSentenceBackward() },
-                        onSkipWordForward = { viewModel.skipTtsWordForward() },
-                        onSkipWordBackward = { viewModel.skipTtsWordBackward() },
-                        onSkipChapterForward = { viewModel.skipTtsChapterForward() },
-                        onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
-                        onLock = { isTtsScreenLocked = true },
-                        onExpandSettings = { showTtsMacroWindow = true },
-                        onSpeedUp = { viewModel.ttsSpeedUp() },
-                        onSpeedDown = { viewModel.ttsSpeedDown() },
-                        onSpeedChange = { s -> viewModel.onSpeedChange(s) },
-                        onSwipeUp = {
-                            viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
-                            showTtsMacroWindow = true
-                        },
-                        onSwipeDown = {
-                            viewModel.updateTtsUiStyle(TtsUiStyle.FLOATING)
-                        }
-                    )
-                }
-            }
-            TtsUiStyle.FLOATING -> {
-                // Floating button with play/pause toggle and progress ring
-                ReaderFloatingTtsButton(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = floatingBottomPadding)
-                        .zIndex(20f),
-                    ttsState = ttsState,
-                    isLoadingTtsModel = isLoadingTtsModel,
-                    showTtsMacroWindow = showTtsMacroWindow,
-                    isReflowMode = isReflowMode,
-                    chapterProgress = chapterProgressForTts,
-                    speed = currentSpeed,
-                    hazeState = hazeState,
-                    onPlayPause = {
-                        if (ttsState == TtsState.PLAYING) {
-                            viewModel.pauseTts()
-                        } else if (ttsState == TtsState.PAUSED) {
-                            viewModel.resumeTts()
-                        } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                            viewModel.onPlay()
-                        }
-                    },
-                    onSpeedClick = {
-                        viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
-                        showTtsMacroWindow = true
-                    },
-                    onStop = { viewModel.stopTts() },
-                    onOpenSettings = {
-                        showTtsMacroWindow = true
-                    }
-                )
-            }
-            TtsUiStyle.PANEL -> {
-                // Panel mode: auto-show TTS macro window when TTS starts
-                LaunchedEffect(ttsState) {
-                    if (ttsState == TtsState.PLAYING && !showTtsMacroWindow) {
-                        showTtsMacroWindow = true
-                    }
-                }
-                // Fallback floating button if user dismisses macro window while TTS is active
-                ReaderFloatingTtsButton(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = floatingBottomPadding)
-                        .zIndex(20f),
-                    ttsState = ttsState,
-                    isLoadingTtsModel = isLoadingTtsModel,
-                    showTtsMacroWindow = showTtsMacroWindow,
-                    isReflowMode = isReflowMode,
-                    chapterProgress = chapterProgressForTts,
-                    speed = currentSpeed,
-                    hazeState = hazeState,
-                    onPlayPause = {
-                        if (ttsState == TtsState.PLAYING) {
-                            viewModel.pauseTts()
-                        } else if (ttsState == TtsState.PAUSED) {
-                            viewModel.resumeTts()
-                        } else if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                            viewModel.onPlay()
-                        }
-                    },
-                    onSpeedClick = {
-                        viewModel.updateTtsUiStyle(TtsUiStyle.PANEL)
-                        showTtsMacroWindow = true
-                    },
-                    onStop = { viewModel.stopTts() },
-                    onOpenSettings = {
-                        showTtsMacroWindow = true
-                    }
-                )
-            }
-        }
+        ReaderTtsControlsLayer(
+            ttsUiStyle = userPreferences.ttsUiStyle,
+            isTtsActive = isTtsActive,
+            showTtsMacroWindow = showTtsMacroWindow,
+            ttsState = ttsState,
+            isLoadingTtsModel = isLoadingTtsModel,
+            currentSentenceFlow = viewModel.currentTtsSentence,
+            currentTtsRangeFlow = viewModel.currentTtsRange,
+            chapterInfoFlow = viewModel.chapterInfo,
+            currentSpeed = currentSpeed,
+            chapterProgressForTts = chapterProgressForTts,
+            isReflowMode = isReflowMode,
+            floatingBottomPadding = floatingBottomPadding,
+            hazeState = hazeState,
+            onPlay = { viewModel.onPlay() },
+            onResume = { viewModel.resumeTts() },
+            onPause = { viewModel.pauseTts() },
+            onStop = { viewModel.stopTts() },
+            onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
+            onSkipSentenceBackward = { viewModel.skipTtsSentenceBackward() },
+            onSkipWordForward = { viewModel.skipTtsWordForward() },
+            onSkipWordBackward = { viewModel.skipTtsWordBackward() },
+            onSkipChapterForward = { viewModel.skipTtsChapterForward() },
+            onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
+            onSpeedUp = { viewModel.ttsSpeedUp() },
+            onSpeedDown = { viewModel.ttsSpeedDown() },
+            onSpeedChange = { s -> viewModel.onSpeedChange(s) },
+            onUpdateTtsUiStyle = { viewModel.updateTtsUiStyle(it) },
+            onLockScreen = { isTtsScreenLocked = true },
+            onOpenMacroWindow = { showTtsMacroWindow = true },
+            modifier = Modifier.align(if (userPreferences.ttsUiStyle == TtsUiStyle.BAR) Alignment.BottomCenter else Alignment.BottomEnd)
+        )
 
         // CAPA HERO: Animacion Premium Inmersiva
         ReaderHeroSplash(
@@ -1698,160 +1472,13 @@ fun ReaderScreen(
 
 
         // BottomSheets para Diccionario y Traducción
-        if (showDictionarySheet) {
-            val dictUrl = "https://www.wordreference.com/definicion/" + Uri.encode(selectedTextForQuery.trim())
-            ModalBottomSheet(
-                onDismissRequest = { showDictionarySheet = false },
-                dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
-                containerColor = HiddenForest.Surface.copy(alpha = 0.95f),
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                modifier = Modifier
-                    .fillMaxHeight(0.8f)
-                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Definición: $selectedTextForQuery",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = HiddenForest.Text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = "WordReference",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = HiddenForest.TextLow
-                            )
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = {
-                                    val processTextIntent = Intent().apply {
-                                        action = Intent.ACTION_PROCESS_TEXT
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_PROCESS_TEXT, selectedTextForQuery)
-                                        putExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, true)
-                                    }
-                                    try {
-                                        context.startActivity(Intent.createChooser(processTextIntent, "Buscar definición"))
-                                    } catch (e: Exception) {
-                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_TEXT, selectedTextForQuery)
-                                        }
-                                        try {
-                                            context.startActivity(Intent.createChooser(sendIntent, "Buscar"))
-                                        } catch (_: Exception) {}
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Book,
-                                    contentDescription = "App Externa",
-                                    tint = HiddenForest.Accent
-                                )
-                            }
-                            IconButton(onClick = { showDictionarySheet = false }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Cerrar",
-                                    tint = HiddenForest.TextSecondary
-                                )
-                            }
-                        }
-                    }
-                    AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                webViewClient = WebViewClient()
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                loadUrl(dictUrl)
-                            }
-                        },
-                        onRelease = { webView ->
-                            webView.stopLoading()
-                            webView.clearHistory()
-                            webView.removeAllViews()
-                            webView.destroy()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    )
-                }
-            }
-        }
-
-        if (showTranslateSheet) {
-            val translateUrl = "https://translate.google.com/?sl=auto&tl=es&text=" + Uri.encode(selectedTextForQuery)
-            ModalBottomSheet(
-                onDismissRequest = { showTranslateSheet = false },
-                dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
-                containerColor = HiddenForest.Surface.copy(alpha = 0.95f),
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                modifier = Modifier
-                    .fillMaxHeight(0.8f)
-                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "Traducción",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = HiddenForest.Text
-                            )
-                            Text(
-                                text = "Google Translate",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = HiddenForest.TextLow
-                            )
-                        }
-                        IconButton(onClick = { showTranslateSheet = false }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Cerrar",
-                                tint = HiddenForest.TextSecondary
-                            )
-                        }
-                    }
-                    AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                webViewClient = WebViewClient()
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                loadUrl(translateUrl)
-                            }
-                        },
-                        onRelease = { webView ->
-                            webView.stopLoading()
-                            webView.clearHistory()
-                            webView.removeAllViews()
-                            webView.destroy()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    )
-                }
-            }
-        }
+        ReaderExternalLookupSheets(
+            showDictionarySheet = showDictionarySheet,
+            showTranslateSheet = showTranslateSheet,
+            selectedTextForQuery = selectedTextForQuery,
+            onDismissDictionary = { showDictionarySheet = false },
+            onDismissTranslate = { showTranslateSheet = false }
+        )
 
         if (showTtsRulesSheet) {
             TtsRulesBottomSheet(

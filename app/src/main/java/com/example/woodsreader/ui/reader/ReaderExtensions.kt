@@ -62,8 +62,9 @@ fun UserPreferences.toEpubPreferences(): EpubPreferences {
         "left"    -> TextAlign.LEFT
         else      -> TextAlign.START
     }
-    // Readium exposes paginated and vertical-scroll layouts; horizontal mode uses page navigation.
-    val isScroll = scrollMode == ScrollMode.CONTINUOUS_VERTICAL
+    // El modo unificado utiliza desplazamiento continuo vertical como base nativa,
+    // permitiendo scroll libre con el dedo Y paso de página por swipe/tap con efecto 3D/slide simultáneamente.
+    val isScroll = true
     val readiumFont = when (fontFamily.lowercase()) {
         "sans-serif", "sans", "inter" -> org.readium.r2.navigator.preferences.FontFamily.SANS_SERIF
         "monospace", "mono", "jetbrains mono" -> org.readium.r2.navigator.preferences.FontFamily.MONOSPACE

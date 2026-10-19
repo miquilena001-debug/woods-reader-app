@@ -61,14 +61,25 @@ class StatsViewModel @Inject constructor(
     ).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // 6. Minutos leídos hoy (Objetivo Diario)
-    val todayReadingMinutes: StateFlow<Int> = bookRepository.todaySessions()
-        .map { sessions ->
-            sessions.sumOf { session ->
-                val end = session.endAt ?: System.currentTimeMillis()
-                ((end - session.startAt) / 60_000L).toInt()
+    val todayReadingMinutes: StateFlow<Int> = combine(
+        bookRepository.todaySessions(),
+        bookRepository.getTotalReadingTimeMs()
+    ) { sessions, totalMs ->
+        val totalMinutes = ((totalMs ?: 0L) / 60_000L).toInt()
+        val calculatedMinutes = sessions.sumOf { session ->
+            val end = session.endAt
+            if (end != null && end >= session.startAt) {
+                ((end - session.startAt) / 60_000L).coerceIn(0L, 240L).toInt()
+            } else {
+                if (session.wordsRead > 0) (session.wordsRead / 200L).coerceIn(1L, 30L).toInt() else 0
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        if (totalMinutes in 1 until calculatedMinutes) {
+            totalMinutes
+        } else {
+            calculatedMinutes
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val todayWordsProcessed: StateFlow<Int> = bookRepository.todaySessions()
         .map { sessions -> sessions.sumOf { it.wordsRead }.toInt() }

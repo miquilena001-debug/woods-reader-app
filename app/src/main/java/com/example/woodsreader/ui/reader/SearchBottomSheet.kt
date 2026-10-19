@@ -2,6 +2,7 @@ package com.example.woodsreader.ui.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -140,15 +141,15 @@ fun SearchBottomSheet(
             onDismiss()
         },
         dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
-        containerColor = HiddenForest.Surface.copy(alpha = 0.85f),
+        containerColor = Color(0xFF0C1811).copy(alpha = 0.98f),
         scrimColor = Color.Black.copy(alpha = 0.6f),
         shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
         modifier = Modifier
             .heightIn(max = 600.dp)
             .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+            .border(BorderStroke(1.dp, Color(0xFF233B2C)), RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
             .hazeChild(
                 state = hazeState,
-                shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
                 style = ReaderDesign.GlassStyle
             )
     ) {
@@ -169,7 +170,7 @@ fun SearchBottomSheet(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                color = HiddenForest.Surface.copy(alpha = 0.5f),
+                color = HiddenForest.SurfaceVariant.copy(alpha = 0.96f),
                 border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.2f))
             ) {
                 TextField(

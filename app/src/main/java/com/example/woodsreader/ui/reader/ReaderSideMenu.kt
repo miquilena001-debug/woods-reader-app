@@ -72,8 +72,8 @@ fun ReaderSideMenu(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xFF13261C).copy(alpha = 0.95f),
-                            Color(0xFF0A140F).copy(alpha = 0.97f)
+                            Color(0xFF13261C).copy(alpha = 0.96f),
+                            Color(0xFF0A140F).copy(alpha = 0.98f)
                         )
                     )
                 )

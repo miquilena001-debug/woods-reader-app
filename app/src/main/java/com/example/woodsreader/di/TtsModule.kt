@@ -18,7 +18,17 @@ object TtsModule {
         ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
         userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
         sherpaModelManager: com.example.woodsreader.core.tts.SherpaModelManager,
-        edgeNeuralTtsClient: com.example.woodsreader.core.tts.EdgeNeuralTtsClient
-    ): TtsManager = TtsManager(context, ttsRuleDao, userPreferencesRepository, sherpaModelManager, edgeNeuralTtsClient)
+        edgeNeuralTtsClient: com.example.woodsreader.core.tts.EdgeNeuralTtsClient,
+        pronunciationLexiconManager: com.example.woodsreader.core.tts.PronunciationLexiconManager,
+        smartSleepTimerManager: com.example.woodsreader.core.tts.SmartSleepTimerManager
+    ): TtsManager = TtsManager(
+        context,
+        ttsRuleDao,
+        userPreferencesRepository,
+        sherpaModelManager,
+        edgeNeuralTtsClient,
+        pronunciationLexiconManager,
+        smartSleepTimerManager
+    )
 
 }

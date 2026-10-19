@@ -376,6 +376,16 @@ fun MainLayout(
         }
     }
 
+    // Reaccionar inmediatamente cuando se restablece la bienvenida desde Ajustes
+    LaunchedEffect(hasCompletedOnboarding) {
+        if (!hasCompletedOnboarding && currentRoute != Screen.Onboarding.route) {
+            navController.navigate(Screen.Onboarding.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     val showBottomBar = currentRoute != null &&
             !currentRoute.startsWith("reader") &&
             !currentRoute.startsWith("onboarding") &&

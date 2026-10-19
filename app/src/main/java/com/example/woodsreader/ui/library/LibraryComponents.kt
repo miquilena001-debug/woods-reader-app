@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -259,12 +260,15 @@ fun WoodsBookCard(
  */
 @Composable
 fun BookInitials(title: String, size: Dp) {
-    val initials = title.trim()
+    val cleanWords = title.trim()
         .split(" ")
         .filter { it.length > 2 }
-        .take(2)
-        .joinToString("") { it.first().uppercase() }
-        .ifEmpty { title.take(2).uppercase() }
+        .mapNotNull { word -> word.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() }
+    val initials = if (cleanWords.isNotEmpty()) {
+        cleanWords.take(2).joinToString("")
+    } else {
+        title.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "L"
+    }
 
     Box(
         modifier = Modifier
@@ -674,7 +678,7 @@ private fun RecentBookRow(book: BookEntity, rank: Int, onClick: () -> Unit) {
                 )
             } else {
                 Text(
-                    text = book.title.take(2).uppercase(),
+                    text = book.title.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "L",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 10.sp
@@ -771,7 +775,7 @@ fun WoodsBottomNavigation(
     val navItems = listOf(
         Triple("library",  androidx.compose.material.icons.Icons.Default.Home,     "Inicio"),
         Triple("search",   androidx.compose.material.icons.Icons.Default.Search,   "Buscar"),
-        Triple("reader",   androidx.compose.material.icons.Icons.Default.MenuBook, "Leer"),
+        Triple("reader",   Icons.AutoMirrored.Filled.MenuBook,                      "Leer"),
         Triple("stats",    androidx.compose.material.icons.Icons.Default.BarChart, "Stats"),
         Triple("settings", androidx.compose.material.icons.Icons.Default.Settings, "Ajustes"),
     )
@@ -819,6 +823,7 @@ fun WoodsBottomNavigation(
             navItems.forEachIndexed { index, (route, icon, label) ->
                 val isActive = currentRoute == route
                 val isCenter = index == 2
+                val isSelected = isActive || (isCenter && showHistory)
                 val itemShape = RoundedCornerShape(22.dp)
 
                 Box(
@@ -827,29 +832,42 @@ fun WoodsBottomNavigation(
                         .padding(horizontal = 2.dp)
                         .clip(itemShape)
                         .then(
-                            if (isCenter || isActive) {
-                                Modifier
-                                    .background(
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(
-                                                HiddenForest.Accent.copy(alpha = if (isCenter) 0.45f else 0.38f),
-                                                HiddenForest.Accent.copy(alpha = if (isCenter) 0.22f else 0.16f)
-                                            )
-                                        ),
-                                        shape = itemShape
-                                    )
-                                    .border(
-                                        width = 1.dp,
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(
-                                                Color.White.copy(alpha = 0.35f),
-                                                HiddenForest.Accent.copy(alpha = 0.55f)
-                                            )
-                                        ),
-                                        shape = itemShape
-                                    )
-                            } else {
-                                Modifier
+                            when {
+                                isSelected -> {
+                                    Modifier
+                                        .background(
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(
+                                                    HiddenForest.Accent.copy(alpha = if (isCenter) 0.45f else 0.38f),
+                                                    HiddenForest.Accent.copy(alpha = if (isCenter) 0.22f else 0.16f)
+                                                )
+                                            ),
+                                            shape = itemShape
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            brush = Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.White.copy(alpha = 0.35f),
+                                                    HiddenForest.Accent.copy(alpha = 0.55f)
+                                                )
+                                            ),
+                                            shape = itemShape
+                                        )
+                                }
+                                isCenter -> {
+                                    Modifier
+                                        .background(
+                                            color = Color.White.copy(alpha = 0.04f),
+                                            shape = itemShape
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = Color.White.copy(alpha = 0.08f),
+                                            shape = itemShape
+                                        )
+                                }
+                                else -> Modifier
                             }
                         )
                         .then(
@@ -876,8 +894,7 @@ fun WoodsBottomNavigation(
                             imageVector = icon,
                             contentDescription = label,
                             tint = when {
-                                isCenter -> Color(0xFFE8FFF2)
-                                isActive -> Color(0xFFE8FFF2)
+                                isSelected -> Color(0xFFE8FFF2)
                                 else -> HiddenForest.TextLow
                             },
                             modifier = Modifier.size(if (isCenter) 26.dp else 22.dp)
@@ -888,7 +905,7 @@ fun WoodsBottomNavigation(
                             Text(
                                 text = "Historial",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.sp),
-                                color = Color(0xFFE8FFF2).copy(alpha = 0.85f)
+                                color = if (isSelected) Color(0xFFE8FFF2).copy(alpha = 0.85f) else HiddenForest.TextLow.copy(alpha = 0.7f)
                             )
                         } else {
                             Spacer(modifier = Modifier.height(2.dp))

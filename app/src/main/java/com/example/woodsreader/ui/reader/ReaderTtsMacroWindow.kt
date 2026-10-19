@@ -1,5 +1,6 @@
 package com.example.woodsreader.ui.reader
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -17,12 +18,20 @@ import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.tts.AudioExportState
 import com.example.woodsreader.core.tts.AmbiencePreset
 import com.example.woodsreader.core.tts.TtsPresetPack
+import com.example.woodsreader.core.tts.StudioAcousticsProfile
+import com.example.woodsreader.core.tts.SupportedTtsLanguage
+import com.example.woodsreader.core.tts.SoundscapeMode
+import com.example.woodsreader.core.tts.PronunciationLexiconManager
+import com.example.woodsreader.core.tts.PhoneticRule
+import com.example.woodsreader.core.tts.SherpaModelManager
+import com.example.woodsreader.core.tts.SleepTimerPreset
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
@@ -50,6 +59,12 @@ import kotlin.math.roundToInt
 private val ORGANIC_WAVES = List(40) { i ->
     val x = (i - 20f) / 20f
     (1f - x * x).coerceIn(0f, 1f)
+}
+
+enum class ReaderMacroEngineMode {
+    EDGE_ONLINE,
+    SHERPA_OFFLINE,
+    SYSTEM
 }
 
 /**
@@ -128,6 +143,16 @@ fun ReaderTtsMacroWindow(
     var presetInstallMessage by remember { mutableStateOf<String?>(null) }
 
     var showLanguageSheet by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val studioPrefs = remember(context) { context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE) }
+    val lexiconManager = remember(context) { PronunciationLexiconManager(context.applicationContext) }
+    var showAddRuleDialog by remember { mutableStateOf(false) }
+    var currentSoundscape by remember {
+        mutableStateOf(SoundscapeMode.fromId(studioPrefs.getString("soundscape_mode", SoundscapeMode.OFF.id)))
+    }
+    var soundscapeIntensity by remember {
+        mutableFloatStateOf(studioPrefs.getFloat("soundscape_intensity", 0.18f))
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -487,9 +512,13 @@ fun ReaderTtsMacroWindow(
                     )
                 }
 
-                // Chip de Temporizador de Sueño (🌙 ${if (sleepTimerRemaining != null) "${sleepTimerRemaining / 60000}m" else "Sueño"})
-                val isSleepActive = sleepTimerRemaining != null
-                val sleepText = if (isSleepActive) "${sleepTimerRemaining!! / 60000}m" else "Sueño"
+                // Chip de Temporizador de Sueño (🌙)
+                val isSleepActive = sleepTimerRemaining != null && sleepTimerRemaining != 0L
+                val sleepText = when {
+                    sleepTimerRemaining == -1L -> "Fin Cap"
+                    sleepTimerRemaining != null && sleepTimerRemaining > 0 -> "${(sleepTimerRemaining + 59999) / 60000}m"
+                    else -> "Sueño"
+                }
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -504,13 +533,15 @@ fun ReaderTtsMacroWindow(
                             RoundedCornerShape(12.dp)
                         )
                         .clickable {
-                            if (sleepTimerRemaining == null) {
+                            if (sleepTimerRemaining == null || sleepTimerRemaining == 0L) {
                                 onSleepTimer(15)
                             } else {
                                 val mins = (sleepTimerRemaining / 60000).toInt()
                                 when {
                                     mins <= 15 -> onSleepTimer(30)
                                     mins <= 30 -> onSleepTimer(45)
+                                    mins <= 45 -> onSleepTimer(60)
+                                    mins <= 60 -> onSleepTimer(-1)
                                     else -> onCancelSleepTimer()
                                 }
                             }
@@ -555,54 +586,196 @@ fun ReaderTtsMacroWindow(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(HiddenForest.SurfaceVariant.copy(alpha = 0.6f))
-                    .border(1.dp, HiddenForest.Outline.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                    .clickable(onClick = onToggleNextAmbience)
-                    .padding(vertical = 10.dp, horizontal = 12.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("🌲", fontSize = 14.sp)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = ambiencePreset.displayName,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = if (ambiencePreset == AmbiencePreset.OFF) HiddenForest.Text else HiddenForest.Accent,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Spacer(modifier = Modifier.height(10.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        val added = onInstallTtsPresetPack(TtsPresetPack.PINYIN_SPANISH)
-                        presetInstallMessage = if (added == 0) {
-                            "El preset fonético ya estaba instalado."
-                        } else {
-                            "Preset fonético instalado ($added reglas)."
+            // ── 3A. SECCIÓN "🌙 Temporizador de Sueño Inteligente" ───────────
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = HiddenForest.SurfaceVariant.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.25f))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("🌙", fontSize = 15.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Temporizador de Sueño Inteligente",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                        }
+
+                        val rem = sleepTimerRemaining
+                        if (rem != null && rem != 0L) {
+                            val liveCountdown = if (rem == -1L) {
+                                "Al terminar capítulo"
+                            } else {
+                                val totalSecs = (rem / 1000).coerceAtLeast(0)
+                                val m = totalSecs / 60
+                                val s = totalSecs % 60
+                                String.format(java.util.Locale.US, "%02d:%02d", m, s)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF00E676).copy(alpha = 0.18f))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = liveCountdown,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp
+                                    ),
+                                    color = Color(0xFF00E676)
+                                )
+                            }
                         }
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Instalar preset fonético")
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val timerPresets = listOf(
+                            0 to "Apagado",
+                            15 to "15 min",
+                            30 to "30 min",
+                            45 to "45 min",
+                            60 to "60 min",
+                            -1 to "Fin del Cap."
+                        )
+                        timerPresets.forEach { (mins, label) ->
+                            val isSelected = when (mins) {
+                                0 -> sleepTimerRemaining == null || sleepTimerRemaining == 0L
+                                -1 -> sleepTimerRemaining == -1L
+                                else -> {
+                                    if (sleepTimerRemaining != null && sleepTimerRemaining > 0) {
+                                        val curMins = (sleepTimerRemaining + 59999) / 60000
+                                        curMins in (mins - 2)..(mins + 2)
+                                    } else false
+                                }
+                            }
+
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    if (mins == 0) {
+                                        onCancelSleepTimer()
+                                    } else {
+                                        onSleepTimer(mins)
+                                    }
+                                },
+                                label = { Text(label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                    selectedLabelColor = Color.White,
+                                    containerColor = HiddenForest.Background.copy(alpha = 0.6f),
+                                    labelColor = HiddenForest.TextSecondary
+                                ),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.2f)
+                                )
+                            )
+                        }
+                    }
+                }
             }
-            presetInstallMessage?.let { message ->
-                Text(
-                    text = message,
-                    color = HiddenForest.Accent,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // ── 3B. SECCIÓN "🌧️ Paisaje Sonoro de Fondo (Auto-Ducking)" ────
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = HiddenForest.SurfaceVariant.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.25f))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🌧️", fontSize = 15.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Paisaje Sonoro de Fondo (Auto-Ducking)",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        SoundscapeMode.entries.forEach { mode ->
+                            val isSelected = currentSoundscape == mode
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    currentSoundscape = mode
+                                    studioPrefs.edit().putString("soundscape_mode", mode.id).apply()
+                                },
+                                label = { Text("${mode.iconEmoji} ${mode.label}", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                    selectedLabelColor = Color.White,
+                                    containerColor = HiddenForest.Background.copy(alpha = 0.6f),
+                                    labelColor = HiddenForest.TextSecondary
+                                ),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.2f)
+                                )
+                            )
+                        }
+                    }
+
+                    if (currentSoundscape != SoundscapeMode.OFF) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Intensidad: ${(soundscapeIntensity * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                color = HiddenForest.TextSecondary,
+                                modifier = Modifier.width(90.dp)
+                            )
+                            Slider(
+                                value = soundscapeIntensity,
+                                onValueChange = {
+                                    soundscapeIntensity = it
+                                    studioPrefs.edit().putFloat("soundscape_intensity", it).apply()
+                                },
+                                valueRange = 0.05f..0.40f,
+                                modifier = Modifier.weight(1f),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = HiddenForest.Accent,
+                                    activeTrackColor = HiddenForest.Accent,
+                                    inactiveTrackColor = HiddenForest.Outline.copy(alpha = 0.3f)
+                                )
+                            )
+                        }
+                    }
+                }
             }
 
             // Slider compacto desplegable de velocidad y tono
@@ -935,121 +1108,77 @@ fun ReaderTtsMacroWindow(
                 Text("Configuración de Voz y TTS", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = HiddenForest.Text)
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ── SECCIÓN ONLINE: VOCES DE ESTUDIO ONLINE (EDGE NEURAL 10/10) ──
-                Box(
+                val context = LocalContext.current
+                val studioPrefs = remember { context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE) }
+                var studioProfile by remember {
+                    mutableStateOf(StudioAcousticsProfile.fromId(studioPrefs.getString("acoustics_profile", null)))
+                }
+                var expressiveProsody by remember {
+                    mutableStateOf(studioPrefs.getBoolean("expressive_prosody_enabled", true))
+                }
+                var dramatizedDialogue by remember {
+                    mutableStateOf(studioPrefs.getBoolean("dramatized_dialogue_enabled", true))
+                }
+                val sherpaModelManager = remember(context) { SherpaModelManager(context.applicationContext) }
+                val autoDetectBookLanguage by sherpaModelManager.autoDetectBookLanguage.collectAsStateWithLifecycle()
+                val selectedLanguageFilter by sherpaModelManager.selectedLanguageFilter.collectAsStateWithLifecycle()
+                val builtInLexiconEnabled by lexiconManager.builtInEnabled.collectAsStateWithLifecycle()
+                val customPhoneticRules by lexiconManager.customRules.collectAsStateWithLifecycle()
+
+                // Selector Unificado de 2 Modos: Estudio IA Offline vs Voz del Sistema
+                val currentEngineMode = if (useSherpaTts) ReaderMacroEngineMode.SHERPA_OFFLINE else ReaderMacroEngineMode.SYSTEM
+
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            if (useEdgeNeuralTts) Brush.linearGradient(
-                                listOf(
-                                    HiddenForest.Accent.copy(alpha = 0.15f),
-                                    HiddenForest.Accent.copy(alpha = 0.05f)
-                                )
-                            ) else Brush.linearGradient(
-                                listOf(
-                                    HiddenForest.Background,
-                                    HiddenForest.Background
-                                )
-                            )
-                        )
-                        .border(
-                            1.dp,
-                            if (useEdgeNeuralTts) HiddenForest.Accent.copy(0.4f) else HiddenForest.Outline.copy(0.3f),
-                            RoundedCornerShape(16.dp)
-                        )
-                        .padding(16.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(HiddenForest.Background)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        if (useEdgeNeuralTts) HiddenForest.Accent.copy(0.2f)
-                                        else HiddenForest.Background
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("☁️", fontSize = 20.sp)
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Voces de Estudio Online (Edge)",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = HiddenForest.Text
-                                )
-                                Text(
-                                    "Calidad Humana 10/10 · 0 MB en disco",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (useEdgeNeuralTts) HiddenForest.Accent else HiddenForest.TextLow,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Switch(
-                                checked = useEdgeNeuralTts,
-                                onCheckedChange = onUseEdgeNeuralTtsChange,
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = HiddenForest.Background,
-                                    checkedTrackColor = HiddenForest.Accent,
-                                    uncheckedThumbColor = HiddenForest.TextLow,
-                                    uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
-                                )
-                            )
-                        }
-
-                        if (useEdgeNeuralTts) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "Elige tu Voz de Estudio:",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-                                color = HiddenForest.Accent
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                EdgeVoiceOption.entries.forEach { option ->
-                                    val isSelected = selectedEdgeVoice == option
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(if (isSelected) HiddenForest.Accent.copy(alpha = 0.12f) else HiddenForest.Background)
-                                            .border(
-                                                1.dp,
-                                                if (isSelected) HiddenForest.Accent.copy(alpha = 0.4f) else HiddenForest.Outline.copy(alpha = 0.25f),
-                                                RoundedCornerShape(12.dp)
-                                            )
-                                            .clickable { onSelectEdgeVoice(option) }
-                                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        RadioButton(
-                                            selected = isSelected,
-                                            onClick = { onSelectEdgeVoice(option) },
-                                            colors = RadioButtonDefaults.colors(selectedColor = HiddenForest.Accent)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = option.displayName,
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
-                                                color = Color.White
-                                            )
-                                            Text(
-                                                text = option.regionLabel,
-                                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                                color = HiddenForest.TextSecondary
-                                            )
-                                        }
+                    val modes = listOf(
+                        Triple(ReaderMacroEngineMode.SHERPA_OFFLINE, "🎙️ Estudio IA Offline", "VITS HD"),
+                        Triple(ReaderMacroEngineMode.SYSTEM, "📱 Voz del Sistema", "Nativo")
+                    )
+                    modes.forEach { (mode, title, badge) ->
+                        val isSelected = currentEngineMode == mode
+                        Surface(
+                            onClick = {
+                                when (mode) {
+                                    ReaderMacroEngineMode.SHERPA_OFFLINE -> {
+                                        onUseEdgeNeuralTtsChange(false)
+                                        onUseSherpaTtsChange(true)
                                     }
+                                    ReaderMacroEngineMode.SYSTEM -> {
+                                        onUseEdgeNeuralTtsChange(false)
+                                        onUseSherpaTtsChange(false)
+                                    }
+                                    else -> {}
                                 }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) HiddenForest.Accent.copy(alpha = 0.22f) else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, HiddenForest.Accent) else null
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    ),
+                                    color = if (isSelected) Color.White else HiddenForest.TextSecondary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = badge,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = if (isSelected) HiddenForest.Accent else HiddenForest.TextLow,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -1057,88 +1186,220 @@ fun ReaderTtsMacroWindow(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // ── SECCIÓN 0: MOTOR DE VOZ IA NEURONAL ─────────────────────────
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            if (useSherpaTts) Brush.linearGradient(
-                                listOf(
-                                    HiddenForest.Accent.copy(alpha = 0.15f),
-                                    HiddenForest.Accent.copy(alpha = 0.05f)
+                // Contenido dinámico según el modo activo
+                when (currentEngineMode) {
+                    ReaderMacroEngineMode.EDGE_ONLINE -> {}
+
+                    ReaderMacroEngineMode.SHERPA_OFFLINE -> {
+                        // Tarjeta "🎛️ Masterización Acústica y Dramatización"
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = HiddenForest.Background.copy(alpha = 0.65f)),
+                            border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("🎛️", fontSize = 18.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Masterización Acústica y Dramatización",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = Color.White
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    "Perfil Acústico DSP (Master 32-bit)",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = HiddenForest.Accent
                                 )
-                            ) else Brush.linearGradient(
-                                listOf(
-                                    HiddenForest.Background,
-                                    HiddenForest.Background
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // 3 chips horizontales con horizontalScroll
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val profiles = listOf(
+                                        StudioAcousticsProfile.STUDIO_WARM to "🎙️ Estudio Cálido",
+                                        StudioAcousticsProfile.NIGHT_INTIMATE to "🌙 Nocturno Suave",
+                                        StudioAcousticsProfile.CRISP_HD to "⚡ Claridad HD"
+                                    )
+                                    profiles.forEach { (prof, label) ->
+                                        val isSelected = studioProfile == prof
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = {
+                                                studioProfile = prof
+                                                studioPrefs.edit().putString("acoustics_profile", prof.id).apply()
+                                            },
+                                            label = { Text(label, fontSize = 12.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                                selectedLabelColor = Color.White,
+                                                containerColor = HiddenForest.Surface,
+                                                labelColor = HiddenForest.TextSecondary
+                                            ),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.3f)
+                                            )
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = studioProfile.description,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = HiddenForest.TextLow
                                 )
-                            )
-                        )
-                        .border(
-                            1.dp,
-                            if (useSherpaTts) HiddenForest.Accent.copy(0.4f) else HiddenForest.Outline.copy(0.3f),
-                            RoundedCornerShape(16.dp)
-                        )
-                        .padding(16.dp)
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
+
+                                HorizontalDivider(
+                                    color = HiddenForest.Outline.copy(alpha = 0.2f),
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+
+                                // Switch "Prosodia Expresiva y Respiración Natural"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "Prosodia Expresiva y Respiración Natural",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            "Ajusta pausas en puntos suspensivos, preguntas, exclamaciones y limpia símbolos de novelas web",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = expressiveProsody,
+                                        onCheckedChange = {
+                                            expressiveProsody = it
+                                            studioPrefs.edit().putBoolean("expressive_prosody_enabled", it).apply()
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = HiddenForest.Accent,
+                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                            uncheckedTrackColor = HiddenForest.Background
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Switch "Modo Novela Dramatizada (Narrador / Diálogos)"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "Modo Novela Dramatizada (Narrador / Diálogos)",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            "Diferencia automáticamente los diálogos «...» o —...— y mensajes de [Sistema] de la voz del narrador",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = dramatizedDialogue,
+                                        onCheckedChange = {
+                                            dramatizedDialogue = it
+                                            studioPrefs.edit().putBoolean("dramatized_dialogue_enabled", it).apply()
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = HiddenForest.Accent,
+                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                            uncheckedTrackColor = HiddenForest.Background
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        // Switch "✨ Auto-detectar idioma del libro"
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        if (useSherpaTts) HiddenForest.Accent.copy(0.2f)
-                                        else HiddenForest.Background
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Text(
-                                    "🧠",
-                                    fontSize = 20.sp
+                                    "✨ Auto-detectar idioma del libro",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                    color = Color.White
+                                )
+                                Text(
+                                    "Ajusta automáticamente la voz según el idioma del libro (ES, EN, PT, FR, DE, IT)",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                    color = HiddenForest.TextSecondary
                                 )
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Voz Neuronal IA",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = HiddenForest.Text
-                                )
-                                Text(
-                                    when (sherpaDownloadState) {
-                                        is SherpaDownloadState.Downloading -> "Descargando voz: ${(sherpaDownloadState.progress * 100).toInt()}%"
-                                        is SherpaDownloadState.Extracting -> "Instalando modelo de voz..."
-                                        is SherpaDownloadState.Error -> "Error: ${sherpaDownloadState.message}"
-                                        else -> if (useSherpaTts) "Sherpa ONNX · Español MX · Offline" else "Motor del sistema activo"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (useSherpaTts || sherpaDownloadState is SherpaDownloadState.Downloading) HiddenForest.Accent else HiddenForest.TextLow,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            val isBusy = sherpaDownloadState is SherpaDownloadState.Downloading || sherpaDownloadState is SherpaDownloadState.Extracting
                             Switch(
-                                checked = useSherpaTts,
-                                onCheckedChange = onUseSherpaTtsChange,
-                                enabled = !isBusy,
+                                checked = autoDetectBookLanguage,
+                                onCheckedChange = { sherpaModelManager.setAutoDetectBookLanguage(it) },
                                 colors = SwitchDefaults.colors(
-                                    checkedThumbColor = HiddenForest.Background,
-                                    checkedTrackColor = HiddenForest.Accent,
-                                    uncheckedThumbColor = HiddenForest.TextLow,
-                                    uncheckedTrackColor = HiddenForest.Outline.copy(alpha = 0.2f)
+                                    checkedThumbColor = HiddenForest.Accent,
+                                    checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                    uncheckedTrackColor = HiddenForest.Background
                                 )
                             )
                         }
 
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Filtro de idiomas en carrusel horizontal
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            SupportedTtsLanguage.entries.forEach { lang ->
+                                val isSelected = selectedLanguageFilter == lang
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { sherpaModelManager.setSelectedLanguageFilter(lang) },
+                                    label = { Text("${lang.flagEmoji} ${lang.displayName}", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                        selectedLabelColor = Color.White,
+                                        containerColor = HiddenForest.Surface,
+                                        labelColor = HiddenForest.TextSecondary
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.3f)
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "Voces Offline IA (Sherpa ONNX Piper VITS)",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
+                            color = HiddenForest.Accent
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
                         if (sherpaDownloadState is SherpaDownloadState.Downloading) {
-                            Spacer(modifier = Modifier.height(10.dp))
                             LinearProgressIndicator(
                                 progress = { sherpaDownloadState.progress },
                                 modifier = Modifier
@@ -1168,8 +1429,8 @@ fun ReaderTtsMacroWindow(
                                     )
                                 }
                             }
+                            Spacer(modifier = Modifier.height(8.dp))
                         } else if (sherpaDownloadState is SherpaDownloadState.Extracting) {
-                            Spacer(modifier = Modifier.height(10.dp))
                             LinearProgressIndicator(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1184,99 +1445,98 @@ fun ReaderTtsMacroWindow(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = HiddenForest.Accent
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
                         } else if (sherpaDownloadState is SherpaDownloadState.Error) {
-                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 "Error: ${sherpaDownloadState.message}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
                         }
-                    }
-                }
 
-                if (useSherpaTts) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Modelo de Voz IA (Sherpa ONNX)",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-                        color = HiddenForest.Accent
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                        val filteredVoices = SherpaVoiceOption.entries.filter { it.language == selectedLanguageFilter }
+                        val voicesToDisplay = if (filteredVoices.isNotEmpty()) filteredVoices else SherpaVoiceOption.entries
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        SherpaVoiceOption.entries.forEach { option ->
-                            val isDownloaded = isSherpaVoiceDownloaded(option)
-                            val isSelected = selectedSherpaVoice == option
-                            val isDownloadingThis = (sherpaDownloadState is SherpaDownloadState.Downloading || sherpaDownloadState is SherpaDownloadState.Extracting) && isSelected
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            voicesToDisplay.forEach { option ->
+                                val isDownloaded = isSherpaVoiceDownloaded(option)
+                                val isSelected = selectedSherpaVoice == option
+                                val secondaryDialogueVoiceId = studioPrefs.getString("secondary_dialogue_voice_id", null)
+                                val isSecondaryDialogue = secondaryDialogueVoiceId == option.id
+                                val isDownloadingThis = (sherpaDownloadState is SherpaDownloadState.Downloading || sherpaDownloadState is SherpaDownloadState.Extracting) && isSelected
+                                val sizeBytes = if (isDownloaded) sherpaModelManager.getVoiceSizeBytes(option) else 0L
+                                val sizeDisplay = if (sizeBytes > 0) "${sizeBytes / (1024 * 1024)} MB" else "~60 MB"
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSelected) HiddenForest.Accent.copy(alpha = 0.12f) else HiddenForest.Background)
-                                    .border(
-                                        1.dp,
-                                        if (isSelected) HiddenForest.Accent.copy(alpha = 0.4f) else HiddenForest.Outline.copy(alpha = 0.25f),
-                                        RoundedCornerShape(12.dp)
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = option.displayName,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = option.accent,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                        color = HiddenForest.TextSecondary
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                if (isDownloadingThis) {
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        if (sherpaDownloadState is SherpaDownloadState.Downloading) {
-                                            val dl = sherpaDownloadState as SherpaDownloadState.Downloading
-                                            Text(
-                                                text = "${(dl.progress * 100).toInt()}%",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = HiddenForest.Accent
-                                            )
-                                            LinearProgressIndicator(
-                                                progress = { dl.progress },
-                                                modifier = Modifier.width(70.dp).height(4.dp),
-                                                color = HiddenForest.Accent
-                                            )
-                                        } else {
-                                            Text(
-                                                text = "Descomprimiendo...",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = HiddenForest.Accent
-                                            )
-                                        }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (isSelected) HiddenForest.Accent.copy(alpha = 0.12f) else HiddenForest.Background)
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) HiddenForest.Accent.copy(alpha = 0.4f) else HiddenForest.Outline.copy(alpha = 0.25f),
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = option.displayName,
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = "${option.accent} · $sizeDisplay",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
                                     }
-                                } else if (isDownloaded) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (isSelected) {
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    if (isDownloadingThis) {
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            if (sherpaDownloadState is SherpaDownloadState.Downloading) {
+                                                val dl = sherpaDownloadState as SherpaDownloadState.Downloading
+                                                Text(
+                                                    text = "${(dl.progress * 100).toInt()}%",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = HiddenForest.Accent
+                                                )
+                                                LinearProgressIndicator(
+                                                    progress = { dl.progress },
+                                                    modifier = Modifier.width(70.dp).height(4.dp),
+                                                    color = HiddenForest.Accent
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "Descomprimiendo...",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = HiddenForest.Accent
+                                                )
+                                            }
+                                        }
+                                    } else if (isDownloaded) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
                                             Box(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(6.dp))
-                                                    .background(HiddenForest.Accent.copy(alpha = 0.2f))
-                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    .background(HiddenForest.Accent.copy(alpha = 0.15f))
+                                                    .padding(horizontal = 6.dp, vertical = 3.dp)
                                             ) {
                                                 Text(
-                                                    text = "Activa",
+                                                    text = "Instalada",
                                                     style = MaterialTheme.typography.labelSmall.copy(
                                                         fontSize = 10.sp,
                                                         fontWeight = FontWeight.Bold
@@ -1284,49 +1544,215 @@ fun ReaderTtsMacroWindow(
                                                     color = HiddenForest.Accent
                                                 )
                                             }
-                                        } else {
-                                            Button(
-                                                onClick = { onSelectSherpaVoice(option) },
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                                modifier = Modifier.height(30.dp),
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = HiddenForest.Accent.copy(alpha = 0.25f),
-                                                    contentColor = HiddenForest.Accent
-                                                )
+
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(HiddenForest.Accent)
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Narrador",
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        ),
+                                                        color = HiddenForest.Background
+                                                    )
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = { onSelectSherpaVoice(option) },
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                    modifier = Modifier.height(28.dp),
+                                                    colors = ButtonDefaults.buttonColors(
+                                                        containerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                                        contentColor = HiddenForest.Accent
+                                                    )
+                                                ) {
+                                                    Text("Narrador", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                            }
+
+                                            if (isSecondaryDialogue) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(Color(0xFF81C784).copy(alpha = 0.3f))
+                                                        .clickable {
+                                                            studioPrefs.edit().remove("secondary_dialogue_voice_id").apply()
+                                                        }
+                                                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Diálogos ✓",
+                                                        style = MaterialTheme.typography.labelSmall.copy(
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        ),
+                                                        color = Color(0xFF81C784)
+                                                    )
+                                                }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        studioPrefs.edit().putString("secondary_dialogue_voice_id", option.id).apply()
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                                                    modifier = Modifier.height(28.dp),
+                                                    border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.4f)),
+                                                    colors = ButtonDefaults.outlinedButtonColors(
+                                                        contentColor = HiddenForest.TextSecondary
+                                                    )
+                                                ) {
+                                                    Text("Diálogos", fontSize = 10.sp)
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = { onDeleteSherpaVoice(option) },
+                                                modifier = Modifier.size(28.dp)
                                             ) {
-                                                Text("Activar", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                Icon(
+                                                    imageVector = Icons.Default.DeleteOutline,
+                                                    contentDescription = "Eliminar voz",
+                                                    tint = Color(0xFFEF9A9A),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
                                             }
                                         }
-
-                                        Spacer(modifier = Modifier.width(6.dp))
-
-                                        IconButton(
-                                            onClick = { onDeleteSherpaVoice(option) },
-                                            modifier = Modifier.size(30.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Eliminar voz",
-                                                tint = Color(0xFFEF9A9A),
-                                                modifier = Modifier.size(16.dp)
+                                    } else {
+                                        Button(
+                                            onClick = { onSelectSherpaVoice(option) },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(30.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = HiddenForest.Accent,
+                                                contentColor = HiddenForest.Background
                                             )
+                                        ) {
+                                            Text("Descargar ($sizeDisplay)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
-                                    }
-                                } else {
-                                    Button(
-                                        onClick = { onSelectSherpaVoice(option) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                        modifier = Modifier.height(30.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = HiddenForest.Accent,
-                                            contentColor = HiddenForest.Background
-                                        )
-                                    ) {
-                                        Text("Descargar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Card "📖 Glosario Fonético (Novelas Web y Nombres)"
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = HiddenForest.Background.copy(alpha = 0.65f)),
+                            border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("📖", fontSize = 18.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Glosario Fonético (Novelas Web y Nombres)",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = Color.White
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "Reglas para Novelas Web (Xuanhuan / Xianxia / LitRPG)",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            "Pronunciación adaptada de términos chinos y RPG (Qi, Dantian, Jianghu, Wuxia, NPC...)",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = builtInLexiconEnabled,
+                                        onCheckedChange = { lexiconManager.setBuiltInEnabled(it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = HiddenForest.Accent,
+                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                            uncheckedTrackColor = HiddenForest.Background
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                OutlinedButton(
+                                    onClick = { showAddRuleDialog = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    border = BorderStroke(1.dp, HiddenForest.Accent.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = HiddenForest.Accent),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("+ Añadir palabra personalizada", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+
+                                if (customPhoneticRules.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        customPhoneticRules.forEach { rule ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(HiddenForest.Surface.copy(alpha = 0.7f))
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        rule.originalWord,
+                                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                                        color = Color.White
+                                                    )
+                                                    Text(
+                                                        "↳ ${rule.phoneticReplacement}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = HiddenForest.Accent
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { lexiconManager.removeCustomRule(rule.id) },
+                                                    modifier = Modifier.size(28.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.DeleteOutline,
+                                                        contentDescription = "Eliminar regla",
+                                                        tint = Color(0xFFEF9A9A),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    ReaderMacroEngineMode.SYSTEM -> {
+                        Text(
+                            text = "Usa el sintetizador Text-To-Speech nativo configurado en los Ajustes de tu dispositivo Android.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HiddenForest.TextLow,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
                     }
                 }
 
@@ -1358,7 +1784,10 @@ fun ReaderTtsMacroWindow(
                 )
                 
                 Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     languages.forEach { (code, name) ->
@@ -1369,11 +1798,17 @@ fun ReaderTtsMacroWindow(
                                 .background(if (isSelected) HiddenForest.Accent.copy(0.2f) else HiddenForest.Background)
                                 .border(1.dp, if (isSelected) HiddenForest.Accent else HiddenForest.Outline, RoundedCornerShape(10.dp))
                                 .clickable { onLanguageChange(code) }
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
-                            Text(name, style = MaterialTheme.typography.bodyMedium, color = if (isSelected) HiddenForest.Accent else HiddenForest.Text)
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isSelected) HiddenForest.Accent else HiddenForest.Text,
+                                maxLines = 1
+                            )
                         }
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
                 }
                 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1443,49 +1878,135 @@ fun ReaderTtsMacroWindow(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
+                var showNoVoiceWarning by remember { mutableStateOf(false) }
+                val hasDownloadedVoice = SherpaVoiceOption.entries.any { isSherpaVoiceDownloaded(it) }
+
+                if (showNoVoiceWarning && !hasDownloadedVoice) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF1E281F),
+                        border = BorderStroke(1.dp, HiddenForest.Accent.copy(alpha = 0.5f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("⚠️", fontSize = 16.sp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Descarga una Voz Offline",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = HiddenForest.Accent
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Para exportar audiolibros .M4A comprimidos a máxima velocidad sin cortes, descarga al menos una voz offline (como Alejandro o Carlos) en el modo '🧠 IA Local'.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = HiddenForest.TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = { showNoVoiceWarning = false },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Entendido", color = HiddenForest.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 when (val export = audioExportState) {
                     is AudioExportState.Idle -> {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { onExportAudioChapters(1) },
+                                onClick = {
+                                    if (hasDownloadedVoice) {
+                                        showNoVoiceWarning = false
+                                        onExportAudioChapters(1)
+                                    } else {
+                                        showNoVoiceWarning = true
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 border = BorderStroke(1.dp, HiddenForest.Accent),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = HiddenForest.Accent
                                 ),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp)
                             ) {
-                                Text("Cap. Actual", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text(
+                                    text = "Cap. Actual",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
                             }
 
                             OutlinedButton(
-                                onClick = { onExportAudioChapters(10) },
+                                onClick = {
+                                    if (hasDownloadedVoice) {
+                                        showNoVoiceWarning = false
+                                        onExportAudioChapters(10)
+                                    } else {
+                                        showNoVoiceWarning = true
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 border = BorderStroke(1.dp, HiddenForest.Accent),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = HiddenForest.Accent
                                 ),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp)
                             ) {
-                                Text("Próx. 10 Caps", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text(
+                                    text = "10 Capítulos",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
                             }
 
                             OutlinedButton(
-                                onClick = { onExportAudioChapters(9999) },
+                                onClick = {
+                                    if (hasDownloadedVoice) {
+                                        showNoVoiceWarning = false
+                                        onExportAudioChapters(9999)
+                                    } else {
+                                        showNoVoiceWarning = true
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 border = BorderStroke(1.dp, HiddenForest.Accent),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = HiddenForest.Accent
                                 ),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp)
                             ) {
-                                Text("Libro Completo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text(
+                                    text = "Todo el Libro",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
                             }
                         }
                     }
@@ -1578,6 +2099,74 @@ fun ReaderTtsMacroWindow(
                     }
                 }
             }
+
+            if (showAddRuleDialog) {
+                AddPhoneticRuleDialog(
+                    onDismiss = { showAddRuleDialog = false },
+                    onAdd = { orig, phon -> lexiconManager.addCustomRule(orig, phon) }
+                )
+            }
         }
     }
 }
+
+@Composable
+fun AddPhoneticRuleDialog(
+    onDismiss: () -> Unit,
+    onAdd: (original: String, replacement: String) -> Unit
+) {
+    var originalText by remember { mutableStateOf("") }
+    var replacementText by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Añadir Palabra Personalizada", fontWeight = FontWeight.Bold, color = Color.White) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Reemplaza la pronunciación de nombres o términos específicos antes de sintetizar con la voz de estudio.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HiddenForest.TextSecondary
+                )
+                OutlinedTextField(
+                    value = originalText,
+                    onValueChange = { originalText = it },
+                    label = { Text("Texto Original (ej. Jiang Chen)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = replacementText,
+                    onValueChange = { replacementText = it },
+                    label = { Text("Cómo pronunciarlo (ej. Yian Chen)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (originalText.isNotBlank() && replacementText.isNotBlank()) {
+                        onAdd(originalText.trim(), replacementText.trim())
+                        onDismiss()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = HiddenForest.Accent,
+                    contentColor = HiddenForest.Background
+                )
+            ) {
+                Text("Guardar", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar", color = HiddenForest.TextSecondary)
+            }
+        },
+        containerColor = HiddenForest.SurfaceVariant,
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+

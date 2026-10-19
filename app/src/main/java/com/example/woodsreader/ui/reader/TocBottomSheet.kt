@@ -25,6 +25,15 @@ import org.readium.r2.shared.publication.Publication
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeChild
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TocBottomSheet(
@@ -39,14 +48,18 @@ fun TocBottomSheet(
         if (current == null) return false
         return linkHref.substringBefore("#") == current.substringBefore("#")
     }
+
+    var searchQuery by remember { mutableStateOf("") }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
-        containerColor = HiddenForest.Surface.copy(alpha = 0.7f),
-        scrimColor = Color.Black.copy(alpha = 0.5f),
+        containerColor = Color(0xFF0C1811).copy(alpha = 0.98f),
+        scrimColor = Color.Black.copy(alpha = 0.6f),
         shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
         modifier = Modifier
             .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
+            .border(BorderStroke(1.dp, Color(0xFF233B2C)), RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
             .hazeChild(
                 state = hazeState,
                 style = ReaderDesign.GlassStyle
@@ -58,33 +71,92 @@ fun TocBottomSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 40.dp)
         ) {
-            Text(
-                text = "TABLA DE CONTENIDOS",
-                style = MaterialTheme.typography.labelSmall,
-                color = HiddenForest.TextLow,
-                letterSpacing = 2.sp,
-                modifier = Modifier.padding(bottom = 16.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "TABLA DE CONTENIDOS",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = HiddenForest.Accent,
+                    letterSpacing = 2.sp
+                )
+            }
+
+            // Buscador rápido de capítulos
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                placeholder = { Text("Buscar capítulo por número o título...", color = HiddenForest.TextLow.copy(alpha = 0.6f), fontSize = 13.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = HiddenForest.Accent, modifier = Modifier.size(18.dp)) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Limpiar", tint = HiddenForest.TextLow, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = HiddenForest.Text,
+                    unfocusedTextColor = HiddenForest.Text,
+                    focusedBorderColor = HiddenForest.Accent,
+                    unfocusedBorderColor = HiddenForest.Outline.copy(alpha = 0.3f),
+                    focusedContainerColor = HiddenForest.Background.copy(alpha = 0.6f),
+                    unfocusedContainerColor = HiddenForest.Background.copy(alpha = 0.4f),
+                    cursorColor = HiddenForest.Accent
+                ),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
             )
 
             val listState = rememberLazyListState()
-            val toc = remember(publication) {
+            val rawToc = remember(publication) {
                 publication.tableOfContents.ifEmpty { publication.readingOrder }
             }
-            val currentIndex = remember(toc, currentHref) {
-                toc.indexOfFirst { hrefsMatch(it.href.toString(), currentHref) }.coerceAtLeast(0)
+
+            val filteredToc = remember(rawToc, searchQuery) {
+                if (searchQuery.isBlank()) {
+                    rawToc
+                } else {
+                    val q = searchQuery.trim().lowercase()
+                    rawToc.filter { link ->
+                        val title = (link.title ?: link.href.toString()).lowercase()
+                        title.contains(q) || link.children.any { child ->
+                            (child.title ?: child.href.toString()).lowercase().contains(q)
+                        }
+                    }
+                }
             }
+
+            val currentIndex = remember(filteredToc, currentHref) {
+                filteredToc.indexOfFirst { hrefsMatch(it.href.toString(), currentHref) }.coerceAtLeast(0)
+            }
+
             // Scroll automático al capítulo actual al abrir el TOC
             LaunchedEffect(currentIndex) {
-                if (currentIndex > 0) listState.scrollToItem(currentIndex)
+                if (currentIndex >= 0 && filteredToc.isNotEmpty()) {
+                    listState.scrollToItem(currentIndex.coerceAtLeast(0))
+                }
             }
-            if (toc.isEmpty()) {
+
+            if (filteredToc.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(200.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No se encontró un índice para este libro.", color = HiddenForest.TextLow)
+                    Text(
+                        if (searchQuery.isNotBlank()) "No se encontraron capítulos coincidentes." else "No se encontró un índice para este libro.",
+                        color = HiddenForest.TextLow
+                    )
                 }
             } else {
                 LazyColumn(
@@ -93,7 +165,7 @@ fun TocBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(
-                        items = toc,
+                        items = filteredToc,
                         key = { link -> link.href.toString() }
                     ) { link: Link ->
                         TocItem(
@@ -130,11 +202,25 @@ private fun TocItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(if (isCurrent) HiddenForest.Accent.copy(alpha = 0.1f) else Color.Transparent)
+                .background(if (isCurrent) Color(0xFF1A3826) else Color.Transparent)
+                .border(
+                    width = if (isCurrent) 1.dp else 0.dp,
+                    color = if (isCurrent) HiddenForest.Accent.copy(alpha = 0.65f) else Color.Transparent,
+                    shape = RoundedCornerShape(12.dp)
+                )
                 .clickable { onChapterClick(link) }
                 .padding(vertical = 12.dp, horizontal = (8 + level * 16).dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (isCurrent) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(HiddenForest.Accent)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
             Text(
                 text = displayTitle,
                 style = MaterialTheme.typography.bodyLarge.copy(
@@ -146,6 +232,25 @@ private fun TocItem(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            if (isCurrent) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    color = HiddenForest.Accent.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, HiddenForest.Accent.copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = "LEYENDO AHORA",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        ),
+                        color = HiddenForest.Accent,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+            }
         }
         
         // Sub-capítulos con hrefsMatch propagado
