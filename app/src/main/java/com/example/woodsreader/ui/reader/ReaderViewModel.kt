@@ -608,83 +608,70 @@ class ReaderViewModel @Inject constructor(
 
                 publication = pub
 
-                // Asegurar que la portada exista en disco para EpubCoverPage y la biblioteca
-                if (book.coverCachePath.isNullOrBlank() || !File(book.coverCachePath).exists()) {
-                    withContext(Dispatchers.IO) {
-                        try {
-                            val newCover = coverExtractor.extractCover(
-                                source = uri,
-                                format = book.format,
-                                fileHash = book.fileHash,
-                                title = book.title,
-                                author = book.author,
-                                publication = pub
-                            )
-                            if (newCover != null) {
-                                book = book.copy(coverCachePath = newCover)
-                                bookRepository.updateCoverPath(book.id, newCover)
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "No se pudo extraer portada durante carga de ${book.title}", e)
-                        }
+                // 1. Construcción O(1) de resourceIndexCache con pre-asignación en Dispatchers.Default
+                val fastIndexCache = withContext(Dispatchers.Default) {
+                    val order = pub.readingOrder
+                    val map = HashMap<String, Int>(order.size * 4)
+                    for (i in order.indices) {
+                        val rawHref = order[i].href.toString()
+                        val cleanHref = rawHref.substringBefore('#').removePrefix("/")
+                        val filename = rawHref.substringAfterLast('/')
+                        val cleanFilename = filename.substringBefore('#')
+                        map[rawHref] = i
+                        map[cleanHref] = i
+                        map[filename] = i
+                        map[cleanFilename] = i
                     }
-                }
-
-                // 1. Construir índice de recursos en memoria O(1) de inmediato (0 ms)
-                val fastIndexCache = HashMap<String, Int>(pub.readingOrder.size * 4)
-                pub.readingOrder.forEachIndexed { index, link ->
-                    val rawHref = link.href.toString()
-                    fastIndexCache[rawHref] = index
-                    fastIndexCache[rawHref.substringBefore('#')] = index
-                    val filename = rawHref.substringAfterLast('/')
-                    fastIndexCache[filename] = index
-                    fastIndexCache[filename.substringBefore('#')] = index
+                    map
                 }
                 resourceIndexCache = fastIndexCache
 
-                // 2. Posiciones fallback inmediatas (1 posición por capítulo/recurso) O(N) fuera del Main Thread
-                val total = pub.readingOrder.size.coerceAtLeast(1)
-                val fallbackPositions = withContext(Dispatchers.Default) {
-                    pub.readingOrder.mapIndexed { index, link ->
-                        listOf(
-                            Locator(
-                                href = link.url(),
-                                mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
-                                title = link.title,
-                                locations = Locator.Locations(
-                                    progression = 0.0,
-                                    position = index + 1,
-                                    totalProgression = index.toDouble() / total.toDouble()
+                // 2. Posiciones sintéticas inmediatas O(N) sin escanear ZIP en libros extensos (> 80 capítulos)
+                val totalChapters = pub.readingOrder.size.coerceAtLeast(1)
+                val computedPositions: List<List<Locator>> = if (totalChapters > 80) {
+                    withContext(Dispatchers.Default) {
+                        val invTotal = 1.0 / totalChapters.toDouble()
+                        pub.readingOrder.mapIndexed { index, link ->
+                            listOf(
+                                Locator(
+                                    href = link.url(),
+                                    mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
+                                    title = link.title,
+                                    locations = Locator.Locations(
+                                        progression = 0.0,
+                                        position = index + 1,
+                                        totalProgression = index.toDouble() * invTotal
+                                    )
                                 )
                             )
-                        )
-                    }
-                }
-                totalPositions = fallbackPositions.sumOf { it.size }
-                positionsByResource = fallbackPositions
-
-                // 3. Calcular posiciones detalladas en background en Dispatchers.IO solo para libros pequeños/medianos
-                // ⚠️ CRÍTICO: En libros con más de 80 capítulos (ej. web novels con 2,225 capítulos),
-                // positionsByReadingOrder() descomprime y parsea todos los XHTML en memoria, consumiendo más de 400 MB
-                // de heap y provocando Garbage Collection continuo y OutOfMemoryError.
-                // En su lugar, fallbackPositions (1 posición por capítulo) es instantáneo O(1) y consume 0 MB extras.
-                positionsJob?.cancel()
-                if (pub.readingOrder.size <= 80) {
-                    positionsJob = viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            val byReadingOrder = pub.positionsByReadingOrder()
-                            if (byReadingOrder.isNotEmpty() && !byReadingOrder.all { it.isEmpty() }) {
-                                positionsByResource = byReadingOrder
-                                totalPositions = byReadingOrder.sumOf { it.size }
-                                Log.d(TAG, "Detailed positions calculated in background for ${pub.readingOrder.size} chapters: $totalPositions positions")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Error calculating positions (keeping fast fallback)", e)
                         }
                     }
                 } else {
-                    Log.d(TAG, "Libro extenso con ${pub.readingOrder.size} capítulos: usando posiciones fallback instantáneas O(1)")
+                    withContext(Dispatchers.IO) {
+                        val rawPos = runCatching { pub.positions() }.getOrDefault(emptyList())
+                        if (rawPos.isNotEmpty()) {
+                            rawPos.groupBy { it.href.toString().substringBefore('#') }.values.toList()
+                        } else {
+                            val invTotal = 1.0 / totalChapters.toDouble()
+                            pub.readingOrder.mapIndexed { index, link ->
+                                listOf(
+                                    Locator(
+                                        href = link.url(),
+                                        mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
+                                        title = link.title,
+                                        locations = Locator.Locations(
+                                            progression = 0.0,
+                                            position = index + 1,
+                                            totalProgression = index.toDouble() * invTotal
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
+                positionsByResource = computedPositions
+                totalPositions = computedPositions.sumOf { it.size }
 
                 ttsManager.setCurrentBookId(book.id)
 
@@ -720,18 +707,41 @@ class ReaderViewModel @Inject constructor(
                 _globalProgress.value = book.readingProgressPercent.coerceIn(0f, 1f)
                 startNewSession(ReadingMode.MANUAL, initialLocator)
 
-                withContext(Dispatchers.IO) {
-                    bookRepository.markOpened(book.id)
-                    userPreferencesRepository.updateLastReadBookId(book.id)
-                }
-
+                // FASE 1 (Crítica — < 100 ms): Emitir inmediatamente el estado de lectura listo
                 _uiState.value = ReaderUiState.Success(
                     book = book,
                     publication = pub,
                     initialLocatorJson = initialLocator?.toJSON()?.toString(),
                     initialLocator = initialLocator
                 )
-                Log.d(TAG, "loadBook: Successfully loaded ${book.title}")
+                Log.d(TAG, "loadBook: Successfully loaded ${book.title} (Phase 1 Ready)")
+
+                // FASE 2 (Diferida en background): Tareas secundarias que no bloquean la lectura
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        bookRepository.markOpened(book.id)
+                        userPreferencesRepository.updateLastReadBookId(book.id)
+
+                        // Asegurar portada si falta sin bloquear la apertura del lector
+                        val coverPath = book.coverCachePath
+                        if (coverPath.isNullOrBlank() || !File(coverPath).exists()) {
+                            val newCover = coverExtractor.extractCover(
+                                source = uri,
+                                format = book.format,
+                                fileHash = book.fileHash,
+                                title = book.title,
+                                author = book.author,
+                                publication = pub
+                            )
+                            if (newCover != null) {
+                                book = book.copy(coverCachePath = newCover)
+                                bookRepository.updateCoverPath(book.id, newCover)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error en hidratación diferida (Fase 2) de ${book.title}", e)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "loadBook: Exception loading book $bookId", e)
                 _uiState.value = ReaderUiState.Error("Error al cargar libro: ${e.message}")
