@@ -90,6 +90,13 @@ class PronunciationLexiconManager @Inject constructor(
         saveCustomRules(updated)
     }
 
+    fun getAllCustomRules(): List<PhoneticRule> = _customRules.value
+
+    fun setAllCustomRules(rules: List<PhoneticRule>) {
+        _customRules.value = rules
+        saveCustomRules(rules)
+    }
+
     fun applyLexicon(text: String, language: SupportedTtsLanguage): String {
         if (text.isBlank()) return text
         var result = text

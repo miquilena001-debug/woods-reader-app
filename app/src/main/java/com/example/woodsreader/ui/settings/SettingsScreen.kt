@@ -40,6 +40,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import com.example.woodsreader.ui.common.WoodsProUnlockDialog
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -67,6 +68,8 @@ fun SettingsScreen(
     val isBusy = isScanning || isEnriching
     val context = LocalContext.current
 
+    val coroutineScope = rememberCoroutineScope()
+
     val createBackupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -74,9 +77,25 @@ fun SettingsScreen(
     }
 
     val restoreBackupLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
+        contract = ActivityResultContracts.GetContent()
     ) { uri ->
-        if (uri != null) viewModel.restoreFullBackup(uri)
+        if (uri != null) {
+            viewModel.restoreBackup(uri) { result ->
+                result.onSuccess { count ->
+                    Toast.makeText(
+                        context,
+                        "✅ Se restauraron $count elementos con éxito (progreso, citas, glosario y ajustes)",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        "❌ Error al restaurar: ${error.localizedMessage ?: "Archivo inválido"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     // Calculate storage sizes on display
@@ -859,26 +878,88 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Sección: Bóveda de Respaldo y Datos ────────────────
+            // ── Tarjeta: Copia de Seguridad y Restauración (Emerald Liquid Glass) ──
             item {
-                SettingsSection("🛡️ Bóveda de Respaldo y Datos") {
-                    var showJsonOptions by remember { mutableStateOf(false) }
-                    var showImportDialog by remember { mutableStateOf(false) }
-                    var importError by remember { mutableStateOf<String?>(null) }
-                    var importSuccess by remember { mutableStateOf(false) }
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF102017).copy(alpha = 0.95f),
+                    border = BorderStroke(
+                        width = 1.2.dp,
+                        brush = Brush.horizontalGradient(
+                            listOf(HiddenForest.Accent.copy(alpha = 0.8f), Color(0xFF233B2C))
+                        )
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(text = "💾", fontSize = 22.sp)
+                                Column {
+                                    Text(
+                                        text = "Copia de Seguridad y Restauración",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 16.sp
+                                        ),
+                                        color = HiddenForest.Text
+                                    )
+                                    Text(
+                                        text = "Bóveda local de 1 toque (Progreso, Citas, Glosario y Ajustes)",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = HiddenForest.TextLow,
+                                            fontSize = 12.sp
+                                        )
+                                    )
+                                }
+                            }
+                        }
 
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = "Guarda tus libros, progreso, notas y colecciones en un archivo seguro .woodsbackup o restáuralos en cualquier dispositivo.",
+                            text = "Guarda tu progreso de lectura, citas, glosario fonético y configuración en un archivo JSON portátil, o restáuralos al instante incluso si cambias de dispositivo.",
                             style = MaterialTheme.typography.bodySmall,
                             color = HiddenForest.TextLow
                         )
 
-                        // Botón Primario: Exportar .woodsbackup
+                        // Botón Primario: Exportar Respaldo (.json)
                         Button(
                             onClick = {
                                 viewModel.clearBackupStatusMessage()
-                                createBackupLauncher.launch("woods_reader_backup.woodsbackup")
+                                coroutineScope.launch {
+                                    try {
+                                        val backupFile = viewModel.createBackupFile()
+                                        val shareUri = androidx.core.content.FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            backupFile
+                                        )
+                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "application/json"
+                                            putExtra(android.content.Intent.EXTRA_STREAM, shareUri)
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, backupFile.name)
+                                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        context.startActivity(
+                                            android.content.Intent.createChooser(shareIntent, "Guardar o exportar respaldo (.json)")
+                                        )
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Error al exportar: ${e.localizedMessage ?: "error desconocido"}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -889,16 +970,14 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Upload, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Exportar respaldo (.woodsbackup)", fontWeight = FontWeight.Bold)
+                            Text("⬆️ Exportar Respaldo (.json)", fontWeight = FontWeight.Bold)
                         }
 
-                        // Botón Secundario: Restaurar .woodsbackup
+                        // Botón Secundario: Restaurar Respaldo
                         OutlinedButton(
                             onClick = {
                                 viewModel.clearBackupStatusMessage()
-                                restoreBackupLauncher.launch(
-                                    arrayOf("application/json", "application/octet-stream", "*/*")
-                                )
+                                restoreBackupLauncher.launch("*/*")
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -909,7 +988,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Restaurar desde archivo (.woodsbackup)", fontWeight = FontWeight.Medium)
+                            Text("⬇️ Restaurar Respaldo", fontWeight = FontWeight.Medium)
                         }
 
                         backupStatusMessage?.let { message ->
@@ -926,124 +1005,6 @@ fun SettingsScreen(
                                     modifier = Modifier.padding(10.dp)
                                 )
                             }
-                        }
-
-                        HorizontalDivider(
-                            color = HiddenForest.Outline.copy(alpha = 0.3f),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-
-                        // Desplegable compacto para JSON rápido
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showJsonOptions = !showJsonOptions }
-                                .padding(vertical = 6.dp, horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Herramientas de respaldo rápido JSON",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = HiddenForest.TextLow
-                            )
-                            Icon(
-                                imageVector = if (showJsonOptions) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                contentDescription = if (showJsonOptions) "Contraer" else "Expandir",
-                                tint = HiddenForest.TextLow,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        if (showJsonOptions) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp)
-                            ) {
-                                SettingsActionRow(
-                                    icon = Icons.Default.Upload,
-                                    title = "Compartir copia JSON",
-                                    subtitle = "Exportar texto JSON plano vía selector de compartir",
-                                    onClick = { viewModel.exportLibrary(context) }
-                                )
-                                HorizontalDivider(
-                                    color = HiddenForest.Outline.copy(alpha = 0.2f),
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
-                                SettingsActionRow(
-                                    icon = Icons.Default.Download,
-                                    title = "Pegar respaldo JSON",
-                                    subtitle = "Importar biblioteca pegando texto JSON directamente",
-                                    onClick = { showImportDialog = true }
-                                )
-                            }
-                        }
-
-                        if (showImportDialog) {
-                            var backupJsonText by remember { mutableStateOf("") }
-                            AlertDialog(
-                                onDismissRequest = {
-                                    showImportDialog = false
-                                    importError = null
-                                    importSuccess = false
-                                },
-                                title = { Text("Importar Biblioteca JSON", color = HiddenForest.Text) },
-                                text = {
-                                    Column {
-                                        Text("Pega el texto JSON de tu copia de seguridad a continuación:", color = HiddenForest.TextLow, modifier = Modifier.padding(bottom = 8.dp))
-                                        OutlinedTextField(
-                                            value = backupJsonText,
-                                            onValueChange = { backupJsonText = it },
-                                            placeholder = { Text("Pegue el JSON aquí...", color = HiddenForest.TextLow.copy(alpha = 0.5f)) },
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedTextColor = HiddenForest.Text,
-                                                unfocusedTextColor = HiddenForest.Text,
-                                                focusedBorderColor = HiddenForest.Accent,
-                                                unfocusedBorderColor = HiddenForest.Outline,
-                                                cursorColor = HiddenForest.Accent
-                                            ),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(120.dp),
-                                            textStyle = MaterialTheme.typography.bodySmall
-                                        )
-                                        if (importError != null) {
-                                            Text(importError!!, color = Color.Red, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                                        }
-                                        if (importSuccess) {
-                                            Text("¡Biblioteca importada con éxito!", color = HiddenForest.Accent, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                                        }
-                                    }
-                                },
-                                confirmButton = {
-                                    Button(
-                                        onClick = {
-                                            viewModel.importLibrary(
-                                                backupJsonText,
-                                                onSuccess = {
-                                                    importSuccess = true
-                                                    importError = null
-                                                    backupJsonText = ""
-                                                },
-                                                onError = {
-                                                    importError = it
-                                                    importSuccess = false
-                                                }
-                                            )
-                                        },
-                                        colors = ButtonDefaults.buttonColors(containerColor = HiddenForest.Accent)
-                                    ) {
-                                        Text("Importar", color = HiddenForest.Background)
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { showImportDialog = false }) {
-                                        Text("Cerrar", color = HiddenForest.TextLow)
-                                    }
-                                },
-                                containerColor = HiddenForest.SurfaceVariant
-                            )
                         }
                     }
                 }

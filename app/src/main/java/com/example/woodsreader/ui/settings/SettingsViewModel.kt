@@ -37,6 +37,7 @@ import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.license.ProLicenseManager
+import com.example.woodsreader.core.backup.WoodsBackupManager
 import java.io.File
 import javax.inject.Inject
 
@@ -75,6 +76,7 @@ class SettingsViewModel @Inject constructor(
     private val ttsManager: TtsManager,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val backupManager: BackupManager,
+    private val woodsBackupManager: WoodsBackupManager,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val proLicenseManager: ProLicenseManager
 ) : ViewModel() {
@@ -94,6 +96,22 @@ class SettingsViewModel @Inject constructor(
 
     fun clearBackupStatusMessage() {
         _backupStatusMessage.value = null
+    }
+
+    suspend fun createBackupFile(): File = woodsBackupManager.createBackupFile()
+
+    fun restoreBackup(uri: android.net.Uri, onResult: (Result<Int>) -> Unit) {
+        viewModelScope.launch {
+            _backupStatusMessage.value = "Restaurando copia de seguridad..."
+            val result = woodsBackupManager.restoreFromUri(uri)
+            result.onSuccess { count ->
+                _backupStatusMessage.value = "Se restauraron $count elementos con éxito."
+            }.onFailure { err ->
+                _backupStatusMessage.value =
+                    "Error al restaurar: ${err.localizedMessage ?: "archivo inválido"}"
+            }
+            onResult(result)
+        }
     }
 
     fun exportFullBackup(uri: android.net.Uri) {

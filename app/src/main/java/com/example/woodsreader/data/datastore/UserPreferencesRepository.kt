@@ -23,6 +23,8 @@ class UserPreferencesRepository @Inject constructor(
         dataStore.updateData(transform)
     }
 
+    suspend fun restorePreferences(newPrefs: UserPreferences) = update { newPrefs }
+
     // ── Reader appearance ─────────────────────────────────────────────────────
 
     suspend fun updateTheme(value: ReaderTheme)            = update { it.copy(theme = value) }

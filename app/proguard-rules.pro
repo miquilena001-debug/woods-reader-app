@@ -1,10 +1,25 @@
+# ── Sherpa-ONNX JNI (Crítico: No ofuscar clases llamadas desde C++) ───────────
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
+
 # ── Readium Kotlin Toolkit ────────────────────────────────────────────────────
 -keep class org.readium.** { *; }
 -dontwarn org.readium.**
+-keep class org.readium.r2.** { *; }
+-dontwarn org.readium.r2.**
 
-# ── sherpa-onnx (Piper TTS + espeak-ng + ONNX Runtime) ───────────────────────
--keep class com.k2fsa.sherpa.onnx.** { *; }
--dontwarn com.k2fsa.sherpa.onnx.**
+# ── Room Database Entities & DAOs ─────────────────────────────────────────────
+-keep class * extends androidx.room.RoomDatabase
+-keep @androidx.room.Entity class * { *; }
+-keep @androidx.room.Dao class * { *; }
+-dontwarn androidx.room.paging.**
+
+# ── Kotlinx Serialization / Org.JSON ──────────────────────────────────────────
+-keepattributes *Annotation*, InnerClasses, EnclosingMethod, Signature
+-keep @kotlinx.serialization.Serializable class * { *; }
+-keepclassmembers class * {
+    @kotlinx.serialization.SerialName <fields>;
+}
 
 # ── Media3 ────────────────────────────────────────────────────────────────────
 -keep class androidx.media3.** { *; }
@@ -15,13 +30,6 @@
 -dontwarn dagger.hilt.**
 -keep @dagger.hilt.android.HiltAndroidApp class * { *; }
 -keep @dagger.hilt.android.AndroidEntryPoint class * { *; }
-
-# ── kotlinx.serialization + TypeConverters de Room ───────────────────────────
--keepattributes *Annotation*, InnerClasses, Signature
--keep @kotlinx.serialization.Serializable class * { *; }
--keepclassmembers class * {
-    @kotlinx.serialization.SerialName <fields>;
-}
 
 # ── DataStore Proto ───────────────────────────────────────────────────────────
 -keep class com.google.protobuf.** { *; }
@@ -51,11 +59,6 @@
 
 # ── Jsoup ─────────────────────────────────────────────────────────────────────
 -dontwarn org.jsoup.**
-
-# ── Room Database ─────────────────────────────────────────────────────────────
--keep class * extends androidx.room.RoomDatabase
--keep @androidx.room.Entity class * { *; }
--dontwarn androidx.room.paging.**
 
 # ── Vico Charts ───────────────────────────────────────────────────────────────
 -dontwarn com.patrykandpatrick.vico.**

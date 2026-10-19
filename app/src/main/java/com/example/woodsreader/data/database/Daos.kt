@@ -432,6 +432,12 @@ interface ReadingStatsDao {
 
     @Query("SELECT * FROM reading_stats ORDER BY date DESC LIMIT 30")
     fun getAllStats(): Flow<List<ReadingStatsEntity>>
+
+    @Query("SELECT * FROM reading_stats")
+    suspend fun getAllStatsList(): List<ReadingStatsEntity>
+
+    @Upsert
+    suspend fun upsertAll(stats: List<ReadingStatsEntity>)
 }
 
 // ── TtsRuleDao ────────────────────────────────────────────────────────────────
