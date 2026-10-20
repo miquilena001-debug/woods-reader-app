@@ -16,6 +16,7 @@ import org.readium.navigator.media.tts.android.AndroidTtsSettings
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.util.Language
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
+import timber.log.Timber
 
 typealias SherpaOnnxTtsEngine = SherpaTtsEngine
 
@@ -43,6 +44,7 @@ class SherpaTtsEngine(
     private val nativeTtsMutex = kotlinx.coroutines.sync.Mutex()
 
     @Volatile private var isSherpa: Boolean = false
+    @Volatile private var currentRequestUsesSherpa: Boolean = false
 
     // Listener que Readium inyecta en nuestro engine para recibir eventos
     private var engineListener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
@@ -84,30 +86,30 @@ class SherpaTtsEngine(
         }
 
         // Reenviar eventos del delegado Android nativo al listener de Readium
-        // Solo cuando Sherpa está desactivado
+        // Solo cuando la solicitud activa está usando el delegado nativo
         delegate.setListener(object : TtsEngine.Listener<AndroidTtsEngine.Error> {
             override fun onStart(requestId: TtsEngine.RequestId) {
-                if (!isSherpa) engineListener?.onStart(requestId)
+                if (!currentRequestUsesSherpa) engineListener?.onStart(requestId)
             }
 
             override fun onRange(requestId: TtsEngine.RequestId, range: IntRange) {
-                if (!isSherpa) engineListener?.onRange(requestId, range)
+                if (!currentRequestUsesSherpa) engineListener?.onRange(requestId, range)
             }
 
             override fun onInterrupted(requestId: TtsEngine.RequestId) {
-                if (!isSherpa) engineListener?.onInterrupted(requestId)
+                if (!currentRequestUsesSherpa) engineListener?.onInterrupted(requestId)
             }
 
             override fun onFlushed(requestId: TtsEngine.RequestId) {
-                if (!isSherpa) engineListener?.onFlushed(requestId)
+                if (!currentRequestUsesSherpa) engineListener?.onFlushed(requestId)
             }
 
             override fun onDone(requestId: TtsEngine.RequestId) {
-                if (!isSherpa) engineListener?.onDone(requestId)
+                if (!currentRequestUsesSherpa) engineListener?.onDone(requestId)
             }
 
             override fun onError(requestId: TtsEngine.RequestId, error: AndroidTtsEngine.Error) {
-                if (!isSherpa) engineListener?.onError(requestId, error)
+                if (!currentRequestUsesSherpa) engineListener?.onError(requestId, error)
             }
         })
     }
@@ -131,23 +133,24 @@ class SherpaTtsEngine(
 
     /**
      * Sintetiza [text] con el motor activo:
-     * - Sherpa ONNX si [useSherpaTts] es true
-     * - Android nativo en caso contrario
+     * - Sherpa ONNX si [useSherpaTts] es true y hay modelos listos
+     * - Fallback al delegado Android nativo si Sherpa no está disponible o falla
      *
      * [language] es nullable según la firma de Readium 3.0.3.
      */
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
-        if (isSherpa) {
-            speakWithSherpa(requestId, text)
+        val canUseSherpa = isSherpa && ttsManager.isSherpaReady()
+        if (canUseSherpa) {
+            currentRequestUsesSherpa = true
+            speakWithSherpa(requestId, text, language)
         } else {
-            // El delegate nativo usará su propio listener (configurado en init)
+            currentRequestUsesSherpa = false
             delegate.speak(requestId, text, language)
         }
     }
 
-    private fun speakWithSherpa(requestId: TtsEngine.RequestId, text: String) {
+    private fun speakWithSherpa(requestId: TtsEngine.RequestId, text: String, language: Language?) {
         activeJob?.cancel()
-        ttsManager.stop()
         activeJob = scope.launch(Dispatchers.Default) {
             engineListener?.onStart(requestId)
             try {
@@ -161,9 +164,12 @@ class SherpaTtsEngine(
             } catch (e: CancellationException) {
                 engineListener?.onInterrupted(requestId)
                 throw e
-            } catch (_: Exception) {
-                // Fallback silencioso: indicar done para que Readium continúe al siguiente
-                engineListener?.onDone(requestId)
+            } catch (e: Exception) {
+                Timber.w(e, "Sherpa synthesis failed for request $requestId, falling back to Android TTS delegate")
+                currentRequestUsesSherpa = false
+                withContext(Dispatchers.Main) {
+                    delegate.speak(requestId, text, language)
+                }
             }
         }
     }
@@ -188,12 +194,14 @@ class SherpaTtsEngine(
     override fun stop() {
         activeJob?.cancel()
         activeJob = null
+        currentRequestUsesSherpa = false
         delegate.stop()
         ttsManager.stop()
     }
 
     override fun close() {
         activeJob?.cancel()
+        currentRequestUsesSherpa = false
         scope.cancel()
         delegate.close()
     }

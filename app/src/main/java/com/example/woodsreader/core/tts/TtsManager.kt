@@ -54,7 +54,7 @@ class TtsManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
     private val userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository,
-    private val sherpaModelManager: SherpaModelManager,
+    val sherpaModelManager: SherpaModelManager,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val smartSleepTimerManager: SmartSleepTimerManager,
@@ -66,6 +66,8 @@ class TtsManager @Inject constructor(
 
     @Volatile
     private var offlineTts: com.k2fsa.sherpa.onnx.OfflineTts? = null
+    @Volatile
+    private var loadedVoiceId: String? = null
     private val nativeTtsMutex = Mutex()
     @Volatile
     private var activeAudioTrack: AudioTrack? = null
@@ -73,6 +75,10 @@ class TtsManager @Inject constructor(
     @Volatile
     private var isSpeakingCancelled = false
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    fun isSherpaReady(): Boolean {
+        return offlineTts != null || sherpaModelManager.isModelReady() || sherpaModelManager.getInstalledModels().isNotEmpty()
+    }
 
     // ── Pre-Síntesis Lookahead (0ms Latencia, hilo secuencial único) ───────────
     private val preSynthesisDispatcher = Dispatchers.Default.limitedParallelism(1)
@@ -222,9 +228,12 @@ class TtsManager @Inject constructor(
         }
 
         ttsScope.launch {
-            sherpaModelManager.selectedVoice.collect {
-                clearPreSynthesisCache()
-                resetSherpa()
+            sherpaModelManager.selectedVoice.collect { newVoice ->
+                val currentLoaded = loadedVoiceId
+                if (currentLoaded != null && currentLoaded != newVoice.id) {
+                    clearPreSynthesisCache()
+                    resetSherpa()
+                }
             }
         }
         ttsScope.launch {
@@ -234,7 +243,7 @@ class TtsManager @Inject constructor(
         }
         ttsScope.launch {
             userPreferencesRepository.userPreferencesFlow.collect { prefs ->
-                if (!prefs.useSherpaTts) {
+                if (!prefs.useSherpaTts && loadedVoiceId != null) {
                     clearPreSynthesisCache()
                     resetSherpa()
                 }
@@ -332,7 +341,7 @@ class TtsManager @Inject constructor(
                 userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
             } catch (_: Exception) {
                 false
-            } || (sherpaModelManager.isModelReady() && !isReady)
+            } || (isSherpaReady() && !isReady)
 
             if (useSherpa && initSherpaIfNeeded()) {
                 isSpeakingCancelled = false
@@ -351,7 +360,10 @@ class TtsManager @Inject constructor(
                 }
             }
 
-            if (!isReady || tts == null) return
+            if (!isReady || tts == null) {
+                val ok = initialize()
+                if (!ok || tts == null) return
+            }
 
             val activeRules = try {
                 ttsRuleDao.getActiveRulesForBook(currentBookId)
@@ -441,7 +453,7 @@ class TtsManager @Inject constructor(
                 }
             }
         } finally {
-            if (!isNarratingSequence) {
+            if (isSpeakingCancelled) {
                 _isPlaying.value = false
                 releaseAudioLocks()
                 abandonAudioFocus()
@@ -961,6 +973,7 @@ class TtsManager @Inject constructor(
             Timber.w(e, "Error releasing OfflineTts")
         }
         offlineTts = null
+        loadedVoiceId = null
     }
 
     suspend fun switchSherpaVoice(option: SherpaVoiceOption): Boolean {
@@ -975,14 +988,21 @@ class TtsManager @Inject constructor(
     }
 
     suspend fun initSherpaIfNeeded(): Boolean = withContext(Dispatchers.IO) {
-        if (offlineTts != null) return@withContext true
+        if (offlineTts != null && loadedVoiceId == sherpaModelManager.selectedVoice.value.id) return@withContext true
         nativeTtsMutex.withLock {
             ensureSherpaLoadedLocked()
         }
     }
 
     private fun ensureSherpaLoadedLocked(): Boolean {
-        if (offlineTts != null) return true
+        if (offlineTts != null && loadedVoiceId == sherpaModelManager.selectedVoice.value.id) return true
+        if (offlineTts != null) {
+            try {
+                offlineTts?.release()
+            } catch (_: Exception) {}
+            offlineTts = null
+            loadedVoiceId = null
+        }
         return try {
             Timber.d("Initializing Sherpa ONNX...")
             _isLoadingModel.value = true
@@ -1001,7 +1021,8 @@ class TtsManager @Inject constructor(
                 Timber.d("Loading Sherpa ONNX from disk: ${sherpaModelManager.modelDir.absolutePath}")
                 offlineTts = sherpaModelManager.createOfflineTtsInstance()
                 if (offlineTts != null) {
-                    Timber.i("Sherpa ONNX initialized successfully from disk: ${sherpaModelManager.selectedVoice.value.id}")
+                    loadedVoiceId = sherpaModelManager.selectedVoice.value.id
+                    Timber.i("Sherpa ONNX initialized successfully from disk: $loadedVoiceId")
                     return true
                 }
             }
@@ -1059,7 +1080,7 @@ class TtsManager @Inject constructor(
     suspend fun generateSherpaAudioRaw(text: String, speed: Float): Pair<FloatArray, Int>? =
         withContext(Dispatchers.IO) {
             nativeTtsMutex.withLock {
-                if (offlineTts == null) {
+                if (offlineTts == null || loadedVoiceId != sherpaModelManager.selectedVoice.value.id) {
                     if (!ensureSherpaLoadedLocked()) return@withLock null
                 }
                 val tts = offlineTts ?: return@withLock null
@@ -1072,6 +1093,7 @@ class TtsManager @Inject constructor(
                     if (result.samples.isNotEmpty()) {
                         result.samples to result.sampleRate
                     } else {
+                        Timber.w("Sherpa tts.generate returned empty samples for: $text")
                         null
                     }
                 } catch (e: Exception) {
@@ -1141,8 +1163,8 @@ class TtsManager @Inject constructor(
             }
         }
 
-        // Si offlineTts es null, inicializar síncronamente con nativeTtsMutex
-        if (offlineTts == null) {
+        // Si offlineTts es null o no coincide con la voz seleccionada, inicializar síncronamente con nativeTtsMutex
+        if (offlineTts == null || loadedVoiceId != sherpaModelManager.selectedVoice.value.id) {
             nativeTtsMutex.withLock {
                 ensureSherpaLoadedLocked()
             }
@@ -1458,6 +1480,19 @@ class TtsManager @Inject constructor(
                     offset += size
                     totalFramesWritten.addAndGet(size.toLong())
                 }
+
+                // 5. Esperar a que el AudioTrack termine de reproducir físicamente todas las muestras
+                val targetEndFrame = totalFramesWritten.get()
+                val expectedDurationMs = ((samples.size.toFloat() / sampleRate) * 1000L).toLong()
+                val waitStartTime = System.currentTimeMillis()
+                val maxWaitMs = expectedDurationMs + 800L
+
+                while (!isSpeakingCancelled && activeAudioTrack == track && track.playbackHeadPosition < targetEndFrame && currentCoroutineContext().isActive) {
+                    if (System.currentTimeMillis() - waitStartTime > maxWaitMs) {
+                        break
+                    }
+                    delay(25L)
+                }
             } finally {
                 monitorJob?.cancel()
             }
@@ -1559,6 +1594,9 @@ class TtsManager @Inject constructor(
 
                     val generatedAudio = runCatching {
                         nativeTtsMutex.withLock {
+                            if (offlineTts == null || loadedVoiceId != sherpaModelManager.selectedVoice.value.id) {
+                                ensureSherpaLoadedLocked()
+                            }
                             offlineTts?.generate(
                                 text = item.text,
                                 sid = sherpaModelManager.selectedVoice.value.speakerId,
