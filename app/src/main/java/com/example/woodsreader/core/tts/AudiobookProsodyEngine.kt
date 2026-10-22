@@ -76,6 +76,8 @@ object AudiobookProsodyEngine {
                 .replace("\"", "")
                 .replace("\u201C", "")
                 .replace("\u201D", "")
+                .replace(Regex("""[¿¡]{2,}"""), "¿")
+                .replace(Regex("""[?!]{2,}"""), "?")
                 .trim()
 
             if (cleaned.isBlank() || !cleaned.any { it.isLetterOrDigit() }) continue

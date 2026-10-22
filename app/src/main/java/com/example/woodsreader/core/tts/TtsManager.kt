@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.PlaybackParams
 import android.os.Build
 import android.os.PowerManager
 import android.net.wifi.WifiManager
@@ -45,6 +46,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
 
 
 private const val TAG = "TtsManager"
@@ -71,6 +74,10 @@ class TtsManager @Inject constructor(
     private val nativeTtsMutex = Mutex()
     @Volatile
     private var activeAudioTrack: AudioTrack? = null
+    @Volatile
+    private var persistentSherpaTrack: AudioTrack? = null
+    @Volatile
+    private var persistentTrackSampleRate: Int = 0
     private val totalFramesWritten = AtomicLong(0L)
     @Volatile
     private var isSpeakingCancelled = false
@@ -212,9 +219,17 @@ class TtsManager @Inject constructor(
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
+    @Volatile
+    private var hasAudioFocus = false
+    @Volatile
+    private var isSynthesizingOrPlayingSherpa = false
+    @Volatile
+    private var userRequestedStop = false
 
     private var basePitch: Float = 1.0f
     private var baseRate: Float = 1.0f
+    private val _currentPitch = MutableStateFlow(1.0f)
+    val currentPitch: StateFlow<Float> = _currentPitch.asStateFlow()
     @Volatile
     private var currentBookId: String? = null
 
@@ -247,7 +262,12 @@ class TtsManager @Inject constructor(
                     clearPreSynthesisCache()
                     resetSherpa()
                 }
+                setRate(prefs.ttsSpeed)
+                setPitch(prefs.ttsPitch)
             }
+        }
+        ttsScope.launch {
+            initialize()
         }
     }
 
@@ -285,10 +305,19 @@ class TtsManager @Inject constructor(
     private val focusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
+                if (isSynthesizingOrPlayingSherpa && !userRequestedStop) {
+                    android.util.Log.w(TAG, "Ignorando AUDIOFOCUS_LOSS porque Sherpa está sintetizando o hablando activamente")
+                    return@OnAudioFocusChangeListener
+                }
+                hasAudioFocus = false
                 wasPlayingBeforeTransientLoss = false
                 stop() // Parar inmediatamente si perdemos el foco permanentemente
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (isSynthesizingOrPlayingSherpa && !userRequestedStop) {
+                    android.util.Log.w(TAG, "Ignorando AUDIOFOCUS_LOSS_TRANSIENT porque Sherpa está sintetizando o hablando activamente")
+                    return@OnAudioFocusChangeListener
+                }
                 if (_isPlaying.value) {
                     wasPlayingBeforeTransientLoss = true
                     pause() // Pausar limpiamente ante llamada o audio temporal
@@ -298,6 +327,7 @@ class TtsManager @Inject constructor(
                 setRate(0.8f * baseRate) // Reducir velocidad si el sistema pide "ducking"
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
+                hasAudioFocus = true
                 setRate(baseRate) // Restaurar velocidad original
                 if (wasPlayingBeforeTransientLoss) {
                     wasPlayingBeforeTransientLoss = false
@@ -331,9 +361,10 @@ class TtsManager @Inject constructor(
         }
     }
 
-    suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null) {
+    suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null): Boolean {
+        userRequestedStop = false
+        _isPlaying.value = true
         if (!isNarratingSequence) {
-            _isPlaying.value = true
             acquireAudioLocks()
         }
         try {
@@ -345,24 +376,76 @@ class TtsManager @Inject constructor(
 
             if (useSherpa && initSherpaIfNeeded()) {
                 isSpeakingCancelled = false
+                isSynthesizingOrPlayingSherpa = true
                 requestAudioFocus()
-                val audio = synthesizeExpressiveStudioAudio(text, baseRate)
-                if (audio != null && audio.first.isNotEmpty()) {
-                    playPcmSamples(
-                        samples = audio.first,
-                        sampleRate = audio.second,
-                        playbackRate = audio.second,
-                        text = text,
-                        charOffset = 0,
-                        onRangeUpdate = onRangeUpdate
-                    )
-                    return
+                try {
+                    val cleanText = SpanishAudiobookNormalizer.normalizeForSpeech(text)
+                        .replace(":", ",")
+                        .trim()
+
+                    if (cleanText.isBlank() || !cleanText.any { it.isLetterOrDigit() }) {
+                        return false
+                    }
+
+                    val clauses = if (cleanText.length > 65) {
+                        splitIntoStreamingClauses(cleanText)
+                    } else {
+                        listOf(cleanText)
+                    }
+
+                    if (clauses.size <= 1) {
+                        val audio = synthesizeExpressiveStudioAudio(cleanText, baseRate, basePitch)
+                        if (audio != null && audio.first.isNotEmpty()) {
+                            val played = playPcmSamplesBlocking(audio.first, audio.second)
+                            if (played) return true
+                        } else {
+                            Timber.w("Sherpa devolvió audio vacío para '$text'. Usando motor TTS nativo como respaldo sin cortar audio focus.")
+                        }
+                    } else {
+                        val audioChannel = kotlinx.coroutines.channels.Channel<Pair<FloatArray, Int>>(capacity = 2)
+                        var playedAny = false
+                        coroutineScope {
+                            val producerJob = launch(Dispatchers.Default) {
+                                try {
+                                    for (clause in clauses) {
+                                        if (!isActive || userRequestedStop) break
+                                        val audio = synthesizeExpressiveStudioAudio(clause, baseRate, basePitch)
+                                        if (audio != null && audio.first.isNotEmpty()) {
+                                            audioChannel.send(audio)
+                                        }
+                                    }
+                                } finally {
+                                    audioChannel.close()
+                                }
+                            }
+
+                            try {
+                                for (audio in audioChannel) {
+                                    if (userRequestedStop) break
+                                    val played = playPcmSamplesBlocking(audio.first, audio.second)
+                                    if (played) playedAny = true
+                                }
+                            } finally {
+                                producerJob.cancel()
+                            }
+                        }
+                        if (playedAny) return true
+                    }
+                } finally {
+                    isSynthesizingOrPlayingSherpa = false
                 }
             }
 
+            // Si el texto carece de caracteres pronunciables (solo puntuación o espacios), ignorar sin cortar audio focus
+            if (text.isBlank() || !text.any { it.isLetterOrDigit() }) {
+                return false
+            }
+
             if (!isReady || tts == null) {
-                val ok = initialize()
-                if (!ok || tts == null) return
+                val ok = withTimeoutOrNull(2500L) {
+                    initialize()
+                } ?: false
+                if (!ok || tts == null || !isReady) return false
             }
 
             val activeRules = try {
@@ -387,6 +470,7 @@ class TtsManager @Inject constructor(
 
             isSpeakingCancelled = false
             requestAudioFocus()
+            var spokenAtLeastOne = false
             for (item in items) {
                 // Verificar cancelación de corrutinas en cada paso del bucle
                 if (isSpeakingCancelled || !currentCoroutineContext().isActive || !isReady || tts == null) break
@@ -418,13 +502,13 @@ class TtsManager @Inject constructor(
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {}
                         override fun onDone(utteranceId: String?) {
-                            if (cont.isActive) cont.resume(Unit)
+                            if ((utteranceId == null || utteranceId == id) && cont.isActive) cont.resume(Unit)
                         }
                         override fun onError(utteranceId: String?) {
-                            if (cont.isActive) cont.resume(Unit)
+                            if ((utteranceId == null || utteranceId == id) && cont.isActive) cont.resume(Unit)
                         }
                         override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                            if (cont.isActive) {
+                            if ((utteranceId == null || utteranceId == id) && cont.isActive) {
                                 if (isSpeakingCancelled) {
                                     cont.cancel()
                                 } else {
@@ -434,12 +518,16 @@ class TtsManager @Inject constructor(
                         }
                     })
 
-                    tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, null, id)
+                    val params = android.os.Bundle().apply {
+                        putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
+                    }
+                    tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, params, id)
 
                     cont.invokeOnCancellation {
                         stop()
                     }
                 }
+                spokenAtLeastOne = true
 
                 if (isSpeakingCancelled || !currentCoroutineContext().isActive) break
 
@@ -452,11 +540,19 @@ class TtsManager @Inject constructor(
                     kotlinx.coroutines.delay(item.pauseMs)
                 }
             }
+            return spokenAtLeastOne
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Error during speak()")
+            return false
         } finally {
             if (isSpeakingCancelled) {
-                _isPlaying.value = false
-                releaseAudioLocks()
-                abandonAudioFocus()
+                if (!isSynthesizingOrPlayingSherpa || userRequestedStop) {
+                    _isPlaying.value = false
+                    releaseAudioLocks()
+                    abandonAudioFocus()
+                }
             }
         }
     }
@@ -762,57 +858,29 @@ class TtsManager @Inject constructor(
     }
 
     private fun requestAudioFocus(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener(focusChangeListener)
-                .build()
-            audioFocusRequest = request
-            audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                focusChangeListener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        }
+        hasAudioFocus = true
+        return true
     }
 
     private fun abandonAudioFocus() {
-        val track = activeAudioTrack
-        activeAudioTrack = null
-        if (track != null) {
-            try {
-                if (track.state == AudioTrack.STATE_INITIALIZED) {
-                    track.pause()
-                    track.flush()
-                    track.stop()
-                }
-            } catch (_: Exception) {
-            } finally {
-                try { track.release() } catch (_: Exception) {}
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(focusChangeListener)
-        }
+        hasAudioFocus = false
+        // No-op para no interferir con el AudioFocusManager de Readium que administra la sesión completa
     }
 
     fun pause() {
+        userRequestedStop = true
+        isSynthesizingOrPlayingSherpa = false
         _isPlaying.value = false
         clearPreSynthesisCache()
         releaseAudioLocks()
+        runCatching {
+            persistentSherpaTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED) {
+                    it.pause()
+                    it.flush()
+                }
+            }
+        }
         runCatching {
             activeAudioTrack?.let {
                 if (it.state == AudioTrack.STATE_INITIALIZED && it.playState == AudioTrack.PLAYSTATE_PLAYING) {
@@ -822,11 +890,20 @@ class TtsManager @Inject constructor(
         }
         edgeNeuralTtsClient.pausePlayback()
         tts?.stop()
+        abandonAudioFocus()
     }
 
     fun resume() {
+        userRequestedStop = false
         _isPlaying.value = true
         acquireAudioLocks()
+        runCatching {
+            persistentSherpaTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED && it.playState == AudioTrack.PLAYSTATE_PAUSED) {
+                    it.play()
+                }
+            }
+        }
         runCatching {
             activeAudioTrack?.let {
                 if (it.state == AudioTrack.STATE_INITIALIZED && it.playState == AudioTrack.PLAYSTATE_PAUSED) {
@@ -838,12 +915,22 @@ class TtsManager @Inject constructor(
     }
 
     fun stop() {
+        userRequestedStop = true
+        isSynthesizingOrPlayingSherpa = false
         _isPlaying.value = false
         _currentNarrationUnitIndex.value = -1
         isNarratingSequence = false
         wasPlayingBeforeTransientLoss = false
         clearPreSynthesisCache()
         releaseAudioLocks()
+        runCatching {
+            persistentSherpaTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED) {
+                    it.pause()
+                    it.flush()
+                }
+            }
+        }
         edgeNeuralTtsClient.stopPlayback()
         isSpeakingCancelled = true
         tts?.stop()
@@ -855,6 +942,8 @@ class TtsManager @Inject constructor(
     }
 
     fun shutdown() {
+        userRequestedStop = true
+        isSynthesizingOrPlayingSherpa = false
         _isPlaying.value = false
         _currentNarrationUnitIndex.value = -1
         isNarratingSequence = false
@@ -868,6 +957,17 @@ class TtsManager @Inject constructor(
         tts = null
         isReady = false
         abandonAudioFocus()
+        runCatching {
+            persistentSherpaTrack?.let {
+                if (it.state == AudioTrack.STATE_INITIALIZED) {
+                    it.pause()
+                    it.flush()
+                    it.stop()
+                    it.release()
+                }
+            }
+            persistentSherpaTrack = null
+        }
         try {
             if (nativeTtsMutex.tryLock()) {
                 try {
@@ -894,17 +994,190 @@ class TtsManager @Inject constructor(
     }
 
 
-    fun setRate(rate: Float) { 
-        if (baseRate != rate) {
-            clearPreSynthesisCache()
+    fun calculatePiperAndPlaybackParams(
+        nominalSampleRate: Int,
+        targetSpeed: Float,
+        targetPitch: Float
+    ): Pair<Float, Float> {
+        val clampedSpeed = targetSpeed.coerceIn(0.5f, 3.5f)
+
+        // Limita la velocidad enviada a Piper VITS estrictamente a 0.75f..1.35f
+        // Evita que el predictor de duraciones colapse a 0 frames produciendo audio vacío
+        val safePiperSpeed = clampedSpeed.coerceIn(0.75f, 1.35f)
+
+        // El resto de la velocidad (> 1.35x o < 0.75x) se aplica vía PlaybackParams por hardware sin efecto ardilla
+        val hardwareSpeedMultiplier = (clampedSpeed / safePiperSpeed).coerceIn(0.5f, 2.0f)
+
+        return safePiperSpeed to hardwareSpeedMultiplier
+    }
+
+    private fun applyPlaybackParams(track: AudioTrack, hardwareSpeedMultiplier: Float, pitch: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val params = PlaybackParams()
+                    .allowDefaults()
+                    .setSpeed(hardwareSpeedMultiplier.coerceIn(0.5f, 2.0f))
+                    .setPitch(pitch.coerceIn(0.7f, 1.4f))
+                track.playbackParams = params
+            } catch (e: Exception) {
+                Timber.w(e, "Error al configurar PlaybackParams en AudioTrack")
+            }
         }
-        baseRate = rate
-        if (isReady) tts?.setSpeechRate(rate) 
+    }
+
+    @Synchronized
+    private fun getOrCreateSherpaTrack(sampleRate: Int): AudioTrack {
+        val existing = persistentSherpaTrack
+        if (existing != null && persistentTrackSampleRate == sampleRate && existing.state == AudioTrack.STATE_INITIALIZED) {
+            return existing
+        }
+
+        runCatching {
+            existing?.stop()
+            existing?.release()
+        }
+
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(8192)
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(minBuf)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        persistentSherpaTrack = track
+        persistentTrackSampleRate = sampleRate
+        activeAudioTrack = track
+        return track
+    }
+
+    fun splitIntoStreamingClauses(text: String): List<String> {
+        val trimmed = text.trim()
+        if (trimmed.length <= 65) return listOf(trimmed)
+
+        val clauses = mutableListOf<String>()
+        var remaining = trimmed
+
+        while (remaining.length > 65) {
+            var cutIndex = -1
+            for (i in 30..minOf(65, remaining.length - 1)) {
+                val c = remaining[i]
+                if (c == ',' || c == ';' || c == '—' || c == ':') {
+                    cutIndex = i + 1
+                    break
+                }
+            }
+            if (cutIndex == -1) {
+                val spaceIndex = remaining.indexOf(' ', startIndex = 45)
+                if (spaceIndex != -1 && spaceIndex <= 75) {
+                    cutIndex = spaceIndex + 1
+                }
+            }
+            if (cutIndex == -1) {
+                val spaceIndex = remaining.indexOf(' ', startIndex = 35)
+                if (spaceIndex != -1) {
+                    cutIndex = spaceIndex + 1
+                }
+            }
+
+            if (cutIndex != -1 && cutIndex < remaining.length) {
+                val part = remaining.substring(0, cutIndex).trim()
+                if (part.isNotEmpty()) clauses.add(part)
+                remaining = remaining.substring(cutIndex).trim()
+            } else {
+                break
+            }
+        }
+        if (remaining.isNotEmpty()) {
+            clauses.add(remaining.trim())
+        }
+        return if (clauses.isEmpty()) listOf(trimmed) else clauses.filter { it.isNotBlank() }
+    }
+
+    private fun playPcmSamplesBlocking(samples: FloatArray, sampleRate: Int): Boolean {
+        if (samples.isEmpty() || sampleRate <= 0) return false
+        android.util.Log.e("WOODS_SHERPA_DIAG", "playPcmSamplesBlocking: INICIO ${samples.size} muestras @ $sampleRate Hz")
+        val track = getOrCreateSherpaTrack(sampleRate)
+
+        // Aplicar pitch/speed solo dentro de runCatching para que NUNCA aborte el audio en MediaTek
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val userPitch = _currentPitch.value.coerceIn(0.75f, 1.35f)
+            if (kotlin.math.abs(userPitch - 1.0f) > 0.03f) {
+                runCatching {
+                    track.playbackParams = PlaybackParams()
+                        .allowDefaults()
+                        .setPitch(userPitch)
+                        .setSpeed(1.0f)
+                }
+            }
+        }
+
+        if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            runCatching { track.play() }
+        }
+
+        val chunkSize = 2048
+        val shortBuf = ShortArray(chunkSize)
+        var offset = 0
+        while (offset < samples.size && !userRequestedStop) {
+            val count = minOf(chunkSize, samples.size - offset)
+            for (i in 0 until count) {
+                val clamped = samples[offset + i].coerceIn(-1.0f, 1.0f)
+                shortBuf[i] = (clamped * 32767.0f).toInt().toShort()
+            }
+            val written = track.write(shortBuf, 0, count)
+            if (written < 0) break
+            offset += count
+        }
+        android.util.Log.e("WOODS_SHERPA_DIAG", "playPcmSamplesBlocking: FIN offset=$offset / ${samples.size} (userRequestedStop=$userRequestedStop)")
+        return offset > 0
+    }
+
+    fun setRate(rate: Float) { 
+        val oldRate = baseRate
+        baseRate = rate.coerceIn(0.5f, 3.5f)
+        if (isReady) tts?.setSpeechRate(baseRate)
+        if (oldRate != baseRate) {
+            clearPreSynthesisCache()
+            activeAudioTrack?.let { track ->
+                if (track.state == AudioTrack.STATE_INITIALIZED) {
+                    val (_, hardwareSpeed) = calculatePiperAndPlaybackParams(track.sampleRate, baseRate, basePitch)
+                    applyPlaybackParams(track, hardwareSpeed, basePitch)
+                }
+            }
+        }
     }
     
     fun setPitch(pitch: Float) { 
-        basePitch = pitch
-        if (isReady) tts?.setPitch(pitch) 
+        val oldPitch = basePitch
+        basePitch = pitch.coerceIn(0.7f, 1.4f)
+        _currentPitch.value = basePitch
+        if (isReady) tts?.setPitch(basePitch)
+        if (oldPitch != basePitch) {
+            clearPreSynthesisCache()
+            activeAudioTrack?.let { track ->
+                if (track.state == AudioTrack.STATE_INITIALIZED) {
+                    val (_, hardwareSpeed) = calculatePiperAndPlaybackParams(track.sampleRate, baseRate, basePitch)
+                    applyPlaybackParams(track, hardwareSpeed, basePitch)
+                }
+            }
+        }
     }
 
     fun getAvailableVoices(): List<String> {
@@ -1054,7 +1327,7 @@ class TtsManager @Inject constructor(
                         debug = false
                     )
                 )
-                offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(context.assets, config)
+                offlineTts = com.k2fsa.sherpa.onnx.OfflineTts(null, config)
                 Timber.i("Sherpa ONNX initialized from assets fallback")
                 true
             } catch (assetErr: Exception) {
@@ -1085,11 +1358,13 @@ class TtsManager @Inject constructor(
                 }
                 val tts = offlineTts ?: return@withLock null
                 try {
+                    android.util.Log.e("WOODS_SHERPA_DIAG", "generateSherpaAudioRaw: INICIO '$text' speed=$speed (tid=${Thread.currentThread().id})")
                     val result = tts.generate(
                         text = text,
                         sid = sherpaModelManager.selectedVoice.value.speakerId,
                         speed = speed
                     )
+                    android.util.Log.e("WOODS_SHERPA_DIAG", "generateSherpaAudioRaw: FIN '$text' -> samples=${result.samples.size}, rate=${result.sampleRate}")
                     if (result.samples.isNotEmpty()) {
                         result.samples to result.sampleRate
                     } else {
@@ -1097,7 +1372,7 @@ class TtsManager @Inject constructor(
                         null
                     }
                 } catch (e: Exception) {
-                    Timber.w(e, "generateSherpaAudioRaw failed for: $text")
+                    android.util.Log.e("WOODS_SHERPA_DIAG", "generateSherpaAudioRaw: EXCEPCION para '$text'", e)
                     null
                 }
             }
@@ -1105,62 +1380,20 @@ class TtsManager @Inject constructor(
 
     /**
      * Sintetiza texto con el motor de estudio "Woods Studio Voice HD".
-     *
-     * 1. Limpia y aplica filtros/reglas de pronunciación del libro.
-     * 2. Auto-detecta idioma y garantiza fallback a modelo descargado en disco.
-     * 3. Si offlineTts == null, lo inicializa síncronamente con [nativeTtsMutex].
-     * 4. Analiza la oración con [AudiobookProsodyEngine] para obtener [ProsodySegment]s.
-     * 5. Si la oración supera 220 caracteres o algún segmento devuelve vacío, hace fallback inmediato
-     *    a sintetizar la oración completa en una sola llamada.
-     * 6. Pasa cada segmento por [StudioAudioDspProcessor.masterAudioSegment] calibrado a estándar Audible (-19 dBFS).
-     * 7. Concatena todos los segmentos y mezcla paisajes sonoros si están activos.
+     * Síntesis directa de oración completa (sin fragmentar ni descartar muestras).
      *
      * @return Par de (muestras Float 32-bit, sampleRate) o null si falla la generación.
      */
     suspend fun synthesizeExpressiveStudioAudio(
         text: String,
-        baseSpeed: Float = baseRate
-    ): Pair<FloatArray, Int>? = withContext(Dispatchers.Default) {
-        val activeRules = try {
-            ttsRuleDao.getActiveRulesForBook(currentBookId)
-        } catch (_: Exception) {
-            emptyList()
-        }
-        val exclusionRules = activeRules.map {
-            com.example.woodsreader.core.pipeline.WordExclusionRule(
-                id = it.id.toString(),
-                target = it.pattern,
-                replacement = it.replacement,
-                isRegex = it.isRegex
-            )
-        }
-        val processedText = wordExclusionEngine.filterText(text, exclusionRules).trim()
-        if (processedText.isEmpty()) return@withContext null
-
-        val autoDetect = sherpaModelManager.autoDetectBookLanguage.value
-        val language = if (autoDetect) {
-            val detected = MultilingualAudiobookNormalizer.detectDominantLanguage(processedText)
-            val currentVoice = sherpaModelManager.selectedVoice.value
-            if (currentVoice.languageCode != detected.code) {
-                val bestVoice = sherpaModelManager.findBestVoiceForLanguage(detected)
-                if (bestVoice != null && bestVoice != currentVoice) {
-                    sherpaModelManager.selectVoiceOption(bestVoice)
-                    resetSherpa()
-                }
-            }
-            detected
-        } else {
-            sherpaModelManager.selectedVoice.value.language
-        }
-
-        // Si el modelo actual o detectado no está en disco, fallback inmediato al primer modelo instalado
-        if (!sherpaModelManager.isModelReady()) {
-            val fallback = sherpaModelManager.getInstalledModels().firstOrNull()
-            if (fallback != null && fallback != sherpaModelManager.selectedVoice.value) {
-                Timber.w("Modelo seleccionado no disponible en disco. Fallback inmediato a: ${fallback.id}")
-                sherpaModelManager.selectVoiceOption(fallback)
-                resetSherpa()
-            }
+        baseSpeed: Float = baseRate,
+        basePitch: Float = this.basePitch
+    ): Pair<FloatArray, Int>? {
+        val cleanText = SpanishAudiobookNormalizer.normalizeForSpeech(text)
+            .replace(":", ",")
+            .trim()
+        if (cleanText.isBlank() || !cleanText.any { it.isLetterOrDigit() }) {
+            return null
         }
 
         // Si offlineTts es null o no coincide con la voz seleccionada, inicializar síncronamente con nativeTtsMutex
@@ -1170,93 +1403,27 @@ class TtsManager @Inject constructor(
             }
         }
 
-        val segments = AudiobookProsodyEngine.analyzeSentence(
-            rawSentence = processedText,
-            expressiveProsodyEnabled = _expressiveProsodyEnabled.value,
-            language = language,
-            lexiconManager = pronunciationLexiconManager
-        )
+        val safePiperSpeed = baseSpeed.coerceIn(0.75f, 1.35f)
+        val rawPair = generateSherpaAudioRaw(cleanText, safePiperSpeed) ?: return null
+        val rawSamples = rawPair.first
+        val sampleRate = rawPair.second
+        if (rawSamples.isEmpty() || sampleRate <= 0) return null
 
-        val profile = _acousticsProfile.value
-        val useDramatization = _dramatizedDialogueEnabled.value
+        // Aplicar DSP con fallback seguro a rawSamples si hubiera cualquier excepción:
+        // JAMÁS descartar rawSamples cuando ya tiene audio válido (> 0 muestras).
+        val masteredSamples = runCatching {
+            StudioAudioDspProcessor.masterAudioSegment(
+                rawSamples = rawSamples,
+                sampleRate = sampleRate,
+                profile = StudioAcousticsProfile.STUDIO_WARM,
+                role = VoiceActRole.NARRATOR,
+                gainMultiplier = 1.0f,
+                postPauseMs = 240,
+                singleVoiceRoleShift = false
+            )
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: rawSamples
 
-        // Si una oración dividida supera los 220 caracteres, o si está vacía
-        var useFallbackFullSentence = segments.isEmpty() || segments.any { it.cleanText.length > 220 }
-        val processedChunks = ArrayList<FloatArray>(segments.size)
-        var lastSampleRate = 0
-
-        if (!useFallbackFullSentence) {
-            for (segment in segments) {
-                if (segment.cleanText.isBlank()) continue
-                val speed = (baseSpeed * segment.speedMultiplier).coerceIn(0.55f, 2.2f)
-
-                val generatedAudio = try {
-                    generateSherpaAudioRaw(segment.cleanText, speed)
-                } catch (_: Exception) {
-                    null
-                }
-
-                // Si algún segmento individual devuelve vacío, fallback inmediato a sintetizar la oración completa
-                if (generatedAudio == null || generatedAudio.first.isEmpty()) {
-                    Timber.w("Segmento TTS devolvió audio vacío ('${segment.cleanText.take(25)}...'). Activando fallback de oración completa.")
-                    useFallbackFullSentence = true
-                    break
-                }
-
-                lastSampleRate = generatedAudio.second
-                val masteredSamples = StudioAudioDspProcessor.masterAudioSegment(
-                    rawSamples = generatedAudio.first,
-                    sampleRate = lastSampleRate,
-                    profile = profile,
-                    role = if (useDramatization) segment.role else VoiceActRole.NARRATOR,
-                    gainMultiplier = segment.gainMultiplier,
-                    postPauseMs = segment.postPauseMs,
-                    singleVoiceRoleShift = useDramatization
-                )
-
-                processedChunks.add(masteredSamples)
-            }
-        }
-
-        if (useFallbackFullSentence || processedChunks.isEmpty()) {
-            processedChunks.clear()
-            val fullRaw = generateSherpaAudioRaw(processedText, baseSpeed.coerceIn(0.55f, 2.2f))
-            if (fullRaw != null && fullRaw.first.isNotEmpty()) {
-                lastSampleRate = fullRaw.second
-                val mastered = StudioAudioDspProcessor.masterAudioSegment(
-                    rawSamples = fullRaw.first,
-                    sampleRate = lastSampleRate,
-                    profile = profile,
-                    role = VoiceActRole.NARRATOR,
-                    gainMultiplier = 1.0f,
-                    postPauseMs = 260,
-                    singleVoiceRoleShift = false
-                )
-                processedChunks.add(mastered)
-            }
-        }
-
-        if (processedChunks.isEmpty() || lastSampleRate <= 0) return@withContext null
-
-        val totalSize = processedChunks.sumOf { it.size }
-        val result = FloatArray(totalSize)
-        var offset = 0
-        for (chunk in processedChunks) {
-            System.arraycopy(chunk, 0, result, offset, chunk.size)
-            offset += chunk.size
-        }
-
-        // DESACTIVADA la mezcla pasiva para no duplicar el sonido ambiental y mantener
-        // la síntesis de voz 100% pura y rápida. El audio continuo lo gestiona AmbientSoundscapePlayer.
-
-        val fade = smartSleepTimerManager.fadeMultiplier.value
-        if (fade < 0.999f) {
-            for (i in result.indices) {
-                result[i] *= fade
-            }
-        }
-
-        result to lastSampleRate
+        return masteredSamples to sampleRate
     }
 
     companion object {
@@ -1389,17 +1556,18 @@ class TtsManager @Inject constructor(
     private suspend fun playPcmSamples(
         samples: FloatArray,
         sampleRate: Int,
-        playbackRate: Int,
+        hardwareSpeed: Float = 1.0f,
+        pitch: Float = 1.0f,
         text: String = "",
         charOffset: Int = 0,
         onRangeUpdate: ((IntRange) -> Unit)? = null
     ) = withContext(Dispatchers.Default) {
         val currentTrack = activeAudioTrack
+        val effectiveSpeed = if (hardwareSpeed > 0.05f) hardwareSpeed else 1.0f
         if (currentTrack != null && currentTrack.sampleRate != sampleRate && currentTrack.state == AudioTrack.STATE_INITIALIZED) {
             val remainingFrames = totalFramesWritten.get() - currentTrack.playbackHeadPosition
-            val currentRate = currentTrack.playbackRate
-            if (remainingFrames > 0 && currentRate > 0) {
-                val remainingMs = (remainingFrames.toFloat() / currentRate * 1000L).toLong().coerceIn(0L, 2000L)
+            if (remainingFrames > 0 && sampleRate > 0) {
+                val remainingMs = ((remainingFrames.toFloat() / sampleRate) / effectiveSpeed * 1000L).toLong().coerceIn(0L, 2000L)
                 delay(remainingMs)
             }
         }
@@ -1409,10 +1577,9 @@ class TtsManager @Inject constructor(
         try {
             // 1. Wait for any previously written audio to finish playing before changing the playback rate
             val startWaitTime = System.currentTimeMillis()
-            val currentRate = track.playbackRate
             val remainingFrames = totalFramesWritten.get() - track.playbackHeadPosition
-            val remainingMs = if (remainingFrames > 0 && currentRate > 0) {
-                (remainingFrames.toFloat() / currentRate * 1000L).toLong()
+            val remainingMs = if (remainingFrames > 0 && sampleRate > 0) {
+                ((remainingFrames.toFloat() / sampleRate) / effectiveSpeed * 1000L).toLong()
             } else {
                 0L
             }
@@ -1425,14 +1592,8 @@ class TtsManager @Inject constructor(
                 kotlinx.coroutines.delay(20L)
             }
 
-            // 2. Safely apply the new playback rate
-            try {
-                if (track.playbackRate != playbackRate) {
-                    track.playbackRate = playbackRate
-                }
-            } catch (e: Exception) {
-                android.util.Log.e(TAG, "Failed to set playback rate: $playbackRate", e)
-            }
+            // 2. Configurar PlaybackParams por hardware sin distorsión de ardilla
+            applyPlaybackParams(track, hardwareSpeed, pitch)
 
             // 3. Estimate word ranges and start monitoring
             val startFrame = totalFramesWritten.get()
@@ -1483,7 +1644,11 @@ class TtsManager @Inject constructor(
 
                 // 5. Esperar a que el AudioTrack termine de reproducir físicamente todas las muestras
                 val targetEndFrame = totalFramesWritten.get()
-                val expectedDurationMs = ((samples.size.toFloat() / sampleRate) * 1000L).toLong()
+                val expectedDurationMs = if (sampleRate > 0) {
+                    ((samples.size.toFloat() / sampleRate) / effectiveSpeed * 1000L).toLong()
+                } else {
+                    ((samples.size.toFloat() / 22050) * 1000L).toLong()
+                }
                 val waitStartTime = System.currentTimeMillis()
                 val maxWaitMs = expectedDurationMs + 800L
 
@@ -1556,7 +1721,8 @@ class TtsManager @Inject constructor(
         class GeneratedAudioItem(
             val samples: FloatArray?,
             val nominalSampleRate: Int,
-            val playbackSampleRate: Int,
+            val hardwareSpeed: Float,
+            val pitch: Float,
             val pauseMs: Long,
             val text: String,
             val charOffset: Int
@@ -1571,7 +1737,7 @@ class TtsManager @Inject constructor(
                     if (!isActive) break
 
                     if (item.type == ChunkType.PAUSE || item.text.isBlank()) {
-                        audioChannel.send(GeneratedAudioItem(null, 0, 0, item.pauseMs, item.text, item.charOffset))
+                        audioChannel.send(GeneratedAudioItem(null, 0, 1.0f, 1.0f, item.pauseMs, item.text, item.charOffset))
                         continue
                     }
 
@@ -1582,15 +1748,15 @@ class TtsManager @Inject constructor(
                         item.isExclamation -> 1.04f
                         else -> 1.0f
                     }
-                    val currentPitchFactor = (basePitch * rolePitchModifier).coerceIn(0.5f, 2.0f)
+                    val currentPitchFactor = (basePitch * rolePitchModifier).coerceIn(0.7f, 1.4f)
 
                     val speedMultiplier = when {
                         item.type == ChunkType.DIALOGUE && item.isExclamation -> 1.02f
                         item.type == ChunkType.DIALOGUE -> 0.96f
                         else -> 1.0f
                     }
-                    val targetSpeed = (baseRate * speedMultiplier).coerceIn(0.1f, 3.0f)
-                    val generationSpeed = (targetSpeed / currentPitchFactor).coerceIn(0.1f, 3.0f)
+                    val targetSpeed = (baseRate * speedMultiplier).coerceIn(0.5f, 3.5f)
+                    val (safePiperSpeed, hardwareSpeedMultiplier) = calculatePiperAndPlaybackParams(22050, targetSpeed, currentPitchFactor)
 
                     val generatedAudio = runCatching {
                         nativeTtsMutex.withLock {
@@ -1600,7 +1766,7 @@ class TtsManager @Inject constructor(
                             offlineTts?.generate(
                                 text = item.text,
                                 sid = sherpaModelManager.selectedVoice.value.speakerId,
-                                speed = generationSpeed
+                                speed = safePiperSpeed
                             )
                         }
                     }.onFailure { e ->
@@ -1608,19 +1774,19 @@ class TtsManager @Inject constructor(
                     }.getOrNull()
 
                     if (generatedAudio != null && generatedAudio.samples.isNotEmpty()) {
-                        val playbackRate = (generatedAudio.sampleRate * currentPitchFactor).toInt()
                         audioChannel.send(
                             GeneratedAudioItem(
                                 samples = generatedAudio.samples,
                                 nominalSampleRate = generatedAudio.sampleRate,
-                                playbackSampleRate = playbackRate,
+                                hardwareSpeed = hardwareSpeedMultiplier,
+                                pitch = currentPitchFactor,
                                 pauseMs = item.pauseMs,
                                 text = item.text,
                                 charOffset = item.charOffset
                             )
                         )
                     } else {
-                        audioChannel.send(GeneratedAudioItem(null, 0, 0, item.pauseMs, item.text, item.charOffset))
+                        audioChannel.send(GeneratedAudioItem(null, 0, 1.0f, 1.0f, item.pauseMs, item.text, item.charOffset))
                     }
                 }
             } finally {
@@ -1637,7 +1803,8 @@ class TtsManager @Inject constructor(
                     playPcmSamples(
                         samples = audioItem.samples,
                         sampleRate = audioItem.nominalSampleRate,
-                        playbackRate = audioItem.playbackSampleRate,
+                        hardwareSpeed = audioItem.hardwareSpeed,
+                        pitch = audioItem.pitch,
                         text = audioItem.text,
                         charOffset = audioItem.charOffset,
                         onRangeUpdate = onRangeUpdate
@@ -1671,7 +1838,9 @@ class TtsManager @Inject constructor(
             }
         } finally {
             producerJob.cancel()
-            abandonAudioFocus()
+            if (!isSynthesizingOrPlayingSherpa || userRequestedStop) {
+                abandonAudioFocus()
+            }
         }
     }
 
@@ -1688,6 +1857,7 @@ class TtsManager @Inject constructor(
     ) {
         if (units.isEmpty() || startIndex !in units.indices) return
 
+        userRequestedStop = false
         isNarratingSequence = true
         _isPlaying.value = true
         acquireAudioLocks()
@@ -1704,7 +1874,7 @@ class TtsManager @Inject constructor(
             if (useSherpa && initSherpaIfNeeded()) {
                 requestAudioFocus()
                 for (i in startIndex until units.size) {
-                    if (!ttsScope.isActive || isSpeakingCancelled) {
+                    if (!ttsScope.isActive || isSpeakingCancelled || userRequestedStop) {
                         completedNormally = false
                         break
                     }
@@ -1725,41 +1895,19 @@ class TtsManager @Inject constructor(
                         delay(200L)
                     }
 
-                    // Lookahead Pre-Síntesis de Cero Latencia: solo 1 oración por adelantado (i + 1) en hilo secuencial único
-                    val nextIdx = i + 1
-                    if (nextIdx in units.indices) {
-                        val nextUnit = units[nextIdx]
-                        val nextTrimmed = nextUnit.textToSpeak.trim()
-                        val nextIsAudible = nextTrimmed.isNotEmpty() && nextTrimmed.any { it.isLetterOrDigit() }
-                        if (!nextUnit.isAnnouncement && nextIsAudible && !preSynthesisCache.containsKey(nextIdx)) {
-                            preSynthesisCache[nextIdx] = preSynthesisScope.async {
-                                synthesizeExpressiveStudioAudio(nextUnit.textToSpeak, baseRate)
-                            }
-                        }
-                    }
-
-                    // Obtener audio: del caché de pre-síntesis o sintetizar de inmediato si no estaba
+                    // Síntesis y reproducción secuencial directa sin hilos paralelos
                     try {
-                        val cachedDeferred = preSynthesisCache.remove(i)
-                        val audio = cachedDeferred?.await() ?: synthesizeExpressiveStudioAudio(unit.textToSpeak, baseRate)
-
+                        isSynthesizingOrPlayingSherpa = true
+                        val audio = synthesizeExpressiveStudioAudio(unit.textToSpeak, baseRate, basePitch)
                         if (audio != null && audio.first.isNotEmpty()) {
-                            val modelSampleRate = audio.second
-                            playPcmSamples(
-                                samples = audio.first,
-                                sampleRate = modelSampleRate,
-                                playbackRate = modelSampleRate,
-                                text = unit.textToSpeak,
-                                charOffset = 0,
-                                onRangeUpdate = { range ->
-                                    onRangeUpdate?.invoke(unit.blockId, range)
-                                }
-                            )
+                            playPcmSamplesBlocking(audio.first, audio.second)
                         } else {
                             Timber.w("Audio vacío generado para unidad $i; continuando al siguiente sin pausar.")
                         }
                     } catch (unitErr: Exception) {
                         Timber.e(unitErr, "Excepción en unidad $i; continuando al siguiente sin pausar.")
+                    } finally {
+                        isSynthesizingOrPlayingSherpa = false
                     }
 
                     if (unit.isAnnouncement) {

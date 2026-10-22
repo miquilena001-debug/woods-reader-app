@@ -157,10 +157,18 @@ class SherpaTtsEngine(
                 val prefs = userPreferencesRepository.userPreferencesFlow.first()
                 ttsManager.setRate(prefs.ttsSpeed)
                 ttsManager.setPitch(prefs.ttsPitch)
-                ttsManager.speak(text) { range ->
+                val playedSuccessfully = ttsManager.speak(text) { range ->
                     engineListener?.onRange(requestId, range)
                 }
-                engineListener?.onDone(requestId)
+                if (playedSuccessfully) {
+                    engineListener?.onDone(requestId)
+                } else {
+                    Timber.w("ttsManager.speak devolvió false para request $requestId. Fallback al delegado Android TTS nativo.")
+                    currentRequestUsesSherpa = false
+                    withContext(Dispatchers.Main) {
+                        delegate.speak(requestId, text, language)
+                    }
+                }
             } catch (e: CancellationException) {
                 engineListener?.onInterrupted(requestId)
                 throw e
@@ -186,9 +194,10 @@ class SherpaTtsEngine(
      */
     suspend fun synthesizeExpressiveStudioAudio(
         text: String,
-        baseSpeed: Float
+        baseSpeed: Float,
+        basePitch: Float = 1.0f
     ): Pair<FloatArray, Int>? = nativeTtsMutex.withLock {
-        ttsManager.synthesizeExpressiveStudioAudio(text, baseSpeed)
+        ttsManager.synthesizeExpressiveStudioAudio(text, baseSpeed, basePitch)
     }
 
     override fun stop() {

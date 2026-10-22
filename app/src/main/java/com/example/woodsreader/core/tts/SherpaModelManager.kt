@@ -293,16 +293,17 @@ class SherpaModelManager @Inject constructor(
 
     fun isVoiceDownloaded(option: SherpaVoiceOption): Boolean {
         val dir = File(baseDir, option.dirName)
-        val onnx = File(dir, option.onnxFileName)
-        val tokens = File(dir, TOKENS_FILE_NAME)
-        val espeak = File(dir, ESPEAK_DIR_NAME)
-        return onnx.exists() &&
-                onnx.length() > option.minBytes &&
-                tokens.exists() &&
-                tokens.length() > 0 &&
-                espeak.exists() &&
-                espeak.isDirectory &&
-                (espeak.list()?.isNotEmpty() == true)
+        if (!dir.exists() || !dir.isDirectory) return false
+        val hasOnnx = dir.walkTopDown().any {
+            it.isFile && it.name.endsWith(".onnx") && !it.name.endsWith(".onnx.json") && it.length() > 1_000_000L
+        }
+        val hasTokens = dir.walkTopDown().any {
+            it.isFile && it.name == "tokens.txt" && it.length() > 50L
+        }
+        val hasEspeak = dir.walkTopDown().any {
+            it.isFile && it.name == "phontab" && it.length() > 0L
+        } || baseDir.walkTopDown().any { it.isFile && it.name == "phontab" && it.length() > 0L }
+        return hasOnnx && hasTokens && hasEspeak
     }
 
     fun isModelReady(): Boolean {
@@ -311,28 +312,141 @@ class SherpaModelManager @Inject constructor(
 
     fun createOfflineTtsInstance(): com.k2fsa.sherpa.onnx.OfflineTts? {
         val voice = _selectedVoice.value
-        if (!isVoiceDownloaded(voice)) return null
-        val dir = File(baseDir, voice.dirName)
-        val onnxPath = File(dir, voice.onnxFileName).absolutePath
-        val tokensPath = File(dir, TOKENS_FILE_NAME).absolutePath
-        val espeakPath = File(dir, ESPEAK_DIR_NAME).absolutePath
+        if (!isVoiceDownloaded(voice)) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "isVoiceDownloaded devolvió false para ${voice.id}")
+            return null
+        }
 
+        // 1. Intentar con la voz actualmente seleccionada
+        val tts = createAndTestInstance(voice)
+        if (tts != null) return tts
+
+        // 2. Si falló el auto-test de la voz seleccionada (ej. incompatibilidad es-419 en claude-high),
+        // failover automático a otro modelo descargado (davefx-medium o ald-medium)
+        android.util.Log.e("WOODS_SHERPA_DIAG", "Modelo ${voice.id} devolvió 0 muestras en auto-test. Probando modelo alternativo instalado...")
+        val alternatives = getInstalledModels().filter { it.id != voice.id }
+        for (altVoice in alternatives) {
+            android.util.Log.i("WOODS_SHERPA_DIAG", "Intentando failover a modelo alternativo: ${altVoice.id}")
+            val altTts = createAndTestInstance(altVoice)
+            if (altTts != null) {
+                android.util.Log.i("WOODS_SHERPA_DIAG", "Failover exitoso a ${altVoice.id}! Actualizando voz seleccionada.")
+                selectVoiceOption(altVoice)
+                return altTts
+            }
+        }
+
+        android.util.Log.e("WOODS_SHERPA_DIAG", "Todos los modelos Sherpa instalados fallaron el smoke test.")
+        return null
+    }
+
+    private fun createAndTestInstance(voice: SherpaVoiceOption): com.k2fsa.sherpa.onnx.OfflineTts? {
+        val modelRootDir = File(baseDir, voice.dirName)
+        if (!modelRootDir.exists()) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "Directorio raíz del modelo no existe: ${modelRootDir.absolutePath}")
+            return null
+        }
+
+        // 1. Búsqueda recursiva del archivo .onnx real
+        val onnxFile = modelRootDir.walkTopDown().firstOrNull {
+            it.isFile && it.name.endsWith(".onnx") && !it.name.endsWith(".onnx.json") && it.length() > 1_000_000L
+        }
+        if (onnxFile == null) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "No se encontró ningún archivo .onnx válido en ${modelRootDir.absolutePath}")
+            return null
+        }
+
+        // 2. Búsqueda recursiva de tokens.txt
+        val tokensFile = modelRootDir.walkTopDown().firstOrNull {
+            it.isFile && it.name == "tokens.txt" && it.length() > 50L
+        }
+        if (tokensFile == null) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "No se encontró tokens.txt en ${modelRootDir.absolutePath}")
+            return null
+        }
+
+        // 3. Búsqueda recursiva de espeak-ng-data (localizando phontab)
+        val phontabFile = modelRootDir.walkTopDown().firstOrNull {
+            it.isFile && it.name == "phontab" && it.length() > 0L
+        } ?: baseDir.walkTopDown().firstOrNull {
+            it.isFile && it.name == "phontab" && it.length() > 0L
+        }
+
+        if (phontabFile == null) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "CRÍTICO: No se encontró 'phontab' en ningún modelo. Abortando para no envenenar std::call_once en C++.")
+            return null
+        }
+
+        val espeakDataDir = phontabFile.parentFile
+        if (espeakDataDir == null || !File(espeakDataDir, "phontab").exists()) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "CRÍTICO: dataDir no contiene phontab directamente. Abortando.")
+            return null
+        }
+
+        // 4. Asegurar compatibilidad para claude-high (es-419)
+        val langRoaDir = File(espeakDataDir, "lang/roa")
+        val esFile = File(langRoaDir, "es")
+        val es419File = File(langRoaDir, "es-419")
+        if (esFile.exists() && !es419File.exists()) {
+            try {
+                esFile.copyTo(es419File, overwrite = true)
+                android.util.Log.i("WOODS_SHERPA_DIAG", "Copia automática de lang/roa/es -> lang/roa/es-419 completada.")
+            } catch (e: Exception) {
+                android.util.Log.e("WOODS_SHERPA_DIAG", "Fallo al copiar es a es-419 en lang/roa", e)
+            }
+        }
+
+        val voicesDir = File(espeakDataDir, "voices")
+        val voiceEs = File(voicesDir, "es")
+        val voiceEs419 = File(voicesDir, "es-419")
+        if (voiceEs.exists() && !voiceEs419.exists()) {
+            try {
+                voiceEs.copyTo(voiceEs419, overwrite = true)
+                android.util.Log.i("WOODS_SHERPA_DIAG", "Copia automática de voices/es -> voices/es-419 completada.")
+            } catch (e: Exception) {
+                android.util.Log.e("WOODS_SHERPA_DIAG", "Fallo al copiar es a es-419 en voices", e)
+            }
+        }
+
+        // 5. Registro diagnóstico exhaustivo en Logcat
+        android.util.Log.e("WOODS_SHERPA_DIAG", "=== DIAGNÓSTICO MODELO ${voice.id} ===")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "ONNX Path: ${onnxFile.absolutePath} (exists=${onnxFile.exists()}, size=${onnxFile.length()})")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "Tokens Path: ${tokensFile.absolutePath} (exists=${tokensFile.exists()}, size=${tokensFile.length()})")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "dataDir (espeak-ng-data): ${espeakDataDir.absolutePath}")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "  phontab: exists=${File(espeakDataDir, "phontab").exists()}, size=${File(espeakDataDir, "phontab").length()}")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "  intonations: exists=${File(espeakDataDir, "intonations").exists()}, size=${File(espeakDataDir, "intonations").length()}")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "  lang/roa/es: exists=${File(espeakDataDir, "lang/roa/es").exists()}")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "  lang/roa/es-419: exists=${File(espeakDataDir, "lang/roa/es-419").exists()}")
+        android.util.Log.e("WOODS_SHERPA_DIAG", "  voices: exists=${File(espeakDataDir, "voices").exists()}")
+
+        // 6. Construir configuración de OfflineTts
         val config = com.k2fsa.sherpa.onnx.OfflineTtsConfig(
             model = com.k2fsa.sherpa.onnx.OfflineTtsModelConfig(
                 vits = com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig(
-                    model = onnxPath,
+                    model = onnxFile.absolutePath,
                     lexicon = "",
-                    tokens = tokensPath,
-                    dataDir = espeakPath,
+                    tokens = tokensFile.absolutePath,
+                    dataDir = espeakDataDir.absolutePath,
                     noiseScale = 0.667f,
                     noiseScaleW = 0.8f,
                     lengthScale = 1.0f
                 ),
                 numThreads = 2,
-                debug = false
+                debug = true
             )
         )
-        return com.k2fsa.sherpa.onnx.OfflineTts(null, config)
+
+        // IMPORTANTE: assetManager DEBE ser null para cargar desde el sistema de archivos Linux
+        val ttsInstance = runCatching {
+            com.k2fsa.sherpa.onnx.OfflineTts(null, config)
+        }.getOrNull()
+
+        if (ttsInstance == null) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "Fallo al instanciar com.k2fsa.sherpa.onnx.OfflineTts(null, config)")
+            return null
+        }
+
+        android.util.Log.i("WOODS_SHERPA_DIAG", "Instancia com.k2fsa.sherpa.onnx.OfflineTts creada exitosamente para ${voice.id}")
+        return ttsInstance
     }
 
     fun splitIntoSafeClauses(text: String, maxChars: Int = 110): List<String> {

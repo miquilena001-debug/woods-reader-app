@@ -6,6 +6,8 @@ object SpanishAudiobookNormalizer {
     private val repeatedSymbolsRegex = Regex("""[*=_~#]{2,}""")
     private val thousandDotRegex = Regex("""\b(\d{1,3})\.(\d{3})(?:\.(\d{3}))?\b""")
     private val thousandCommaRegex = Regex("""\b(\d{1,3}),(\d{3})(?:,(\d{3}))?\b""")
+    private val numberWordRegex = Regex("""\b\d{1,4}\b""")
+    private val colonSpaceRegex = Regex(""":\s+""")
     private val elongatedVowelsRegex = Regex("""([a\u00E1e\u00E9i\u00EDo\u00F3u\u00FAA\u00C1E\u00C9I\u00CDO\u00D3U\u00DA])\1{2,}""")
     private val elongatedConsonantsRegex = Regex("""([rlsfjmzRLSFFJMZ])\1{2,}""")
     private val laughJaRegex = Regex("""\b(?:ja){2,}[ja]*\b""", RegexOption.IGNORE_CASE)
@@ -49,6 +51,60 @@ object SpanishAudiobookNormalizer {
         Regex("""\b(?:Shh|Shhh+)\b""", RegexOption.IGNORE_CASE) to "Shh"
     )
 
+    fun numberToSpanish(n: Int): String {
+        if (n == 0) return "cero"
+        if (n < 0 || n > 9999) return n.toString()
+
+        val units = arrayOf("", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve")
+        val teens = arrayOf("diez", "once", "doce", "trece", "catorce", "quince", "diecis\u00E9is", "diecisiete", "dieciocho", "diecinueve")
+        val twenties = arrayOf("veinte", "veintiuno", "veintid\u00F3s", "veintitr\u00E9s", "veinticuatro", "veinticinco", "veintis\u00E9is", "veintisiete", "veintiocho", "veintinueve")
+        val tens = arrayOf("", "", "", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa")
+        val hundreds = arrayOf("", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecientos")
+
+        fun convertUnder100(num: Int): String {
+            return when {
+                num < 10 -> units[num]
+                num in 10..19 -> teens[num - 10]
+                num in 20..29 -> twenties[num - 20]
+                else -> {
+                    val t = num / 10
+                    val u = num % 10
+                    if (u == 0) tens[t] else "${tens[t]} y ${units[u]}"
+                }
+            }
+        }
+
+        fun convertUnder1000(num: Int): String {
+            if (num == 100) return "cien"
+            val h = num / 100
+            val remainder = num % 100
+            val hStr = hundreds[h]
+            val remStr = if (remainder > 0) convertUnder100(remainder) else ""
+            return when {
+                h == 0 -> remStr
+                remStr.isEmpty() -> hStr
+                else -> "$hStr $remStr"
+            }
+        }
+
+        val thousands = n / 1000
+        val rem1000 = n % 1000
+
+        val thousandStr = when (thousands) {
+            0 -> ""
+            1 -> "mil"
+            else -> "${convertUnder1000(thousands)} mil"
+        }
+
+        val remStr = if (rem1000 > 0) convertUnder1000(rem1000) else ""
+
+        return when {
+            thousandStr.isEmpty() -> remStr
+            remStr.isEmpty() -> thousandStr
+            else -> "$thousandStr $remStr"
+        }
+    }
+
     fun normalizeForSpeech(rawText: String): String {
         if (rawText.isBlank()) return ""
         var text = rawText
@@ -58,6 +114,9 @@ object SpanishAudiobookNormalizer {
             .replace("\u2013", " \u2014 ")
             .replace("\u00AB", " \u00AB")
             .replace("\u00BB", "\u00BB ")
+
+        // Dos puntos seguidos de espacio reemplazados por coma para que espeak-ng no corte el fonema
+        text = colonSpaceRegex.replace(text, ", ")
 
         // N\u00FAmeros con separador de miles (10.000 -> 10000)
         text = thousandDotRegex.replace(text) { m ->
@@ -80,7 +139,14 @@ object SpanishAudiobookNormalizer {
             text = regex.replace(text, replacement)
         }
 
-        // Risas e interjecciones alargadas
+        // Conversión de números enteros (0 a 9999) a su escritura en palabras en español
+        text = numberWordRegex.replace(text) { m ->
+            m.value.toIntOrNull()?.let { numberToSpanish(it) } ?: m.value
+        }
+
+        // Risas e interjecciones alargadas y compuestas
+        text = text.replace(Regex("""[¿¡]{2,}"""), "¿")
+            .replace(Regex("""[?!]{2,}"""), "?")
         text = laughJaRegex.replace(text, "ja, ja, ja")
         text = laughJeRegex.replace(text, "je, je, je")
         text = laughJiRegex.replace(text, "ji, ji, ji")

@@ -180,6 +180,11 @@ fun ReaderTtsMacroWindow(
         mutableFloatStateOf(studioPrefs.getFloat("soundscape_intensity", 0.18f))
     }
 
+    var speed by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
+    var pitch by remember(currentPitch) { mutableFloatStateOf(currentPitch) }
+    LaunchedEffect(currentSpeed) { speed = currentSpeed }
+    LaunchedEffect(currentPitch) { pitch = currentPitch }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = HiddenForest.Surface.copy(alpha = 0.85f),
@@ -190,7 +195,6 @@ fun ReaderTtsMacroWindow(
             .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
     ) {
         val playing = ttsState == TtsState.PLAYING
-        var speed by remember(currentSpeed) { mutableFloatStateOf(currentSpeed) }
         var showCompactSpeedSlider by remember { mutableStateOf(false) }
 
         val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -868,12 +872,11 @@ fun ReaderTtsMacroWindow(
                             valueRange = 0.5f..2.5f
                         )
                         Spacer(modifier = Modifier.height(14.dp))
-                        var currentPitchState by remember(currentPitch) { mutableFloatStateOf(currentPitch) }
                         PremiumSlider(
                             label = "Tono de la Voz (Pitch)",
-                            value = currentPitchState,
-                            onValueChange = { currentPitchState = it; onPitchChange(it) },
-                            valueRange = 0.5f..1.5f
+                            value = pitch,
+                            onValueChange = { pitch = it; onPitchChange(it) },
+                            valueRange = 0.5f..2.0f
                         )
                     }
                 }
@@ -1832,15 +1835,14 @@ fun ReaderTtsMacroWindow(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                var currentPitchState by remember(currentPitch) { mutableFloatStateOf(currentPitch) }
                 PremiumSlider(
                     label = "Tono de la Voz (Pitch)",
-                    value = currentPitchState,
+                    value = pitch,
                     onValueChange = {
-                        currentPitchState = it
+                        pitch = it
                         onPitchChange(it)
                     },
-                    valueRange = 0.5f..1.5f
+                    valueRange = 0.5f..2.0f
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))

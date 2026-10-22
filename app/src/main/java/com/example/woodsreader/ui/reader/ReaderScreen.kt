@@ -1215,6 +1215,7 @@ fun ReaderScreen(
 
         val ttsActiveBlockIndex by viewModel.ttsActiveBlockIndex.collectAsStateWithLifecycle()
         val currentSpeed by viewModel.currentSpeed.collectAsStateWithLifecycle()
+        val currentPitch by viewModel.currentPitch.collectAsStateWithLifecycle()
 
         ReaderReflowOverlay(
             modifier = Modifier.fillMaxSize().zIndex(1f),
@@ -1454,7 +1455,7 @@ fun ReaderScreen(
                 useSherpaTts = userPreferences.useSherpaTts,
                 onUseSherpaTtsChange = { enabled -> viewModel.updateUseSherpaTts(enabled) },
                 sherpaDownloadState = sherpaDownloadState,
-                currentPitch = userPreferences.ttsPitch,
+                currentPitch = currentPitch,
                 onPitchChange = { pitch -> viewModel.onPitchChange(pitch) },
                 onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
                 onSkipSentenceBackward = { viewModel.skipTtsSentenceBackward() },

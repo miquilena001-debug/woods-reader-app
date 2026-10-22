@@ -30,3 +30,4 @@ rootProject.name = "Woods Reader"
 
 // ── Módulos ───────────────────────────────────────────────────────────────────
 include(":app")
+include(":keymaker")

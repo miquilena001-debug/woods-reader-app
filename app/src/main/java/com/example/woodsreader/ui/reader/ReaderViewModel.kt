@@ -991,6 +991,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun applySpeedChange(speed: Float) {
+        ttsManager.setRate(speed)
         pdfReflowManager.onSpeedChange(speed, viewModelScope)
         epubFormatManager.syncPreferences(speed, userPreferences.value.ttsLanguage, _currentPitch.value)
         viewModelScope.launch { userPreferencesRepository.updateTtsSpeed(speed) }
@@ -1008,10 +1009,19 @@ class ReaderViewModel @Inject constructor(
         onSpeedChange(newSpeed, immediate = true)
     }
 
+    private var pitchUpdateJob: Job? = null
+
     fun onPitchChange(pitch: Float) {
-        _currentPitch.value = pitch
-        epubFormatManager.syncPreferences(_currentSpeed.value, userPreferences.value.ttsLanguage, pitch)
-        viewModelScope.launch { userPreferencesRepository.updateTtsPitch(pitch) }
+        val coercedPitch = (Math.round(pitch * 100.0f) / 100.0f).coerceIn(0.5f, 2.0f)
+        _currentPitch.value = coercedPitch
+        ttsManager.setPitch(coercedPitch)
+        epubFormatManager.syncPreferences(_currentSpeed.value, userPreferences.value.ttsLanguage, coercedPitch)
+
+        pitchUpdateJob?.cancel()
+        pitchUpdateJob = viewModelScope.launch {
+            delay(150L)
+            userPreferencesRepository.updateTtsPitch(coercedPitch)
+        }
     }
 
     fun onLanguageChange(language: String?) {
