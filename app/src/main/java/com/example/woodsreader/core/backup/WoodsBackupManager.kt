@@ -90,6 +90,15 @@ data class PhoneticRuleBackup(
 )
 
 @Serializable
+data class TtsRuleBackup(
+    val pattern: String,
+    val replacement: String,
+    val isRegex: Boolean = false,
+    val isEnabled: Boolean = true,
+    val bookId: String? = null
+)
+
+@Serializable
 data class StudioPreferencesBackup(
     val acousticsProfile: String = StudioAcousticsProfile.STUDIO_WARM.id,
     val expressiveProsodyEnabled: Boolean = true,
@@ -133,6 +142,7 @@ data class WoodsReaderBackupVault(
     val studioPreferences: StudioPreferencesBackup? = null,
     val readingStats: List<ReadingStatsBackup> = emptyList(),
     val readingSessions: List<ReadingSessionBackup> = emptyList(),
+    val ttsRules: List<TtsRuleBackup> = emptyList(),
     val userPreferences: UserPreferences? = null
 )
 
@@ -145,7 +155,9 @@ class WoodsBackupManager @Inject constructor(
     private val readingSessionDao: ReadingSessionDao,
     private val readingStatsDao: ReadingStatsDao,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
-    private val preferencesRepository: UserPreferencesRepository
+    private val preferencesRepository: UserPreferencesRepository,
+    private val ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer,
+    private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao
 ) {
     private val json = Json {
         prettyPrint = true
@@ -260,6 +272,16 @@ class WoodsBackupManager @Inject constructor(
             )
         }
 
+        val ttsRulesBackup = ttsRuleDao.getAllRulesFlow().first().map { r ->
+            TtsRuleBackup(
+                pattern = r.pattern,
+                replacement = r.replacement,
+                isRegex = r.isRegex,
+                isEnabled = r.isEnabled,
+                bookId = r.bookId
+            )
+        }
+
         val userPrefs = runCatching { preferencesRepository.userPreferencesFlow.first() }.getOrNull()
 
         val vault = WoodsReaderBackupVault(
@@ -275,13 +297,17 @@ class WoodsBackupManager @Inject constructor(
             studioPreferences = studioBackup,
             readingStats = statsBackup,
             readingSessions = sessionsBackup,
+            ttsRules = ttsRulesBackup,
             userPreferences = userPrefs
         )
 
         val jsonString = json.encodeToString(vault)
         val fileName = "woods_reader_backup_$dateStamp.json"
         val targetFile = File(context.cacheDir, fileName)
-        targetFile.writeText(jsonString, Charsets.UTF_8)
+        targetFile.outputStream().use { fos ->
+            fos.write(jsonString.toByteArray(Charsets.UTF_8))
+            fos.flush()
+        }
         targetFile
     }
 
@@ -453,12 +479,15 @@ class WoodsBackupManager @Inject constructor(
                     .putString("secondary_dialogue_voice_id", sp.secondaryDialogueVoiceId)
                     .putString("soundscape_mode", sp.soundscapeMode)
                     .putFloat("soundscape_intensity", sp.soundscapeIntensity)
-                    .apply()
+                    .commit()
 
                 ambientPrefs.edit()
                     .putString("ambient_mode", sp.soundscapeMode)
                     .putFloat("ambient_volume", sp.soundscapeIntensity)
-                    .apply()
+                    .commit()
+
+                // Refrescar inmediatamente los StateFlows en memoria del reproductor ambiental
+                ambientSoundscapePlayer.reloadPreferences()
 
                 restoredCount++
             }
@@ -500,7 +529,29 @@ class WoodsBackupManager @Inject constructor(
                 }
             }
 
-            // 8. Restaurar Preferencias Generales del Usuario
+            // 8. Restaurar Reglas TTS de Reemplazo
+            if (vault.ttsRules.isNotEmpty()) {
+                val existingRules = ttsRuleDao.getAllRulesFlow().first().map { it.pattern to it.bookId }.toSet()
+                var rulesAdded = 0
+                for (rule in vault.ttsRules) {
+                    val mappedBookId = rule.bookId?.let { bookIdRemap[it] }
+                    if ((rule.pattern to mappedBookId) !in existingRules) {
+                        ttsRuleDao.insert(
+                            com.example.woodsreader.data.database.TtsRuleEntity(
+                                pattern = rule.pattern,
+                                replacement = rule.replacement,
+                                isRegex = rule.isRegex,
+                                isEnabled = rule.isEnabled,
+                                bookId = mappedBookId
+                            )
+                        )
+                        rulesAdded++
+                    }
+                }
+                restoredCount += rulesAdded
+            }
+
+            // 9. Restaurar Preferencias Generales del Usuario
             vault.userPreferences?.let { up ->
                 preferencesRepository.restorePreferences(up)
                 restoredCount++

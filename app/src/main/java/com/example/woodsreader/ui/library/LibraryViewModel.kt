@@ -232,13 +232,13 @@ class LibraryViewModel @Inject constructor(
 
     fun addBookToCollection(book: BookEntity, collectionId: String?) {
         viewModelScope.launch {
-            bookRepository.upsertBook(book.copy(collectionId = collectionId))
+            bookRepository.updateBookCollection(book.id, collectionId)
         }
     }
 
     fun updateBookStatus(book: BookEntity, status: ReadingStatus) {
         viewModelScope.launch {
-            bookRepository.upsertBook(book.copy(readingStatus = status))
+            bookRepository.updateReadingStatus(book.id, status)
         }
     }
 

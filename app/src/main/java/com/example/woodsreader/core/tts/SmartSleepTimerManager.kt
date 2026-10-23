@@ -58,11 +58,10 @@ class SmartSleepTimerManager @Inject constructor() {
                 _remainingSeconds.value = next
 
                 // Durante los últimos 20 segundos aplica un fade-out progresivo suave
-                if (next in 1..20) {
-                    _fadeMultiplier.value = (next / 20.0f).coerceIn(0.05f, 1.0f)
+                if (next in 0..20) {
+                    _fadeMultiplier.value = (next / 20.0f).coerceIn(0.0f, 1.0f)
                 }
             }
-            _fadeMultiplier.value = 1.0f
             _activePreset.value = SleepTimerPreset.OFF
             onTimerExpiredPauseAudio?.invoke()
         }

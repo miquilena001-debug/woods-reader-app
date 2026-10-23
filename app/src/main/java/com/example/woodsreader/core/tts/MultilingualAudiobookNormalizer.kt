@@ -28,6 +28,7 @@ object MultilingualAudiobookNormalizer {
     private val multiDotsRegex = Regex("""\.{3,}|…+""")
     private val multiSpacesRegex = Regex("""[ \t]{2,}""")
     private val elongatedCharsRegex = Regex("""([a-zA-ZáéíóúÁÉÍÓÚàèìòùÀÈÒÙâêîôûÂÊÎÔÛäëïöüÄËÏÖÜãõÃÕ])\1{2,}""")
+    private val wordSplitRegex = Regex("""\W+""")
 
     // Reglas específicas por idioma
     private val englishRules = listOf(
@@ -116,7 +117,7 @@ object MultilingualAudiobookNormalizer {
             scores[SupportedTtsLanguage.FRENCH] = scores.getValue(SupportedTtsLanguage.FRENCH) + 5
         }
 
-        val words = lower.split(Regex("""\W+""")).filter { it.length >= 2 }
+        val words = lower.split(wordSplitRegex).filter { it.length >= 2 }
         for (w in words) {
             when (w) {
                 "el", "la", "los", "las", "que", "del", "pero", "como", "para", "hacia", "dijo", "capítulo" ->

@@ -41,6 +41,7 @@ private object NoOpTtsRuleDao : TtsRuleDao {
     override fun getAllRulesFlow(): Flow<List<TtsRuleEntity>> = emptyFlow()
     override suspend fun getActiveRules(): List<TtsRuleEntity> = emptyList()
     override suspend fun getActiveRulesForBook(bookId: String?): List<TtsRuleEntity> = emptyList()
+    override suspend fun reassignBook(fromId: String, toId: String) {}
     override suspend fun insert(rule: TtsRuleEntity) {}
     override suspend fun delete(rule: TtsRuleEntity) {}
 }
@@ -108,6 +109,7 @@ class EpubFormatManager @Inject constructor(
     val isServiceBound = _isServiceBound.asStateFlow()
 
     private var serviceFlowJob: Job? = null
+    private var pendingPlayJob: Job? = null
 
     private val _currentTtsSentence = MutableStateFlow("")
     val currentTtsSentence: StateFlow<String> = _currentTtsSentence.asStateFlow()
@@ -393,6 +395,8 @@ class EpubFormatManager @Inject constructor(
         scope: CoroutineScope? = null,
         publication: Publication? = null
     ) {
+        pendingPlayJob?.cancel()
+        pendingPlayJob = null
         ttsUserStopped = false
         if (navigator != null) currentNavigator = navigator
         if (publication != null) currentPublication = publication
@@ -410,7 +414,7 @@ class EpubFormatManager @Inject constructor(
         if (service == null) {
             Log.w(TAG, "playTts: service not bound yet, awaiting binding before playback")
             val targetScope = currentScope ?: CoroutineScope(Dispatchers.Main)
-            targetScope.launch {
+            pendingPlayJob = targetScope.launch {
                 if (awaitServiceBinding()) {
                     executePlay(locator)
                 } else {
@@ -427,6 +431,9 @@ class EpubFormatManager @Inject constructor(
         ttsUserStopped = false
         hasEverStartedTts = true
         val service = ttsService ?: return
+        if (_ttsState.value == TtsState.PLAYING || _ttsState.value == TtsState.LOADING) {
+            service.stop()
+        }
         val pub = currentPublication
         if (pub != null && !service.isNavigatorInitialized()) {
             service.initNavigator(pub, locator)
@@ -447,6 +454,8 @@ class EpubFormatManager @Inject constructor(
     }
 
     fun stopTts() {
+        pendingPlayJob?.cancel()
+        pendingPlayJob = null
         ttsUserStopped = true
         hasEverStartedTts = false
         ttsService?.stop()
@@ -553,6 +562,8 @@ class EpubFormatManager @Inject constructor(
     }
 
     fun onCleared(context: Context) {
+        pendingPlayJob?.cancel()
+        pendingPlayJob = null
         serviceFlowJob?.cancel()
         serviceFlowJob = null
         stopTts()
@@ -575,4 +586,3 @@ class EpubFormatManager @Inject constructor(
         onChapterFinished = null
     }
 }
-

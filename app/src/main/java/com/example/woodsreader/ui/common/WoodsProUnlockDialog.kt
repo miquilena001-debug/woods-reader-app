@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +31,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.woodsreader.core.license.ProLicenseManager
 import com.example.woodsreader.ui.theme.HiddenForest
+import kotlinx.coroutines.delay
+import java.util.Locale
 
 /**
  * Diálogo modal para desbloquear "Woods Reader PRO — Edición Vitalicia" mediante
@@ -46,6 +49,14 @@ fun WoodsProUnlockDialog(
     var inputKey by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var successActivated by remember { mutableStateOf(false) }
+    var isCopied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isCopied) {
+        if (isCopied) {
+            delay(2200L)
+            isCopied = false
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -139,7 +150,7 @@ fun WoodsProUnlockDialog(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = Color(0xFF09140E),
-                        border = BorderStroke(1.dp, Color(0xFF233B2C)),
+                        border = BorderStroke(1.dp, if (isCopied) HiddenForest.Accent else Color(0xFF233B2C)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -159,16 +170,36 @@ fun WoodsProUnlockDialog(
                                 color = HiddenForest.Accent
                             )
 
-                            IconButton(
-                                onClick = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    cm?.setPrimaryClip(ClipData.newPlainText("Woods Device ID", installCode))
-                                    Toast.makeText(context, "ID copiado al portapapeles", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isCopied) HiddenForest.Accent.copy(alpha = 0.2f) else Color.Transparent)
+                                    .clickable {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        cm?.setPrimaryClip(ClipData.newPlainText("Woods Device ID", installCode))
+                                        isCopied = true
+                                        Toast.makeText(context, "¡ID copiado al portapapeles!", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
+                                AnimatedVisibility(
+                                    visible = isCopied,
+                                    enter = fadeIn() + expandHorizontally(),
+                                    exit = fadeOut() + shrinkHorizontally()
+                                ) {
+                                    Text(
+                                        text = "¡ID Copiado!",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp
+                                        ),
+                                        color = HiddenForest.Accent
+                                    )
+                                }
                                 Icon(
-                                    imageVector = Icons.Default.ContentCopy,
+                                    imageVector = if (isCopied) Icons.Default.Check else Icons.Default.ContentCopy,
                                     contentDescription = "Copiar ID",
                                     tint = HiddenForest.Accent,
                                     modifier = Modifier.size(18.dp)
@@ -201,7 +232,7 @@ fun WoodsProUnlockDialog(
                         OutlinedTextField(
                             value = inputKey,
                             onValueChange = {
-                                inputKey = it.uppercase()
+                                inputKey = it.trim().uppercase(Locale.ROOT)
                                 errorMessage = null
                             },
                             placeholder = {
@@ -210,6 +241,43 @@ fun WoodsProUnlockDialog(
                                     color = HiddenForest.TextLow,
                                     fontSize = 14.sp
                                 )
+                            },
+                            trailingIcon = {
+                                if (inputKey.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = {
+                                            inputKey = ""
+                                            errorMessage = null
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Borrar clave",
+                                            tint = HiddenForest.TextLow,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            val clipText = cm?.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
+                                            if (!clipText.isNullOrBlank()) {
+                                                inputKey = clipText.uppercase(Locale.ROOT)
+                                                errorMessage = null
+                                            }
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentPaste,
+                                            contentDescription = "Pegar clave",
+                                            tint = HiddenForest.Accent,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                             },
                             singleLine = true,
                             isError = errorMessage != null,

@@ -1,3 +1,8 @@
+# ── Métodos Nativos Generales (JNI) ───────────────────────────────────────────
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
 # ── Sherpa-ONNX JNI (Crítico: No ofuscar clases llamadas desde C++) ───────────
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn com.k2fsa.sherpa.onnx.**
@@ -7,11 +12,16 @@
 -dontwarn org.readium.**
 -keep class org.readium.r2.** { *; }
 -dontwarn org.readium.r2.**
+-keep interface org.readium.** { *; }
+-keep interface org.readium.r2.** { *; }
 
 # ── Room Database Entities & DAOs ─────────────────────────────────────────────
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao class * { *; }
+-keepclassmembers class * extends androidx.room.RoomDatabase {
+    <methods>;
+}
 -dontwarn androidx.room.paging.**
 
 # ── Kotlinx Serialization / Org.JSON ──────────────────────────────────────────

@@ -238,32 +238,28 @@ class BookDetailViewModel @Inject constructor(
     fun updateReadingStatus(status: ReadingStatus) {
         val currentBook = _uiState.value.book ?: return
         viewModelScope.launch {
-            val updatedBook = currentBook.copy(readingStatus = status)
-            bookRepository.upsertBook(updatedBook)
+            bookRepository.updateReadingStatus(currentBook.id, status)
         }
     }
 
     fun updateRating(rating: Int?) {
         val currentBook = _uiState.value.book ?: return
         viewModelScope.launch {
-            val updatedBook = currentBook.copy(userRating = rating)
-            bookRepository.upsertBook(updatedBook)
+            bookRepository.updateUserRating(currentBook.id, rating)
         }
     }
 
     fun updateUserNotes(notes: String) {
         val currentBook = _uiState.value.book ?: return
         viewModelScope.launch {
-            val updatedBook = currentBook.copy(userNotes = notes)
-            bookRepository.upsertBook(updatedBook)
+            bookRepository.updateUserNotes(currentBook.id, notes)
         }
     }
 
     fun updateDescription(newDescription: String) {
         val currentBook = _uiState.value.book ?: return
         viewModelScope.launch {
-            val updatedBook = currentBook.copy(description = newDescription.trim())
-            bookRepository.upsertBook(updatedBook)
+            bookRepository.updateDescription(currentBook.id, newDescription.trim())
         }
     }
 
@@ -301,7 +297,7 @@ class BookDetailViewModel @Inject constructor(
                 val synopsis = extracted?.description?.takeIf { it.isNotBlank() } ?: ""
 
                 if (synopsis.isNotBlank()) {
-                    bookRepository.upsertBook(book.copy(description = synopsis))
+                    bookRepository.updateDescription(book.id, synopsis)
                 }
             } catch (e: Exception) {
                 // Silently ignore — synopsis stays empty

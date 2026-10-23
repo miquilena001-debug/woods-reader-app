@@ -139,10 +139,31 @@ fun applyToAllWebViews(view: android.view.View?, action: (android.webkit.WebView
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             // waivedWhenNotVisible = false obliga a Android a mantener vivo el capítulo en RAM
             // aunque el usuario cambie de app varios minutos o apague la pantalla.
-            view.setRendererPriorityPolicy(
-                android.webkit.WebView.RENDERER_PRIORITY_IMPORTANT,
-                false
-            )
+            runCatching {
+                view.setRendererPriorityPolicy(
+                    android.webkit.WebView.RENDERER_PRIORITY_IMPORTANT,
+                    false
+                )
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            runCatching {
+                view.webViewRenderProcessClient = object : android.webkit.WebViewRenderProcessClient() {
+                    override fun onRenderProcessUnresponsive(
+                        v: android.webkit.WebView,
+                        renderer: android.webkit.WebViewRenderProcess?
+                    ) {
+                        android.util.Log.w("ReaderExtensions", "WebView renderer process unresponsive")
+                    }
+
+                    override fun onRenderProcessResponsive(
+                        v: android.webkit.WebView,
+                        renderer: android.webkit.WebViewRenderProcess?
+                    ) {
+                        android.util.Log.i("ReaderExtensions", "WebView renderer process responsive again")
+                    }
+                }
+            }
         }
         action(view)
         return
@@ -577,4 +598,89 @@ fun android.webkit.WebView.checkTtsNextColumn(onNeedsNextPage: (Boolean) -> Unit
         val clean = res?.replace("\"", "")?.trim()
         if (clean == "NEXT") onNeedsNextPage(true)
     }
+}
+
+/**
+ * Resalta de forma transitoria el fragmento encontrado por el buscador y lo centra suavemente en pantalla.
+ * Si no localiza el fragmento exacto en el DOM, se desplaza a la progresión aproximada calculada.
+ */
+fun android.webkit.WebView.highlightAndScrollToSearchHit(
+    snippet: String?,
+    progression: Double? = null
+) {
+    val safeSnippet = snippet?.replace("\\", "\\\\")?.replace("'", "\\'")?.replace("\"", "\\\"")?.replace("\n", " ")?.replace("\r", " ")?.trim() ?: ""
+    val progRatio = (progression ?: 0.0).coerceIn(0.0, 1.0)
+
+    val js = """
+        (function() {
+            try {
+                var old = document.querySelectorAll('.woods-search-match');
+                for (var i = 0; i < old.length; i++) {
+                    old[i].classList.remove('woods-search-match');
+                }
+
+                var styleEl = document.getElementById('woods-search-style');
+                if (!styleEl) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = 'woods-search-style';
+                    styleEl.textContent = '.woods-search-match { background-color: rgba(255, 214, 0, 0.45) !important; outline: 2px solid #FFD600 !important; border-radius: 4px !important; transition: all 0.5s ease-out !important; } .woods-search-fadeout { background-color: transparent !important; outline-color: transparent !important; }';
+                    document.head.appendChild(styleEl);
+                }
+
+                function norm(s) {
+                    if (!s) return "";
+                    return s.toLowerCase()
+                        .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035']/g, "'")
+                        .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036"«»„]/g, '"')
+                        .replace(/[\u2014\u2013\u2212-]/g, '-')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                }
+
+                var querySnippet = norm('$safeSnippet');
+                var target = null;
+
+                if (querySnippet.length >= 3) {
+                    var sub = querySnippet.substring(0, Math.min(30, querySnippet.length));
+                    var elements = document.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, span');
+                    for (var j = 0; j < elements.length; j++) {
+                        var el = elements[j];
+                        if (el.children.length === 0 || el.tagName.toLowerCase() === 'p') {
+                            if (norm(el.textContent).indexOf(sub) !== -1) {
+                                target = el;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (target) {
+                    target.classList.add('woods-search-match');
+                    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    setTimeout(function() {
+                        target.classList.add('woods-search-fadeout');
+                        setTimeout(function() {
+                            target.classList.remove('woods-search-match', 'woods-search-fadeout');
+                        }, 600);
+                    }, 3500);
+                    return "FOUND_TARGET";
+                } else if ($progRatio > 0.0) {
+                    var maxScroll = Math.max(
+                        document.body.scrollHeight || 0,
+                        document.documentElement.scrollHeight || 0
+                    ) - (window.innerHeight || document.documentElement.clientHeight || 0);
+                    if (maxScroll > 0) {
+                        var targetY = Math.round(maxScroll * $progRatio);
+                        window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
+                        return "SCROLLED_BY_PROG";
+                    }
+                }
+                return "NONE";
+            } catch(e) {
+                return "ERROR";
+            }
+        })()
+    """.trimIndent()
+
+    evaluateJavascript(js, null)
 }

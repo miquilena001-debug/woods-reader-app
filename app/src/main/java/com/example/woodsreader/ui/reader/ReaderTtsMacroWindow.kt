@@ -32,6 +32,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -169,6 +170,10 @@ fun ReaderTtsMacroWindow(
     }
 
     var showLanguageSheet by remember { mutableStateOf(false) }
+    var selectedStudioTab by remember { mutableIntStateOf(0) }
+    val hasDownloadedSherpaVoice = remember(selectedSherpaVoice, sherpaDownloadState) {
+        SherpaVoiceOption.entries.any { isSherpaVoiceDownloaded(it) }
+    }
     val context = LocalContext.current
     val studioPrefs = remember(context) { context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE) }
     val lexiconManager = remember(context) { PronunciationLexiconManager(context.applicationContext) }
@@ -196,13 +201,6 @@ fun ReaderTtsMacroWindow(
     ) {
         val playing = ttsState == TtsState.PLAYING
         var showCompactSpeedSlider by remember { mutableStateOf(false) }
-
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        val pulseAlpha by infiniteTransition.animateFloat(
-            initialValue = 0.3f, targetValue = 0.8f,
-            animationSpec = infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "pulseAlpha"
-        )
 
         Column(
             modifier = Modifier
@@ -365,10 +363,17 @@ fun ReaderTtsMacroWindow(
                     )
                 }
 
-                val wavePhase by infiniteTransition.animateFloat(
-                    initialValue = 0f, targetValue = Math.PI.toFloat() * 2f,
-                    animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)), label = "wave"
-                )
+                val wavePhase by if (playing) {
+                    val waveTransition = rememberInfiniteTransition(label = "wave")
+                    waveTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = (Math.PI * 2.0).toFloat(),
+                        animationSpec = infiniteRepeatable(tween(2000, easing = LinearEasing)),
+                        label = "wavePhase"
+                    )
+                } else {
+                    remember { mutableFloatStateOf(0f) }
+                }
                 
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxWidth().height(56.dp)) {
                     val barWidth = size.width / ORGANIC_WAVES.size
@@ -491,7 +496,17 @@ fun ReaderTtsMacroWindow(
                         .border(1.5.dp, HiddenForest.Accent.copy(alpha = 0.4f), CircleShape)
                         .clickable(enabled = !isLoadingTtsModel) {
                             if (!isLoadingTtsModel) {
-                                if (playing) onPause() else onPlay()
+                                if (playing) {
+                                    onPause()
+                                } else {
+                                    // Si no hay ninguna voz offline descargada y se usa Sherpa, guiar automáticamente a la descarga
+                                    if (useSherpaTts && !hasDownloadedSherpaVoice) {
+                                        selectedStudioTab = 0
+                                        showLanguageSheet = true
+                                    } else {
+                                        onPlay()
+                                    }
+                                }
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -1203,6 +1218,148 @@ fun ReaderTtsMacroWindow(
                 val builtInLexiconEnabled by lexiconManager.builtInEnabled.collectAsStateWithLifecycle()
                 val customPhoneticRules by lexiconManager.customRules.collectAsStateWithLifecycle()
 
+
+                val studioTabs = listOf(
+                    "🎙️ Voz e Idioma",
+                    "🎛️ Acústica y Ambiente",
+                    "📦 Exportar .M4A"
+                )
+
+                TabRow(
+                    selectedTabIndex = selectedStudioTab,
+                    containerColor = Color.Transparent,
+                    contentColor = HiddenForest.Accent,
+                    indicator = { tabPositions ->
+                        if (selectedStudioTab in tabPositions.indices) {
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedStudioTab]),
+                                color = HiddenForest.Accent
+                            )
+                        }
+                    },
+                    divider = {
+                        HorizontalDivider(
+                            color = HiddenForest.Outline.copy(alpha = 0.25f),
+                            thickness = 1.dp
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                ) {
+                    studioTabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedStudioTab == index,
+                            onClick = { selectedStudioTab = index },
+                            text = {
+                                Text(
+                                    text = title,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (selectedStudioTab == index) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            selectedContentColor = HiddenForest.Accent,
+                            unselectedContentColor = HiddenForest.TextSecondary
+                        )
+                    }
+                }
+
+                when (selectedStudioTab) {
+                    0 -> {
+                        // ── PESTAÑA 1: VOZ E IDIOMA ───────────────────────
+                        if (!hasDownloadedSherpaVoice) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = Color(0xFF0C2419),
+                                border = BorderStroke(1.5.dp, Color(0xFF10B981).copy(alpha = 0.7f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 14.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF10B981).copy(alpha = 0.2f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("🎙️", fontSize = 18.sp)
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Voces de Estudio IA (Offline)",
+                                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = Color(0xFF6EE7B7)
+                                            )
+                                            Text(
+                                                text = "Calidad humana natural sin consumir datos",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Text(
+                                        text = "Descarga tu primera Voz de Estudio IA (~60 MB) para escuchar y exportar tus libros con calidad humana 100% sin internet.",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                                        color = Color.White.copy(alpha = 0.9f)
+                                    )
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { onSelectSherpaVoice(SherpaVoiceOption.CLAUDE_MX) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF10B981),
+                                                contentColor = Color.Black
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.weight(1f),
+                                            contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Claudia HD (Latam)",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                maxLines = 1
+                                            )
+                                        }
+
+                                        Button(
+                                            onClick = { onSelectSherpaVoice(SherpaVoiceOption.DAVEFX_ES) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF10B981).copy(alpha = 0.85f),
+                                                contentColor = Color.Black
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.weight(1f),
+                                            contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "David HD (España)",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                 // Selector Unificado de 2 Modos: Estudio IA Offline vs Voz del Sistema
                 val currentEngineMode = if (useSherpaTts) ReaderMacroEngineMode.SHERPA_OFFLINE else ReaderMacroEngineMode.SYSTEM
 
@@ -1262,154 +1419,11 @@ fun ReaderTtsMacroWindow(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                // Contenido dinámico según el modo activo
-                when (currentEngineMode) {
-                    ReaderMacroEngineMode.EDGE_ONLINE -> {}
-
-                    ReaderMacroEngineMode.SHERPA_OFFLINE -> {
-                        // Tarjeta "🎛️ Masterización Acústica y Dramatización"
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(containerColor = HiddenForest.Background.copy(alpha = 0.65f)),
-                            border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f))
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("🎛️", fontSize = 18.sp)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        "Masterización Acústica y Dramatización",
-                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                        color = Color.White
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Text(
-                                    "Perfil Acústico DSP (Master 32-bit)",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = HiddenForest.Accent
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                // 3 chips horizontales con horizontalScroll
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    val profiles = listOf(
-                                        StudioAcousticsProfile.STUDIO_WARM to "🎙️ Estudio Cálido",
-                                        StudioAcousticsProfile.NIGHT_INTIMATE to "🌙 Nocturno Suave",
-                                        StudioAcousticsProfile.CRISP_HD to "⚡ Claridad HD"
-                                    )
-                                    profiles.forEach { (prof, label) ->
-                                        val isSelected = studioProfile == prof
-                                        FilterChip(
-                                            selected = isSelected,
-                                            onClick = {
-                                                studioProfile = prof
-                                                studioPrefs.edit().putString("acoustics_profile", prof.id).apply()
-                                            },
-                                            label = { Text(label, fontSize = 12.sp) },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
-                                                selectedLabelColor = Color.White,
-                                                containerColor = HiddenForest.Surface,
-                                                labelColor = HiddenForest.TextSecondary
-                                            ),
-                                            border = BorderStroke(
-                                                1.dp,
-                                                if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.3f)
-                                            )
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = studioProfile.description,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                                    color = HiddenForest.TextLow
-                                )
-
-                                HorizontalDivider(
-                                    color = HiddenForest.Outline.copy(alpha = 0.2f),
-                                    modifier = Modifier.padding(vertical = 10.dp)
-                                )
-
-                                // Switch "Prosodia Expresiva y Respiración Natural"
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                        Text(
-                                            "Prosodia Expresiva y Respiración Natural",
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            "Ajusta pausas en puntos suspensivos, preguntas, exclamaciones y limpia símbolos de novelas web",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                            color = HiddenForest.TextSecondary
-                                        )
-                                    }
-                                    Switch(
-                                        checked = expressiveProsody,
-                                        onCheckedChange = {
-                                            expressiveProsody = it
-                                            studioPrefs.edit().putBoolean("expressive_prosody_enabled", it).apply()
-                                        },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = HiddenForest.Accent,
-                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
-                                            uncheckedTrackColor = HiddenForest.Background
-                                        )
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // Switch "Modo Novela Dramatizada (Narrador / Diálogos)"
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                                        Text(
-                                            "Modo Novela Dramatizada (Narrador / Diálogos)",
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            "Diferencia automáticamente los diálogos «...» o —...— y mensajes de [Sistema] de la voz del narrador",
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                            color = HiddenForest.TextSecondary
-                                        )
-                                    }
-                                    Switch(
-                                        checked = dramatizedDialogue,
-                                        onCheckedChange = {
-                                            dramatizedDialogue = it
-                                            studioPrefs.edit().putBoolean("dramatized_dialogue_enabled", it).apply()
-                                        },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = HiddenForest.Accent,
-                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
-                                            uncheckedTrackColor = HiddenForest.Background
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
+                        when (currentEngineMode) {
+                            ReaderMacroEngineMode.EDGE_ONLINE -> {}
+                            ReaderMacroEngineMode.SHERPA_OFFLINE -> {
                         // Switch "✨ Auto-detectar idioma del libro"
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -1717,8 +1731,256 @@ fun ReaderTtsMacroWindow(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
 
+                            }
+                            ReaderMacroEngineMode.SYSTEM -> {
+                        Text(
+                            text = "Usa el sintetizador Text-To-Speech nativo configurado en los Ajustes de tu dispositivo Android.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = HiddenForest.TextLow,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+
+                            }
+                        }
+
+                // ── SECCIÓN 1: IDIOMA
+                Text("Idioma del Motor", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = HiddenForest.Accent)
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                val languages = listOf(
+                    null to "Predeterminado del libro",
+                    "es" to "Español",
+                    "en" to "Inglés",
+                    "fr" to "Francés",
+                    "de" to "Alemán",
+                    "it" to "Italiano"
+                )
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    languages.forEach { (code, name) ->
+                        val isSelected = currentLanguage == code
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) HiddenForest.Accent.copy(0.2f) else HiddenForest.Background)
+                                .border(1.dp, if (isSelected) HiddenForest.Accent else HiddenForest.Outline, RoundedCornerShape(10.dp))
+                                .clickable { onLanguageChange(code) }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isSelected) HiddenForest.Accent else HiddenForest.Text,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                
+
+                if (availableVoices.isNotEmpty()) {
+                    Text("Voces del Sistema", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = HiddenForest.Accent)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 140.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        availableVoices.forEach { voiceName ->
+                            val isSelected = currentVoiceName == voiceName
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) HiddenForest.Accent.copy(0.15f) else Color.Transparent)
+                                    .clickable { onVoiceChange(voiceName) }
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = voiceName.substringAfter(" - ").substringBefore("#"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (isSelected) HiddenForest.Accent else HiddenForest.Text
+                                )
+                                if (isSelected) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Icon(Icons.Default.Check, null, tint = HiddenForest.Accent, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+
+                    }
+                    1 -> {
+                        // ── PESTAÑA 2: ACÚSTICA Y AMBIENTE ───────────────
+                        // Tarjeta "🎛️ Masterización Acústica y Dramatización"
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = HiddenForest.Background.copy(alpha = 0.65f)),
+                            border = BorderStroke(1.dp, HiddenForest.Outline.copy(alpha = 0.35f))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("🎛️", fontSize = 18.sp)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Masterización Acústica y Dramatización",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = Color.White
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Text(
+                                    "Perfil Acústico DSP (Master 32-bit)",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = HiddenForest.Accent
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // 3 chips horizontales con horizontalScroll
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val profiles = listOf(
+                                        StudioAcousticsProfile.STUDIO_WARM to "🎙️ Estudio Cálido",
+                                        StudioAcousticsProfile.NIGHT_INTIMATE to "🌙 Nocturno Suave",
+                                        StudioAcousticsProfile.CRISP_HD to "⚡ Claridad HD"
+                                    )
+                                    profiles.forEach { (prof, label) ->
+                                        val isSelected = studioProfile == prof
+                                        FilterChip(
+                                            selected = isSelected,
+                                            onClick = {
+                                                studioProfile = prof
+                                                studioPrefs.edit().putString("acoustics_profile", prof.id).apply()
+                                            },
+                                            label = { Text(label, fontSize = 12.sp) },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = HiddenForest.Accent.copy(alpha = 0.25f),
+                                                selectedLabelColor = Color.White,
+                                                containerColor = HiddenForest.Surface,
+                                                labelColor = HiddenForest.TextSecondary
+                                            ),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (isSelected) HiddenForest.Accent else HiddenForest.Outline.copy(alpha = 0.3f)
+                                            )
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = studioProfile.description,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = HiddenForest.TextLow
+                                )
+
+                                HorizontalDivider(
+                                    color = HiddenForest.Outline.copy(alpha = 0.2f),
+                                    modifier = Modifier.padding(vertical = 10.dp)
+                                )
+
+                                // Switch "Prosodia Expresiva y Respiración Natural"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "Prosodia Expresiva y Respiración Natural",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            "Ajusta pausas en puntos suspensivos, preguntas, exclamaciones y limpia símbolos de novelas web",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = expressiveProsody,
+                                        onCheckedChange = {
+                                            expressiveProsody = it
+                                            studioPrefs.edit().putBoolean("expressive_prosody_enabled", it).apply()
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = HiddenForest.Accent,
+                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                            uncheckedTrackColor = HiddenForest.Background
+                                        )
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Switch "Modo Novela Dramatizada (Narrador / Diálogos)"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                                        Text(
+                                            "Modo Novela Dramatizada (Narrador / Diálogos)",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            "Diferencia automáticamente los diálogos «...» o —...— y mensajes de [Sistema] de la voz del narrador",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = HiddenForest.TextSecondary
+                                        )
+                                    }
+                                    Switch(
+                                        checked = dramatizedDialogue,
+                                        onCheckedChange = {
+                                            dramatizedDialogue = it
+                                            studioPrefs.edit().putBoolean("dramatized_dialogue_enabled", it).apply()
+                                        },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = HiddenForest.Accent,
+                                            checkedTrackColor = HiddenForest.Accent.copy(alpha = 0.35f),
+                                            uncheckedTrackColor = HiddenForest.Background
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                PremiumSlider(
+                    label = "Tono de la Voz (Pitch)",
+                    value = pitch,
+                    onValueChange = {
+                        pitch = it
+                        onPitchChange(it)
+                    },
+                    valueRange = 0.5f..2.0f
+                )
+
+
+                        Spacer(modifier = Modifier.height(12.dp))
                         // Card "📖 Glosario Fonético (Novelas Web y Nombres)"
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -1822,112 +2084,8 @@ fun ReaderTtsMacroWindow(
                                 }
                             }
                         }
-                    }
 
-                    ReaderMacroEngineMode.SYSTEM -> {
-                        Text(
-                            text = "Usa el sintetizador Text-To-Speech nativo configurado en los Ajustes de tu dispositivo Android.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = HiddenForest.TextLow,
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                PremiumSlider(
-                    label = "Tono de la Voz (Pitch)",
-                    value = pitch,
-                    onValueChange = {
-                        pitch = it
-                        onPitchChange(it)
-                    },
-                    valueRange = 0.5f..2.0f
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // ── SECCIÓN 1: IDIOMA
-                Text("Idioma del Motor", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = HiddenForest.Accent)
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                val languages = listOf(
-                    null to "Predeterminado del libro",
-                    "es" to "Español",
-                    "en" to "Inglés",
-                    "fr" to "Francés",
-                    "de" to "Alemán",
-                    "it" to "Italiano"
-                )
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    languages.forEach { (code, name) ->
-                        val isSelected = currentLanguage == code
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) HiddenForest.Accent.copy(0.2f) else HiddenForest.Background)
-                                .border(1.dp, if (isSelected) HiddenForest.Accent else HiddenForest.Outline, RoundedCornerShape(10.dp))
-                                .clickable { onLanguageChange(code) }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (isSelected) HiddenForest.Accent else HiddenForest.Text,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                
-                Spacer(modifier = Modifier.height(20.dp))
-                
-                // ── SECCIÓN 2: VOCES DISPONIBLES
-                if (availableVoices.isNotEmpty()) {
-                    Text("Voces del Sistema", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp), color = HiddenForest.Accent)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 140.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        availableVoices.forEach { voiceName ->
-                            val isSelected = currentVoiceName == voiceName
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) HiddenForest.Accent.copy(0.15f) else Color.Transparent)
-                                    .clickable { onVoiceChange(voiceName) }
-                                    .padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = voiceName.substringAfter(" - ").substringBefore("#"),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (isSelected) HiddenForest.Accent else HiddenForest.Text
-                                )
-                                if (isSelected) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                    Icon(Icons.Default.Check, null, tint = HiddenForest.Accent, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(20.dp))
-                }
-                
+                        Spacer(modifier = Modifier.height(14.dp))
                 Button(
                     onClick = {
                         showLanguageSheet = false
@@ -1945,8 +2103,9 @@ fun ReaderTtsMacroWindow(
                     Text("Reglas de Pronunciación", fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
+                    }
+                    2 -> {
+                        // ── PESTAÑA 3: EXPORTAR .M4A ──────────────────────
                 // ── SECCIÓN 4: EXPORTAR AUDIOLIBRO COMPRIMIDO (.M4A) ──
                 Text(
                     text = "🎧 Exportar Audiolibro Comprimido (.M4A)",
@@ -2183,8 +2342,10 @@ fun ReaderTtsMacroWindow(
                         }
                     }
                 }
-            }
 
+                    }
+                }
+            }
             if (showAddRuleDialog) {
                 AddPhoneticRuleDialog(
                     onDismiss = { showAddRuleDialog = false },

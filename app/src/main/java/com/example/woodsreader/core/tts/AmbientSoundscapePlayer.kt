@@ -10,11 +10,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.PI
@@ -67,6 +69,24 @@ class AmbientSoundscapePlayer @Inject constructor(
         _volume.value = clamped
         prefs.edit().putFloat("ambient_volume", clamped).apply()
         studioPrefs.edit().putFloat("soundscape_intensity", clamped).apply()
+    }
+
+    /**
+     * Recarga las preferencias acústicas y de ambiente directamente desde disco
+     * y actualiza de inmediato los StateFlows en memoria (usado tras restaurar un respaldo).
+     */
+    fun reloadPreferences() {
+        val restoredMode = SoundscapeMode.fromId(
+            prefs.getString("ambient_mode", null)
+                ?: studioPrefs.getString("soundscape_mode", SoundscapeMode.OFF.id)
+        )
+        val restoredVol = (prefs.getFloat(
+            "ambient_volume",
+            studioPrefs.getFloat("soundscape_intensity", 0.35f)
+        )).coerceIn(0.05f, 1.0f)
+        _mode.value = restoredMode
+        _volume.value = restoredVol
+        updatePlaybackState()
     }
 
     fun onTtsSpeakingChanged(speaking: Boolean) {
@@ -125,7 +145,17 @@ class AmbientSoundscapePlayer @Inject constructor(
                     .setBufferSizeInBytes(minBuffer)
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .build()
-            }.getOrNull() ?: return@launch
+            }.getOrElse { error ->
+                woodsKeepAliveManager.releaseKeepAliveWakeLock()
+                Timber.e(error, "No se pudo crear el AudioTrack del paisaje sonoro")
+                return@launch
+            }
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                woodsKeepAliveManager.releaseKeepAliveWakeLock()
+                Timber.e("El AudioTrack del paisaje sonoro no se inicializó")
+                return@launch
+            }
 
             val pcmBuffer = ShortArray(chunkSamples)
 
@@ -253,16 +283,17 @@ class AmbientSoundscapePlayer @Inject constructor(
                     val written = track.write(pcmBuffer, 0, chunkSamples)
                     if (written < 0) break
                 }
-            } catch (_: Throwable) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Error durante la reproducción del paisaje sonoro")
             } finally {
                 runCatching {
                     track.pause()
                     track.flush()
                     track.release()
-                }
-                if (_mode.value == SoundscapeMode.OFF || (!isReaderActive && !isTtsSpeaking)) {
-                    woodsKeepAliveManager.releaseKeepAliveWakeLock()
-                }
+                }.onFailure { Timber.w(it, "Error al liberar el AudioTrack del paisaje sonoro") }
+                woodsKeepAliveManager.releaseKeepAliveWakeLock()
             }
         }
     }
@@ -270,6 +301,11 @@ class AmbientSoundscapePlayer @Inject constructor(
     fun stopStreaming() {
         streamJob?.cancel()
         streamJob = null
-        woodsKeepAliveManager.releaseKeepAliveWakeLock()
+    }
+
+    fun pausePlayback() {
+        isReaderActive = false
+        isTtsSpeaking = false
+        stopStreaming()
     }
 }

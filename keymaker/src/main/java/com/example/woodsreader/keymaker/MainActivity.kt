@@ -3,7 +3,6 @@ package com.example.woodsreader.keymaker
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -18,7 +17,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,7 +28,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -38,6 +35,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class KeymakerTab(val title: String) {
-    GENERATOR("Generador"),
+    GENERATOR("Emitir"),
     VERIFIER("Verificador"),
     HISTORY("Historial")
 }
@@ -111,8 +111,8 @@ fun KeymakerApp() {
                 NavigationBarItem(
                     selected = selectedTab == KeymakerTab.GENERATOR,
                     onClick = { selectedTab = KeymakerTab.GENERATOR },
-                    icon = { Icon(Icons.Default.Key, contentDescription = "Generador") },
-                    label = { Text("Generar") },
+                    icon = { Icon(Icons.Default.Key, contentDescription = "Emitir") },
+                    label = { Text("Emitir") },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = WoodsGold,
                         selectedTextColor = WoodsGold,
@@ -174,10 +174,9 @@ fun KeymakerApp() {
                 .padding(innerPadding)
         ) {
             when (selectedTab) {
-                KeymakerTab.GENERATOR -> GeneratorScreen(
-                    onSaveToHistory = { code, key, note ->
-                        historyList = historyManager.addEntry(code, key, note)
-                    }
+                KeymakerTab.GENERATOR -> IssuerScreen(
+                    historyManager = historyManager,
+                    onLicenseIssued = { historyList = historyManager.getHistory() }
                 )
                 KeymakerTab.VERIFIER -> VerifierScreen()
                 KeymakerTab.HISTORY -> HistoryScreen(
@@ -195,21 +194,24 @@ fun KeymakerApp() {
     }
 }
 
+// ─── Pantalla: Emitir licencia ────────────────────────────────────────────────
+
 @Composable
-fun GeneratorScreen(
-    onSaveToHistory: (code: String, key: String, note: String) -> Unit
+fun IssuerScreen(
+    historyManager: KeyHistoryManager,
+    onLicenseIssued: () -> Unit
 ) {
     val context = LocalContext.current
-    val keyboardController = LocalSoftwareKeyboardController.current
+    val scope = rememberCoroutineScope()
 
     var rawInput by remember { mutableStateOf("") }
-    var buyerNote by remember { mutableStateOf("") }
-
     val cleanCode = remember(rawInput) { KeymakerEngine.extractInstallCode(rawInput) }
     val isValid = remember(cleanCode) { KeymakerEngine.isValidInstallCode(cleanCode) }
-    val generatedKey = remember(cleanCode, isValid) {
-        if (isValid) KeymakerEngine.generateProKey(cleanCode) else ""
-    }
+
+    var buyerNote by remember { mutableStateOf("") }
+    var issuedLicense by remember { mutableStateOf("") }
+    var isSigning by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier
@@ -217,6 +219,7 @@ fun GeneratorScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // ── Tarjeta de entrada ─────────────────────────────────────────────
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = WoodsDarkSurface),
@@ -229,14 +232,15 @@ fun GeneratorScreen(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Código de Instalación",
+                            text = "Código de instalación del cliente",
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = WoodsTextPrimary
+                            color = WoodsTextPrimary,
+                            modifier = Modifier.weight(1f)
                         )
                         OutlinedButton(
                             onClick = {
@@ -246,7 +250,9 @@ fun GeneratorScreen(
                                     val text = clip.getItemAt(0).coerceToText(context).toString()
                                     val extracted = KeymakerEngine.extractInstallCode(text)
                                     rawInput = extracted
-                                    Toast.makeText(context, "Código pegado: $extracted", Toast.LENGTH_SHORT).show()
+                                    issuedLicense = ""
+                                    errorMsg = ""
+                                    Toast.makeText(context, "Código detectado: $extracted", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "El portapapeles está vacío", Toast.LENGTH_SHORT).show()
                                 }
@@ -262,7 +268,11 @@ fun GeneratorScreen(
 
                     OutlinedTextField(
                         value = rawInput,
-                        onValueChange = { rawInput = it },
+                        onValueChange = {
+                            rawInput = it
+                            issuedLicense = ""
+                            errorMsg = ""
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Ej: WR-A1B2-C3D4", color = WoodsTextMuted) },
                         singleLine = true,
@@ -281,7 +291,7 @@ fun GeneratorScreen(
                         ),
                         trailingIcon = {
                             if (rawInput.isNotBlank()) {
-                                IconButton(onClick = { rawInput = "" }) {
+                                IconButton(onClick = { rawInput = ""; issuedLicense = ""; errorMsg = "" }) {
                                     Icon(Icons.Default.Clear, contentDescription = "Limpiar", tint = WoodsTextMuted)
                                 }
                             }
@@ -292,160 +302,212 @@ fun GeneratorScreen(
                         )
                     )
 
-                    // Estado de validación
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        if (isValid) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = WoodsEmerald, modifier = Modifier.size(16.dp))
-                            Text("Código válido listo para activación", color = WoodsEmerald, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        } else if (rawInput.isBlank()) {
-                            Icon(Icons.Outlined.Info, contentDescription = null, tint = WoodsTextMuted, modifier = Modifier.size(16.dp))
-                            Text("Pega o escribe el código de 8 caracteres que muestra Woods Reader", color = WoodsTextMuted, fontSize = 13.sp)
-                        } else {
-                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(16.dp))
-                            Text("Formato no reconocido. Debe ser WR-XXXX-XXXX", color = Color(0xFFEF5350), fontSize = 13.sp)
+                        when {
+                            isValid -> {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = WoodsEmerald, modifier = Modifier.size(16.dp))
+                                Text("Código válido — listo para firmar", color = WoodsEmerald, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+                            rawInput.isBlank() -> {
+                                Icon(Icons.Outlined.Info, contentDescription = null, tint = WoodsTextMuted, modifier = Modifier.size(16.dp))
+                                Text("Pega el código WR-XXXX-XXXX que muestra Woods Reader al cliente", color = WoodsTextMuted, fontSize = 13.sp)
+                            }
+                            else -> {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEF5350), modifier = Modifier.size(16.dp))
+                                Text("Formato no reconocido. Debe ser WR-XXXX-XXXX", color = Color(0xFFEF5350), fontSize = 13.sp)
+                            }
                         }
                     }
 
-                    // Nota opcional
+                    // Nota del comprador
                     OutlinedTextField(
                         value = buyerNote,
                         onValueChange = { buyerNote = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Nombre o nota del comprador (opcional)", fontSize = 13.sp) },
-                        placeholder = { Text("Ej: Carlos (WhatsApp / PayPal)", color = WoodsTextMuted) },
+                        placeholder = { Text("Nota del cliente (ej: Juan García)", color = WoodsTextMuted) },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
+                        label = { Text("Nota del cliente (opcional)", color = WoodsTextMuted, fontSize = 12.sp) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = WoodsGold,
                             unfocusedBorderColor = WoodsDarkSurfaceVariant,
                             focusedTextColor = WoodsTextPrimary,
                             unfocusedTextColor = WoodsTextPrimary
                         ),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { keyboardController?.hide() })
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
                     )
+
+                    // Botón de firma
+                    Button(
+                        onClick = {
+                            if (!isValid) return@Button
+                            isSigning = true
+                            issuedLicense = ""
+                            errorMsg = ""
+                            scope.launch {
+                                try {
+                                    val license = withContext(Dispatchers.Default) {
+                                        KeymakerEngine.signInstallCode(cleanCode)
+                                    }
+                                    historyManager.addEntry(cleanCode, license, buyerNote)
+                                    onLicenseIssued()
+                                    issuedLicense = license
+                                } catch (e: Exception) {
+                                    errorMsg = e.message ?: "Error al firmar"
+                                } finally {
+                                    isSigning = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = isValid && !isSigning,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = WoodsGold,
+                            contentColor = Color.Black,
+                            disabledContainerColor = WoodsGold.copy(alpha = 0.4f),
+                            disabledContentColor = Color.Black.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        if (isSigning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.Black
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("Firmando con ECDSA…", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        } else {
+                            Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Emitir licencia Pro", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+                    }
                 }
             }
         }
 
-        // Card con la Clave Pro Generada
-        item {
-            AnimatedVisibility(
-                visible = isValid && generatedKey.isNotBlank(),
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
+        // ── Error ──────────────────────────────────────────────────────────
+        if (errorMsg.isNotBlank()) {
+            item {
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = WoodsDarkSurface),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(WoodsGold)),
-                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF331616)),
+                    shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(Icons.Default.Stars, contentDescription = null, tint = WoodsGold)
-                            Text(
-                                text = "CLAVE PRO OFICIAL",
-                                fontWeight = FontWeight.Black,
-                                fontSize = 14.sp,
-                                color = WoodsGoldBright,
-                                letterSpacing = 1.sp
-                            )
-                        }
+                        Icon(Icons.Default.Error, contentDescription = null, tint = Color(0xFFEF5350))
+                        Text(errorMsg, color = Color(0xFFEF5350), fontSize = 13.sp)
+                    }
+                }
+            }
+        }
 
-                        // Contenedor visual de la clave
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(WoodsGoldContainer)
-                                .border(1.dp, WoodsGold.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                                .padding(vertical = 16.dp, horizontal = 12.dp),
-                            contentAlignment = Alignment.Center
+        // ── Resultado de licencia emitida ──────────────────────────────────
+        if (issuedLicense.isNotBlank()) {
+            item {
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn() + expandVertically()
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF132A17)),
+                        border = CardDefaults.outlinedCardBorder().copy(
+                            brush = androidx.compose.ui.graphics.SolidColor(WoodsEmerald)
+                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            Text(
-                                text = generatedKey,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 21.sp,
-                                color = WoodsGoldBright,
-                                letterSpacing = 2.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-
-                        // Botones de acción
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Woods Pro Key", generatedKey)
-                                    clipboard.setPrimaryClip(clip)
-                                    onSaveToHistory(cleanCode, generatedKey, buyerNote)
-                                    Toast.makeText(context, "✓ Clave copiada al portapapeles", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = WoodsGold,
-                                    contentColor = Color.Black
-                                )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Copiar Clave", fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = WoodsEmerald)
+                                Text(
+                                    text = "✓ LICENCIA EMITIDA",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 15.sp,
+                                    color = WoodsEmerald,
+                                    letterSpacing = 1.sp
+                                )
                             }
 
-                            Button(
-                                onClick = {
-                                    onSaveToHistory(cleanCode, generatedKey, buyerNote)
-                                    val message = KeymakerEngine.buildShareMessage(cleanCode, generatedKey, buyerNote)
-                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, message)
-                                    }
-                                    val shareIntent = Intent.createChooser(sendIntent, "Enviar Clave Pro")
-                                    context.startActivity(shareIntent)
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = WoodsEmeraldDark,
-                                    contentColor = Color.White
-                                )
+                            // Clave en caja monospace
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(WoodsDarkSurface)
+                                    .padding(12.dp)
                             ) {
-                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Compartir", fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = issuedLicense,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = WoodsGoldBright,
+                                    letterSpacing = 0.5.sp
+                                )
                             }
-                        }
 
-                        // Botón de guardar en historial explícito
-                        OutlinedButton(
-                            onClick = {
-                                onSaveToHistory(cleanCode, generatedKey, buyerNote)
-                                Toast.makeText(context, "✓ Guardado en historial", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = WoodsTextSecondary)
-                        ) {
-                            Icon(Icons.Default.BookmarkAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Guardar en Historial", fontSize = 13.sp)
+                            // Botones de acción
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Copiar solo la clave
+                                OutlinedButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Pro license", issuedLicense))
+                                        Toast.makeText(context, "Clave copiada", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = WoodsEmerald)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Copiar clave", fontSize = 13.sp)
+                                }
+
+                                // Compartir mensaje completo
+                                Button(
+                                    onClick = {
+                                        val shareMsg = KeymakerEngine.buildShareMessage(cleanCode, issuedLicense, buyerNote)
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Woods Pro message", shareMsg))
+                                        Toast.makeText(context, "Mensaje completo copiado", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = WoodsEmeraldDark,
+                                        contentColor = Color.White
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Copiar mensaje", fontSize = 13.sp)
+                                }
+                            }
+
+                            Text(
+                                text = "Guardada en historial. Comparte la clave con tu cliente.",
+                                color = WoodsTextMuted,
+                                fontSize = 12.sp
+                            )
                         }
                     }
                 }
@@ -453,6 +515,8 @@ fun GeneratorScreen(
         }
     }
 }
+
+// ─── Pantalla: Verificador ────────────────────────────────────────────────────
 
 @Composable
 fun VerifierScreen() {
@@ -515,7 +579,7 @@ fun VerifierScreen() {
                             verificationResult = null
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Clave Pro (PRO-XXXX-XXXX-XXXX)") },
+                        label = { Text("Clave firmada (PRO-...)") },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -584,7 +648,7 @@ fun VerifierScreen() {
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 text = if (isValid)
-                                    "La firma criptográfica HMAC-SHA256 coincide al 100% con este dispositivo."
+                                    "La firma ECDSA coincide con la clave pública oficial y este dispositivo."
                                 else
                                     "Esta clave no corresponde a este código de instalación o ha sido alterada.",
                                 color = WoodsTextSecondary,
@@ -597,6 +661,8 @@ fun VerifierScreen() {
         }
     }
 }
+
+// ─── Pantalla: Historial ──────────────────────────────────────────────────────
 
 @Composable
 fun HistoryScreen(
@@ -646,13 +712,13 @@ fun HistoryScreen(
                     modifier = Modifier.size(54.dp)
                 )
                 Text(
-                    text = "No hay claves en el historial",
+                    text = "No hay licencias en el historial",
                     color = WoodsTextSecondary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    text = "Las claves que generes aparecerán aquí",
+                    text = "Emite tu primera licencia en la pestaña Emitir.",
                     color = WoodsTextMuted,
                     fontSize = 13.sp
                 )
@@ -672,7 +738,7 @@ fun HistoryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${historyList.size} Activaciones registradas",
+                        text = "${historyList.size} licencias emitidas",
                         color = WoodsTextSecondary,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium
@@ -701,10 +767,11 @@ fun HistoryScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = entry.buyerNote.ifBlank { "Activación Pro" },
+                                text = entry.buyerNote.ifBlank { "Sin nota" },
                                 fontWeight = FontWeight.Bold,
                                 color = WoodsTextPrimary,
-                                fontSize = 15.sp
+                                fontSize = 15.sp,
+                                modifier = Modifier.weight(1f)
                             )
                             Text(
                                 text = entry.formattedDate,
@@ -727,7 +794,6 @@ fun HistoryScreen(
                             )
                         }
 
-                        // Clave con fondo resaltado
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -739,41 +805,50 @@ fun HistoryScreen(
                                 text = entry.proKey,
                                 fontFamily = FontFamily.Monospace,
                                 color = WoodsGoldBright,
-                                fontSize = 15.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Black,
-                                letterSpacing = 1.sp
+                                letterSpacing = 0.5.sp
                             )
                         }
 
-                        // Acciones rápidas
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(
+                            // Copiar clave
+                            OutlinedButton(
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText("Woods Pro Key", entry.proKey)
-                                    clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "✓ Clave copiada", Toast.LENGTH_SHORT).show()
-                                }
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Pro license", entry.proKey))
+                                    Toast.makeText(context, "Clave copiada", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WoodsGold)
                             ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copiar", tint = WoodsGold)
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Copiar", fontSize = 12.sp)
                             }
 
-                            IconButton(
+                            // Compartir mensaje
+                            OutlinedButton(
                                 onClick = {
-                                    val message = KeymakerEngine.buildShareMessage(entry.installCode, entry.proKey, entry.buyerNote)
-                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, message)
-                                    }
-                                    val shareIntent = Intent.createChooser(sendIntent, "Enviar Clave Pro")
-                                    context.startActivity(shareIntent)
-                                }
+                                    val shareMsg = KeymakerEngine.buildShareMessage(entry.installCode, entry.proKey, entry.buyerNote)
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Woods Pro message", shareMsg))
+                                    Toast.makeText(context, "Mensaje copiado", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WoodsTextSecondary)
                             ) {
-                                Icon(Icons.Default.Share, contentDescription = "Compartir", tint = WoodsEmerald)
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Mensaje", fontSize = 12.sp)
                             }
 
                             IconButton(onClick = { onDelete(entry.id) }) {

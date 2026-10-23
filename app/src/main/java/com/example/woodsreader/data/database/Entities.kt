@@ -68,7 +68,10 @@ data class BookEntity(
         childColumns = ["bookId"],
         onDelete = ForeignKey.CASCADE
     )],
-    indices = [Index("bookId")]
+    indices = [
+        Index("bookId"),
+        Index(value = ["bookId", "createdAt"])
+    ]
 )
 data class HighlightEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
@@ -92,7 +95,10 @@ data class HighlightEntity(
         childColumns = ["bookId"],
         onDelete = ForeignKey.CASCADE
     )],
-    indices = [Index("bookId")]
+    indices = [
+        Index("bookId"),
+        Index(value = ["bookId", "createdAt"])
+    ]
 )
 data class BookmarkEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
@@ -117,7 +123,8 @@ data class BookmarkEntity(
     indices = [
         Index("bookId"), 
         Index("startAt"),
-        Index(value = ["mode", "startAt"]) // Optimización Parte 4
+        Index(value = ["mode", "startAt"]), // Optimización Parte 4
+        Index(value = ["bookId", "startAt"])
     ]
 )
 data class ReadingSessionEntity(
@@ -136,7 +143,10 @@ data class DailyWordCount(val dayOfWeek: Int, val totalWords: Long)
 
 // ── CollectionEntity ──────────────────────────────────────────────────────────
 @Immutable
-@Entity(tableName = "collections")
+@Entity(
+    tableName = "collections",
+    indices = [Index("name")]
+)
 data class CollectionEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,

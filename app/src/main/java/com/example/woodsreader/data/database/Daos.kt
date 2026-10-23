@@ -9,6 +9,7 @@ import androidx.room.RawQuery
 import androidx.room.Transaction
 import androidx.room.Upsert
 import com.example.woodsreader.data.model.ReadingMode
+import com.example.woodsreader.data.model.ReadingStatus
 import kotlinx.coroutines.flow.Flow
 
 // ── BookDao ───────────────────────────────────────────────────────────────────
@@ -118,6 +119,44 @@ interface BookDao {
     @Query("UPDATE books SET coverCachePath = NULL")
     suspend fun clearAllCovers()
 
+    // ── Escrituras parciales por campo ────────────────────────────────────────
+    // Evitan upsert(copy()) sobre un snapshot atrasado, que sobrescribiría
+    // progreso, locator y tiempo de lectura escritos mientras tanto.
+    @Query("UPDATE books SET readingStatus = :status WHERE id = :id")
+    suspend fun updateReadingStatus(id: String, status: ReadingStatus)
+
+    @Query("UPDATE books SET userRating = :rating WHERE id = :id")
+    suspend fun updateUserRating(id: String, rating: Int?)
+
+    @Query("UPDATE books SET userNotes = :notes WHERE id = :id")
+    suspend fun updateUserNotes(id: String, notes: String)
+
+    @Query("UPDATE books SET description = :description WHERE id = :id")
+    suspend fun updateDescription(id: String, description: String)
+
+    @Query("UPDATE books SET collectionId = :collectionId WHERE id = :id")
+    suspend fun updateCollection(id: String, collectionId: String?)
+
+    @Query("""
+        UPDATE books SET
+            title = :title,
+            author = :author,
+            description = :description,
+            language = :language,
+            coverCachePath = :coverCachePath,
+            fileHash = :fileHash
+        WHERE id = :id
+    """)
+    suspend fun updateEnrichedMetadata(
+        id: String,
+        title: String,
+        author: String,
+        description: String,
+        language: String,
+        coverCachePath: String?,
+        fileHash: String
+    )
+
     // Búsqueda FTS4 - mucho más rápido que LIKE para 1000+ libros
     @Transaction
     @Query("""
@@ -203,6 +242,10 @@ interface HighlightDao {
 
     @Upsert
     suspend fun upsertAll(highlights: List<HighlightEntity>)
+
+    /** Traslada los subrayados de un libro a otro (fusión de duplicados). */
+    @Query("UPDATE highlights SET bookId = :toId WHERE bookId = :fromId")
+    suspend fun reassignBook(fromId: String, toId: String)
 }
 
 // ── BookmarkDao ───────────────────────────────────────────────────────────────
@@ -227,6 +270,10 @@ interface BookmarkDao {
 
     @Upsert
     suspend fun upsertAll(bookmarks: List<BookmarkEntity>)
+
+    /** Traslada los marcadores de un libro a otro (fusión de duplicados). */
+    @Query("UPDATE bookmarks SET bookId = :toId WHERE bookId = :fromId")
+    suspend fun reassignBook(fromId: String, toId: String)
 }
 
 // ── ReadingSessionDao ─────────────────────────────────────────────────────────
@@ -359,6 +406,10 @@ interface ReadingSessionDao {
 
     @Upsert
     suspend fun upsertAll(sessions: List<ReadingSessionEntity>)
+
+    /** Traslada las sesiones de un libro a otro (fusión de duplicados). */
+    @Query("UPDATE reading_sessions SET bookId = :toId WHERE bookId = :fromId")
+    suspend fun reassignBook(fromId: String, toId: String)
 }
 
 /**
@@ -457,6 +508,10 @@ interface TtsRuleDao {
 
     @Delete
     suspend fun delete(rule: TtsRuleEntity)
+
+    /** Traslada las reglas específicas de un libro a otro (fusión de duplicados). */
+    @Query("UPDATE tts_rules SET bookId = :toId WHERE bookId = :fromId")
+    suspend fun reassignBook(fromId: String, toId: String)
 }
 
 

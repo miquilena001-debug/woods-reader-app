@@ -336,30 +336,13 @@ class BookScannerService @Inject constructor(
                         } else null
 
                         if (existingWithHash != null && existingWithHash.id != book.id) {
-                            val duplicateIsAhead = book.readingProgressPercent > existingWithHash.readingProgressPercent
-                            val mergedStatus = when {
-                                existingWithHash.readingStatus == com.example.woodsreader.data.model.ReadingStatus.ABANDONED ->
-                                    com.example.woodsreader.data.model.ReadingStatus.ABANDONED
-                                existingWithHash.readingStatus == com.example.woodsreader.data.model.ReadingStatus.COMPLETED ->
-                                    com.example.woodsreader.data.model.ReadingStatus.COMPLETED
-                                duplicateIsAhead -> book.readingStatus
-                                else -> existingWithHash.readingStatus
-                            }
-                            val mergedCanonical = existingWithHash.copy(
-                                readingProgressPercent = maxOf(existingWithHash.readingProgressPercent, book.readingProgressPercent),
-                                readingStatus = mergedStatus,
-                                currentLocatorJson = if (duplicateIsAhead) book.currentLocatorJson else existingWithHash.currentLocatorJson,
-                                fallbackLocatorHref = if (duplicateIsAhead) book.fallbackLocatorHref else existingWithHash.fallbackLocatorHref,
-                                fallbackLocatorPosition = if (duplicateIsAhead) book.fallbackLocatorPosition else existingWithHash.fallbackLocatorPosition,
-                                totalReadingTimeMs = existingWithHash.totalReadingTimeMs + book.totalReadingTimeMs,
-                                lastOpenedAt = maxOf(existingWithHash.lastOpenedAt ?: 0L, book.lastOpenedAt ?: 0L).takeIf { it > 0L },
-                                userRating = existingWithHash.userRating ?: book.userRating,
-                                userNotes = existingWithHash.userNotes.ifBlank { book.userNotes },
-                                collectionId = existingWithHash.collectionId ?: book.collectionId,
-                                coverCachePath = existingWithHash.coverCachePath ?: resolvedCover
+                            // Atómico: la fusión relee ambas filas dentro de la transacción, así los
+                            // snapshots de este bucle no pisan cambios hechos durante el enriquecimiento.
+                            repository.mergeDuplicateBook(
+                                canonicalId = existingWithHash.id,
+                                duplicateId = book.id,
+                                fallbackCoverPath = resolvedCover
                             )
-                            repository.upsertBook(mergedCanonical)
-                            repository.deleteBookById(book.id)
                             Log.d(TAG, "DeepEnrich: merged and removed duplicate ${book.filePath} (canonical=${existingWithHash.id})")
                             continue
                         }
@@ -375,7 +358,17 @@ class BookScannerService @Inject constructor(
                         )
 
                         if (updated != book) {
-                            repository.upsertBook(updated)
+                            // Escritura parcial: no pisa progreso/locator/tiempo si el usuario
+                            // abrió el libro mientras Readium extraía los metadatos.
+                            repository.updateEnrichedMetadata(
+                                bookId = book.id,
+                                title = updated.title,
+                                author = updated.author,
+                                description = updated.description,
+                                language = updated.language,
+                                coverCachePath = updated.coverCachePath,
+                                fileHash = updated.fileHash
+                            )
                             Log.d(TAG, "DeepEnrich: enriched ${book.title} → author=${updated.author}, cover=${updated.coverCachePath != null}")
                         }
                     } catch (e: Exception) {

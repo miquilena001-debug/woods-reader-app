@@ -28,6 +28,7 @@ class ChapterScrollDetector(
     private val onPageForward: ((WebView?) -> Unit)? = null,
     private val onPageBackward: ((WebView?) -> Unit)? = null,
     private val onClearSelection: () -> Unit = {},
+    private val onRawTouch: ((MotionEvent) -> Unit)? = null,
     private val thresholdDp: Float = 68f
 ) {
     private val thresholdPx: Float get() = thresholdDp * rootView.context.resources.displayMetrics.density
@@ -53,6 +54,7 @@ class ChapterScrollDetector(
     @SuppressLint("ClickableViewAccessibility")
     private val touchListener = View.OnTouchListener { view, event ->
         val wv = view as? WebView ?: return@OnTouchListener false
+        onRawTouch?.invoke(event)
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {

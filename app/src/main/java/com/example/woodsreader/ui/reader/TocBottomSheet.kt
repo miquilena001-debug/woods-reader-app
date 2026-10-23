@@ -167,7 +167,7 @@ fun TocBottomSheet(
                 ) {
                     itemsIndexed(
                         items = filteredToc,
-                        key = { index, _ -> index }
+                        key = { index, link -> "${link.href}_$index" }
                     ) { _, link: Link ->
                         TocItem(
                             link = link,

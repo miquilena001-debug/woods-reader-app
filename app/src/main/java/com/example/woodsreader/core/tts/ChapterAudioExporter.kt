@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.ByteBuffer
@@ -25,6 +26,7 @@ import java.nio.ByteOrder
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
+import timber.log.Timber
 
 sealed interface AudioExportState {
     data object Idle : AudioExportState
@@ -92,11 +94,11 @@ class ChapterAudioExporter @Inject constructor(
                 throw IllegalStateException("No se pudo inicializar el motor Sherpa ONNX")
             }
 
-            val tempM4aFile = File(context.cacheDir, "woods_export_${System.currentTimeMillis()}.m4a")
+            val tempM4aFile = File.createTempFile("woods_export_", ".m4a", context.cacheDir)
             val sampleRate = 22050
 
-            woodsKeepAliveManager.acquireKeepAliveWakeLock()
             try {
+                woodsKeepAliveManager.acquireKeepAliveWakeLock()
                 encodeStreamToM4a(
                     outputFile = tempM4aFile,
                     sampleRate = sampleRate,
@@ -104,6 +106,10 @@ class ChapterAudioExporter @Inject constructor(
                     chapterProvider = chapterProvider,
                     speed = speed.coerceIn(0.5f, 2.5f)
                 )
+                coroutineContext.ensureActive()
+                if (!tempM4aFile.isFile || tempM4aFile.length() == 0L) {
+                    throw IllegalStateException("La exportación no produjo un archivo de audio válido")
+                }
 
                 val safeBook = bookTitle.replace(Regex("""[^\p{L}\p{N}_\- ]"""), "").trim().take(28).ifBlank { "Libro" }
                 val safeLabel = exportLabel.replace(Regex("""[^\p{L}\p{N}_\- ]"""), "").trim().take(28).ifBlank { "Audio" }
@@ -121,20 +127,41 @@ class ChapterAudioExporter @Inject constructor(
                     }
                 }
 
-                val audioUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: throw IllegalStateException("No se pudo guardar el archivo .m4a en Music/WoodsReader")
+                var finalAudioUri: android.net.Uri? = null
+                var published = false
+                try {
+                    val audioUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: throw IllegalStateException("No se pudo guardar el archivo .m4a en Music/WoodsReader")
+                    finalAudioUri = audioUri
 
-                resolver.openOutputStream(audioUri)?.use { out ->
-                    tempM4aFile.inputStream().use { input ->
-                        input.copyTo(out, bufferSize = 32 * 1024)
+                    val output = resolver.openOutputStream(audioUri)
+                        ?: throw IllegalStateException("No se pudo abrir el archivo .m4a para escritura")
+                    output.use { out ->
+                        tempM4aFile.inputStream().use { input ->
+                            input.copyTo(out, bufferSize = 32 * 1024)
+                        }
+                    }
+                    coroutineContext.ensureActive()
+
+                    published = true
+                    _exportState.value = AudioExportState.Completed(fileName, fileSizeKb)
+                    fileName
+                } finally {
+                    if (!published) {
+                        finalAudioUri?.let { uri ->
+                            runCatching {
+                                if (resolver.delete(uri, null, null) == 0) {
+                                    Timber.w("No se pudo eliminar la entrada parcial de MediaStore: $uri")
+                                }
+                            }.onFailure { Timber.e(it, "Error al eliminar una exportación parcial de MediaStore") }
+                        }
                     }
                 }
-
-                _exportState.value = AudioExportState.Completed(fileName, fileSizeKb)
-                fileName
             } finally {
                 woodsKeepAliveManager.releaseKeepAliveWakeLock()
-                if (tempM4aFile.exists()) tempM4aFile.delete()
+                if (tempM4aFile.exists() && !tempM4aFile.delete()) {
+                    throw java.io.IOException("No se pudo eliminar el archivo temporal de exportación")
+                }
             }
         }.onFailure { err ->
             if (err is CancellationException) {
@@ -158,9 +185,8 @@ class ChapterAudioExporter @Inject constructor(
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
 
-        val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-
+        var codec: MediaCodec? = null
+        var muxer: MediaMuxer? = null
         var trackIndex = -1
         var muxerStarted = false
         var totalSamplesSubmitted = 0L
@@ -168,27 +194,29 @@ class ChapterAudioExporter @Inject constructor(
         val bufferInfo = MediaCodec.BufferInfo()
 
         fun drainEncoder(endOfStream: Boolean) {
+            val localCodec = codec ?: return
             if (endOfStream) {
-                val inIdx = codec.dequeueInputBuffer(10_000L)
+                val inIdx = localCodec.dequeueInputBuffer(10_000L)
                 if (inIdx >= 0) {
                     val ptsUs = (totalSamplesSubmitted * 1_000_000L) / sampleRate
-                    codec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                    localCodec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
                 }
             }
 
             while (true) {
-                val outIdx = codec.dequeueOutputBuffer(bufferInfo, if (endOfStream) 10_000L else 0L)
+                val outIdx = localCodec.dequeueOutputBuffer(bufferInfo, if (endOfStream) 10_000L else 0L)
                 when {
                     outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> break
                     outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                         if (!muxerStarted) {
-                            trackIndex = muxer.addTrack(codec.outputFormat)
-                            muxer.start()
+                            val localMuxer = muxer ?: break
+                            trackIndex = localMuxer.addTrack(localCodec.outputFormat)
+                            localMuxer.start()
                             muxerStarted = true
                         }
                     }
                     outIdx >= 0 -> {
-                        val encodedData = codec.getOutputBuffer(outIdx)
+                        val encodedData = localCodec.getOutputBuffer(outIdx)
                         if (encodedData != null && (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && bufferInfo.size > 0 && muxerStarted) {
                             if (bufferInfo.presentationTimeUs < lastPresentationTimeUs) {
                                 bufferInfo.presentationTimeUs = lastPresentationTimeUs + 100L
@@ -196,21 +224,23 @@ class ChapterAudioExporter @Inject constructor(
                             lastPresentationTimeUs = bufferInfo.presentationTimeUs
                             encodedData.position(bufferInfo.offset)
                             encodedData.limit(bufferInfo.offset + bufferInfo.size)
-                            muxer.writeSampleData(trackIndex, encodedData, bufferInfo)
+                            muxer?.writeSampleData(trackIndex, encodedData, bufferInfo)
                         }
-                        codec.releaseOutputBuffer(outIdx, false)
+                        localCodec.releaseOutputBuffer(outIdx, false)
                         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break
                     }
                 }
             }
         }
 
-        fun feedSamples(samples: FloatArray) {
+        suspend fun feedSamples(samples: FloatArray) {
+            val localCodec = codec ?: return
             var offset = 0
             while (offset < samples.size) {
-                val inIdx = codec.dequeueInputBuffer(10_000L)
+                coroutineContext.ensureActive()
+                val inIdx = localCodec.dequeueInputBuffer(10_000L)
                 if (inIdx >= 0) {
-                    val inBuf = codec.getInputBuffer(inIdx) ?: continue
+                    val inBuf = localCodec.getInputBuffer(inIdx) ?: continue
                     inBuf.clear()
                     inBuf.order(ByteOrder.LITTLE_ENDIAN)
                     val maxShorts = minOf(samples.size - offset, inBuf.remaining() / 2)
@@ -220,7 +250,7 @@ class ChapterAudioExporter @Inject constructor(
                     }
                     val bytesWritten = maxShorts * 2
                     val ptsUs = (totalSamplesSubmitted * 1_000_000L) / sampleRate
-                    codec.queueInputBuffer(inIdx, 0, bytesWritten, ptsUs, 0)
+                    localCodec.queueInputBuffer(inIdx, 0, bytesWritten, ptsUs, 0)
                     totalSamplesSubmitted += maxShorts
                     offset += maxShorts
                 }
@@ -229,6 +259,8 @@ class ChapterAudioExporter @Inject constructor(
         }
 
         try {
+            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()
 
@@ -266,14 +298,17 @@ class ChapterAudioExporter @Inject constructor(
                 feedSamples(silenceBetweenChapters)
             }
 
+            if (!muxerStarted) {
+                throw IllegalStateException("No se generó audio para exportar")
+            }
             drainEncoder(endOfStream = true)
         } finally {
-            try { codec.stop() } catch (_: Exception) {}
-            try { codec.release() } catch (_: Exception) {}
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
             if (muxerStarted) {
-                try { muxer.stop() } catch (_: Exception) {}
+                runCatching { muxer?.stop() }
             }
-            try { muxer.release() } catch (_: Exception) {}
+            runCatching { muxer?.release() }
         }
     }
 }

@@ -482,7 +482,7 @@ private fun ActivityHeatmap(daysList: List<String>) {
                 modifier = Modifier.height(130.dp),
                 userScrollEnabled = false
             ) {
-                items(gridDays.size) { idx ->
+                items(gridDays.size, key = { idx -> gridDays[idx].toString() }) { idx ->
                     val date = gridDays[idx]
                     val dateStr = date.toString()
                     val hasActivity = daysList.contains(dateStr)

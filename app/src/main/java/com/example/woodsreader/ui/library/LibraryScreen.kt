@@ -255,7 +255,7 @@ fun LibraryScreen(
 
             // << CHANGE: MÃƒÂ³dulo D-5 Ã¢â‚¬â€ CuadrÃƒÂ­cula Shimmer reactiva al estado inicial de carga
             if (isInitialLoading) {
-                items(2) { 
+                items(2, key = { "shimmer_row_$it" }) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

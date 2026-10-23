@@ -266,7 +266,7 @@ fun SearchBottomSheet(
                             }
                             itemsIndexed(
                                 items = results,
-                                key = { index, _ -> index }
+                                key = { index, loc -> "${loc.href}_${loc.locations.progression}_$index" }
                             ) { _, locator ->
                                 SearchResultItem(locator = locator, onClick = { onResultClick(locator) })
                             }

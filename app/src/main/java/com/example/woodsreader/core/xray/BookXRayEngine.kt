@@ -1,5 +1,7 @@
 package com.example.woodsreader.core.xray
 
+import java.util.Locale
+
 data class XRayEntity(
     val name: String,
     val category: XRayCategory,
@@ -26,16 +28,59 @@ data class ChapterXRayReport(
 object BookXRayEngine {
 
     private val commonSentenceStarters = setOf(
-        "El", "La", "Los", "Las", "Un", "Una", "Unos", "Unas", "Pero", "Sin", "Con",
-        "Para", "Por", "Cuando", "Mientras", "Después", "Antes", "Aunque", "Como",
-        "Si", "No", "Sí", "Ya", "En", "De", "Del", "Al", "Desde", "Hasta", "Hacia",
-        "Sobre", "Entre", "Tras", "Durante", "Entonces", "Luego", "Además", "También",
-        "Incluso", "Acaso", "Quizás", "Tal", "Todo", "Toda", "Todos", "Todas", "Este",
-        "Esta", "Estos", "Estas", "Ese", "Esa", "Esos", "Esas", "Aquel", "Aquella",
-        "Mi", "Tu", "Su", "Nuestro", "Nuestra", "Qué", "Quién", "Cómo", "Dónde",
-        "Cuándo", "Por", "Capítulo", "Parte", "Volumen", "Libro", "The", "And", "But",
-        "When", "While", "After", "Before", "They", "There", "This", "That", "With",
-        "From", "Into", "Only", "Even", "Still", "However", "Although", "Because"
+        // Artículos, demostrativos y posesivos
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "este", "esta", "estos", "estas",
+        "ese", "esa", "esos", "esas", "aquel", "aquella", "aquellos", "aquellas",
+        "mi", "tu", "su", "mis", "tus", "sus", "nuestro", "nuestra", "nuestros", "nuestras",
+
+        // Preposiciones y conjunciones
+        "pero", "sin", "con", "para", "por", "cuando", "mientras", "después", "antes", "aunque",
+        "como", "si", "no", "sí", "ya", "en", "de", "del", "al", "desde", "hasta", "hacia",
+        "sobre", "entre", "tras", "durante", "entonces", "luego", "además", "también", "incluso",
+        "acaso", "quizás", "quizá", "tal", "todo", "toda", "todos", "todas", "porque", "pues",
+
+        // Pronombres y partículas interrogativas / exclamativas
+        "qué", "que", "quién", "quien", "quiénes", "quienes", "cómo", "dónde", "donde",
+        "cuándo", "cuál", "cuales", "cuáles", "cuánto", "cuánta", "cuántos", "cuántas",
+        "cuanto", "cuanta", "por qué",
+
+        // Modismos, interjecciones y fórmulas de diálogo inicial
+        "ah", "oh", "eh", "ay", "uy", "uff", "vaya", "oye", "oigan", "mira", "miren",
+        "escucha", "escuchen", "vamos", "basta", "alto", "cuidado", "espera", "esperen",
+        "hola", "adiós", "gracias", "perdón", "disculpa", "disculpe", "maldición", "diablos",
+        "demonios", "dios", "cielos", "hombre", "mujer", "bueno", "bien", "bienvenido", "bienvenida",
+        "claro", "seguro", "cierto", "ciertamente", "obviamente", "exacto", "exactamente",
+        "nunca", "jamás", "tampoco", "nada", "nadie", "alguien", "algo", "alguno", "alguna",
+        "algunos", "algunas", "ninguno", "ninguna", "otro", "otra", "otros", "otras", "mismo",
+        "misma", "mismos", "mismas", "demás", "mucho", "mucha", "muchos", "muchas", "poco",
+        "poca", "pocos", "pocas", "bastante", "bastantes", "demasiado", "demasiada", "demasiados",
+        "demasiadas", "menos", "más", "tan", "tanto", "tanta", "tantos", "tantas",
+
+        // Verbos de inicio de diálogo o relato
+        "dijo", "dice", "decía", "dijeron", "preguntó", "pregunta", "preguntaron", "respondió",
+        "responde", "respondieron", "gritó", "gritaron", "pensó", "pensaron", "susurró", "murmuró",
+        "exclamó", "sabes", "sabe", "saben", "sabía", "entiendo", "entiendes", "entiende",
+        "creo", "crees", "cree", "parece", "parecía", "puede", "puedo", "puedes", "pueden",
+        "podía", "podían", "podría", "podrían", "debo", "debes", "debe", "deben", "debía",
+        "tengo", "tienes", "tiene", "tienen", "tenía", "tenían", "hay", "había", "hubo", "habrá",
+        "era", "eran", "es", "son", "fue", "fueron", "será", "sería", "estaba", "estaban",
+        "está", "están", "estuvo", "estuvieron", "veo", "ves", "ve", "ven", "vio", "vieron",
+        "hace", "hacía", "hizo", "hicieron", "va", "van", "iba", "iban", "siento", "siente", "sintió",
+        "capítulo", "parte", "volumen", "libro", "sección",
+
+        // English sentence / dialogue starters
+        "the", "a", "an", "and", "but", "when", "while", "after", "before", "they", "there",
+        "this", "that", "these", "those", "with", "from", "into", "only", "even", "still",
+        "however", "although", "because", "what", "who", "where", "why", "how", "yes", "no",
+        "not", "never", "yeah", "nope", "sure", "right", "alright", "okay", "please", "thanks",
+        "thank", "hello", "hey", "hi", "goodbye", "bye", "look", "listen", "wait", "come", "go",
+        "stop", "see", "tell", "say", "said", "think", "thought", "know", "knew", "maybe",
+        "perhaps", "well", "so", "now", "then", "suddenly", "finally", "indeed", "actually",
+        "of", "in", "on", "at", "to", "for", "by", "is", "are", "was", "were", "it", "he", "she", "we", "you", "i"
+    )
+
+    private val strictExclusions = setOf(
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "al", "en", "con", "por", "para", "sin"
     )
 
     private val characterContextVerbs = setOf(
@@ -60,10 +105,33 @@ object BookXRayEngine {
     )
 
     private val capitalizedPhraseRegex = Regex(
-        """(?<![.!?:—«"“\n]\s)\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}){0,2})\b"""
+        """\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{1,}(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{1,}){0,2})\b"""
     )
 
     private val bracketedSkillRegex = Regex("""(?:«([^»]{3,35})»|\[([^\]]{3,45})\]|【([^】]{3,45})】)""")
+
+    private fun cleanToken(raw: String): String {
+        return raw
+            .trimStart('—', '–', '-', '―', '¿', '¡', '«', '“', '”', '"', '\'', '‘', '’', '(', '[', '{', '*')
+            .trimEnd('?', '!', '.', ',', ';', ':', '…', '«', '»', '“', '”', '"', '\'', '‘', '’', ')', ']', '}', '*')
+            .trim()
+    }
+
+    private fun isAtSentenceOrDialogueStart(text: CharSequence, matchStart: Int): Boolean {
+        var i = matchStart - 1
+        while (i >= 0 && text[i].isWhitespace()) {
+            i--
+        }
+        if (i < 0) return true
+        while (i >= 0 && (text[i] in "¿¡«“\"'‘—–-―([{")) {
+            i--
+            while (i >= 0 && text[i].isWhitespace()) {
+                i--
+            }
+        }
+        if (i < 0) return true
+        return text[i] in ".!?:;\n\r"
+    }
 
     fun analyzeChapter(
         chapterTitle: String,
@@ -75,7 +143,7 @@ object BookXRayEngine {
         val estimatedMinutes = (totalWords / 210).coerceAtLeast(1)
 
         val dialogueLines = cleanParagraphs.count {
-            it.startsWith("—") || it.startsWith("-") || it.contains("«") || it.contains("\"") || it.contains("“")
+            it.startsWith("—") || it.startsWith("-") || it.startsWith("–") || it.contains("«") || it.contains("\"") || it.contains("“")
         }
         val dialoguePct = if (cleanParagraphs.isNotEmpty()) {
             ((dialogueLines * 100) / cleanParagraphs.size).coerceIn(0, 100)
@@ -93,11 +161,12 @@ object BookXRayEngine {
         val entityCounts = mutableMapOf<String, Int>()
         val entitySnippets = mutableMapOf<String, MutableList<String>>()
         val entityCategoryVotes = mutableMapOf<String, MutableMap<XRayCategory, Int>>()
+        val entityMidSentenceCounts = mutableMapOf<String, Int>()
 
         for (para in cleanParagraphs) {
             // Términos entre corchetes o comillas angulares cortas (Habilidades / Sistema)
             for (m in bracketedSkillRegex.findAll(para)) {
-                val term = (m.groupValues[1].ifEmpty { m.groupValues[2] }.ifEmpty { m.groupValues[3] }).trim()
+                val term = cleanToken(m.groupValues[1].ifEmpty { m.groupValues[2] }.ifEmpty { m.groupValues[3] })
                 if (term.length in 3..38 && term.split(" ").size <= 5) {
                     entityCounts[term] = (entityCounts[term] ?: 0) + 1
                     val snippets = entitySnippets.getOrPut(term) { mutableListOf() }
@@ -111,9 +180,23 @@ object BookXRayEngine {
 
             // Nombres propios y frases capitalizadas
             for (m in capitalizedPhraseRegex.findAll(para)) {
-                val candidate = m.groupValues[1].trim()
-                val firstWord = candidate.substringBefore(" ")
-                if (firstWord in commonSentenceStarters || candidate.length < 3) continue
+                val rawCandidate = m.groupValues[1]
+                val candidate = cleanToken(rawCandidate)
+                if (candidate.length < 3) continue
+
+                val firstWord = cleanToken(candidate.substringBefore(" "))
+                val firstWordLower = firstWord.lowercase(Locale.ROOT)
+                val candidateLower = candidate.lowercase(Locale.ROOT)
+                val atStart = isAtSentenceOrDialogueStart(para, m.range.first)
+
+                if (atStart) {
+                    if (commonSentenceStarters.contains(firstWordLower) || commonSentenceStarters.contains(candidateLower)) {
+                        continue
+                    }
+                } else {
+                    if (firstWordLower in strictExclusions) continue
+                    entityMidSentenceCounts[candidate] = (entityMidSentenceCounts[candidate] ?: 0) + 1
+                }
 
                 entityCounts[candidate] = (entityCounts[candidate] ?: 0) + 1
                 val snippets = entitySnippets.getOrPut(candidate) { mutableListOf() }
@@ -130,7 +213,7 @@ object BookXRayEngine {
                     words.any { it in skillOrItemKeywords } ->
                         votes[XRayCategory.SKILL_ITEM] = (votes[XRayCategory.SKILL_ITEM] ?: 0) + 3
                     else -> {
-                        val lowerPara = para.lowercase()
+                        val lowerPara = para.lowercase(Locale.ROOT)
                         val hasCharVerb = characterContextVerbs.any { lowerPara.contains(it) }
                         votes[XRayCategory.CHARACTER] = (votes[XRayCategory.CHARACTER] ?: 0) + if (hasCharVerb) 2 else 1
                     }
@@ -139,7 +222,13 @@ object BookXRayEngine {
         }
 
         val allEntities = entityCounts.entries
-            .filter { it.value >= 2 || entityCategoryVotes[it.key]?.containsKey(XRayCategory.SKILL_ITEM) == true }
+            .filter { (name, count) ->
+                val isSkill = entityCategoryVotes[name]?.containsKey(XRayCategory.SKILL_ITEM) == true
+                val isLocation = entityCategoryVotes[name]?.containsKey(XRayCategory.LOCATION_FACTION) == true
+                val midCount = entityMidSentenceCounts[name] ?: 0
+                // Exigir al menos 2 menciones globales o haber aparecido a mitad de frase para personajes
+                isSkill || isLocation || (count >= 2 && midCount >= 1) || count >= 4
+            }
             .sortedByDescending { it.value }
             .map { (name, count) ->
                 val bestCat = entityCategoryVotes[name]?.maxByOrNull { it.value }?.key ?: XRayCategory.CHARACTER

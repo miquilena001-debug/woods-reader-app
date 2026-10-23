@@ -199,13 +199,7 @@ fun ReaderScreen(
     val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
     val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED || ttsState == TtsState.LOADING
     val isLoadingTtsModel by viewModel.isLoadingTtsModel.collectAsStateWithLifecycle()
-    val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
-    val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
-    val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
-    val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
     val showSherpaDownloadDialog by viewModel.showSherpaDownloadDialog.collectAsStateWithLifecycle()
-    val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
-    val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
     
     val interactionSource = remember { MutableInteractionSource() }
     val isUserInteracting by interactionSource.collectIsPressedAsState()
@@ -215,18 +209,15 @@ fun ReaderScreen(
     val isAutoScrollManuallyPaused by viewModel.isAutoScrollManuallyPaused.collectAsStateWithLifecycle()
     var isFingerDown by remember { mutableStateOf(false) }
     var lastTouchUpTime by remember { mutableLongStateOf(0L) }
+    val isTouchActiveState = rememberUpdatedState(
+        isFingerDown || isUserInteracting || (System.currentTimeMillis() - lastTouchUpTime) < 1800L
+    )
     var endOfChapterTime by remember { mutableStateOf<Long?>(null) }
     var isAdvancingChapter by remember { mutableStateOf(false) }
     
     val currentTtsLocator by viewModel.currentTtsLocator.collectAsStateWithLifecycle()
     val currentTtsSentence by viewModel.currentTtsSentence.collectAsStateWithLifecycle(initialValue = "")
-    val globalProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
-
-
-    val availableVoices by viewModel.availableVoices.collectAsStateWithLifecycle()
     val ttsRules by viewModel.ttsRules.collectAsStateWithLifecycle()
-    val bookTimeRemaining by viewModel.bookTimeRemaining.collectAsStateWithLifecycle()
-    val chapterTimeRemaining by viewModel.chapterTimeRemaining.collectAsStateWithLifecycle()
     val chapterInfoForTts by viewModel.chapterInfo.collectAsStateWithLifecycle()
     var showTtsRulesSheet by remember { mutableStateOf(false) }
     
@@ -275,8 +266,8 @@ fun ReaderScreen(
     }
 
     androidx.activity.compose.BackHandler {
-        viewModel.stopTts()
         viewModel.saveCurrentProgressBeforeExit()
+        viewModel.stopTts()
         onNavigateUp()
     }
 
@@ -542,20 +533,6 @@ fun ReaderScreen(
             nav.safePublicationView?.let { pubView ->
                 applyToAllWebViews(pubView) { wv ->
                     wv.applyCustomFontFamily(userPreferences.fontFamily)
-                    wv.setOnTouchListener { _, event ->
-                        when (event.actionMasked) {
-                            android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
-                                if (!isFingerDown) isFingerDown = true
-                            }
-                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                                if (isFingerDown) {
-                                    isFingerDown = false
-                                    lastTouchUpTime = System.currentTimeMillis()
-                                }
-                            }
-                        }
-                        false
-                    }
                 }
             }
         } else if (nav is PdfNavigatorFragment<*, *>) {
@@ -591,7 +568,7 @@ fun ReaderScreen(
     val currentTtsPage by viewModel.currentTtsPage.collectAsStateWithLifecycle()
 
     // Sincronización TTS para EPUB: resaltado elegante cambiando el color de letra (idéntico a PDF Reflow) y seguimiento visual
-    LaunchedEffect(ttsState, navigatorState.value, isUserInteracting, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
+    LaunchedEffect(ttsState, navigatorState.value, isUserInteracting, isFingerDown, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
         val nav = navigatorState.value ?: return@LaunchedEffect
         val decorableNav = nav as? DecorableNavigator
         
@@ -617,8 +594,10 @@ fun ReaderScreen(
                 val isPaginated = false // En modo unificado el layout base es vertical continuo para scroll libre y fluido
 
                 // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
-                val isLockActive = (System.currentTimeMillis() - lastInteractionTime) < 3000L
-                val autoScrollEnabled = !isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll
+                val now = System.currentTimeMillis()
+                val isTouchActive = isFingerDown || (now - lastTouchUpTime) < 1800L
+                val isLockActive = (now - lastInteractionTime) < 3000L
+                val autoScrollEnabled = !isTouchActive && !isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll
 
                 if (nav is VisualNavigator) {
                     val currentScreenLoc = nav.currentLocator.value
@@ -638,13 +617,15 @@ fun ReaderScreen(
                             isPaginated = isPaginated,
                             autoScroll = autoScrollEnabled,
                             onPageAction = { action ->
-                                val now = System.currentTimeMillis()
-                                if (now - lastPageTurnTime > 350L) {
-                                    lastPageTurnTime = now
-                                    when (action) {
-                                        "NEXT" -> nav.goForwardCompat(animated = true)
-                                        "PREV" -> nav.goBackwardCompat(animated = true)
-                                        "JUMP" -> nav.go(locator, animated = false)
+                                if (!isTouchActiveState.value) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPageTurnTime > 350L) {
+                                        lastPageTurnTime = now
+                                        when (action) {
+                                            "NEXT" -> nav.goForwardCompat(animated = true)
+                                            "PREV" -> nav.goBackwardCompat(animated = true)
+                                            "JUMP" -> nav.go(locator, animated = false)
+                                        }
                                     }
                                 }
                             }
@@ -659,13 +640,15 @@ fun ReaderScreen(
                             isPaginated = isPaginated,
                             autoScroll = autoScrollEnabled,
                             onPageAction = { action ->
-                                val now = System.currentTimeMillis()
-                                if (now - lastPageTurnTime > 350L) {
-                                    lastPageTurnTime = now
-                                    when (action) {
-                                        "NEXT" -> nav.goForwardCompat(animated = true)
-                                        "PREV" -> nav.goBackwardCompat(animated = true)
-                                        "JUMP" -> nav.go(locator, animated = false)
+                                if (!isTouchActiveState.value) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPageTurnTime > 350L) {
+                                        lastPageTurnTime = now
+                                        when (action) {
+                                            "NEXT" -> nav.goForwardCompat(animated = true)
+                                            "PREV" -> nav.goBackwardCompat(animated = true)
+                                            "JUMP" -> nav.go(locator, animated = false)
+                                        }
                                     }
                                 }
                             }
@@ -721,7 +704,7 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, isFingerDown, lastTouchUpTime, navigatorState.value) {
+    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, isFingerDown, lastTouchUpTime, navigatorState.value, ttsState) {
         if (!isAutoScrollActive) return@LaunchedEffect
 
         val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
@@ -733,7 +716,7 @@ fun ReaderScreen(
             val now = System.currentTimeMillis()
             val isTouchPaused = isFingerDown || (now - lastTouchUpTime < 1200L)
 
-            if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter) {
+            if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter || ttsState == TtsState.PLAYING) {
                 continue
             }
 
@@ -962,6 +945,21 @@ fun ReaderScreen(
             },
             onClearSelection = {
                 if (isSelectionModeActiveState.value) clearActiveSelection()
+            },
+            onRawTouch = { event ->
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                        if (!isFingerDown) isFingerDown = true
+                        lastInteractionTime = System.currentTimeMillis()
+                    }
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        if (isFingerDown) {
+                            isFingerDown = false
+                            lastTouchUpTime = System.currentTimeMillis()
+                        }
+                        lastInteractionTime = System.currentTimeMillis()
+                    }
+                }
             }
         )
         detector.attach()
@@ -1181,8 +1179,8 @@ fun ReaderScreen(
                     isReflowMode = isReflowMode,
                     onToggleReflow = { viewModel.toggleReflowMode() },
                     onBack = {
-                        viewModel.stopTts()
                         viewModel.saveCurrentProgressBeforeExit()
+                        viewModel.stopTts()
                         onNavigateUp()
                     },
                     onHighlight = {
@@ -1311,6 +1309,8 @@ fun ReaderScreen(
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter).zIndex(15f)
         ) {
+            val bookTimeRemaining by viewModel.bookTimeRemaining.collectAsStateWithLifecycle()
+            val chapterTimeRemaining by viewModel.chapterTimeRemaining.collectAsStateWithLifecycle()
             ReaderBottomSlider(
                 navigator = navigator,
                 globalProgressFlow = viewModel.globalProgress,
@@ -1425,12 +1425,20 @@ fun ReaderScreen(
 
         if (showTtsMacroWindow) {
             val lastTtsLocator by viewModel.lastTtsLocator.collectAsStateWithLifecycle()
+            val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
+            val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+            val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
+            val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
+            val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
+            val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
+            val availableVoices by viewModel.availableVoices.collectAsStateWithLifecycle()
+            val macroGlobalProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
             ReaderTtsMacroWindow(
                 hazeState = hazeState,
                 coverPath = successState?.book?.coverCachePath,
                 title = successState?.book?.title ?: "",
                 author = successState?.book?.author ?: "",
-                progress = globalProgress,
+                progress = macroGlobalProgress,
                 ttsState = ttsState,
                 isLoadingTtsModel = isLoadingTtsModel,
                 currentSpeed = currentSpeed,
@@ -1558,7 +1566,7 @@ fun ReaderScreen(
                     }
 
                     if (finalLocator != null) {
-                        (navigator as? VisualNavigator)?.go(finalLocator, animated = true)
+                        viewModel.goToLocator(navigator, finalLocator)
                     }
 
                     if (isReflowMode && targetPage != null) {
@@ -1576,7 +1584,19 @@ fun ReaderScreen(
                 initialQuery = initialSearchQuery,
                 hazeState = hazeState,
                 onResultClick = { locator ->
-                    (navigator as? VisualNavigator)?.go(locator, animated = true)
+                    viewModel.goToLocator(navigator, locator)
+                    val targetSnippet = locator.text.highlight?.takeIf { it.isNotBlank() }
+                        ?: listOfNotNull(locator.text.before, locator.text.highlight, locator.text.after)
+                            .joinToString(" ").trim().takeIf { it.isNotBlank() }
+                    val progression = locator.locations.progression
+                    val nav = navigator
+                    if (nav is EpubNavigatorFragment) {
+                        scope.launch {
+                            delay(350L)
+                            val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
+                            activeWv?.highlightAndScrollToSearchHit(targetSnippet, progression)
+                        }
+                    }
                     showSearch = false
                     initialSearchQuery = ""
                 },
@@ -1687,12 +1707,13 @@ fun ReaderScreen(
         }
 
         if (isTtsScreenLocked && successState != null) {
+            val lockProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
             ReaderTtsLockOverlay(
                 modifier = Modifier.zIndex(100f),
                 bookTitle = successState.book.title,
                 bookAuthor = successState.book.author,
                 chapterName = chapterInfoForTts.title ?: "",
-                progress = globalProgress,
+                progress = lockProgress,
                 isTtsPlaying = ttsState == TtsState.PLAYING,
                 hazeState = hazeState,
                 onUnlock = { isTtsScreenLocked = false }

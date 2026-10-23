@@ -1,8 +1,10 @@
 package com.example.woodsreader.data.repository
 
 import androidx.paging.Pager
+import androidx.room.withTransaction
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
+import com.example.woodsreader.data.database.AppDatabase
 import com.example.woodsreader.data.database.BookDao
 import com.example.woodsreader.data.database.CollectionDao
 import com.example.woodsreader.data.database.CollectionEntity
@@ -40,6 +42,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class BookRepository @Inject constructor(
+    private val db: AppDatabase,
     private val bookDao: BookDao,
     private val highlightDao: HighlightDao,
     private val bookmarkDao: BookmarkDao,
@@ -174,6 +177,83 @@ class BookRepository @Inject constructor(
     suspend fun getBookByHash(hash: String)            = bookDao.getByHash(hash)
     suspend fun getBookByPath(path: String): BookEntity? = bookDao.getByPath(path)
     suspend fun existsByPath(path: String): Boolean = bookDao.existsByPath(path)
+
+    // ── Escrituras parciales por campo ────────────────────────────────────────
+    // Preferir estas sobre upsertBook(book.copy(...)): un snapshot atrasado no debe
+    // pisar progreso, locator ni tiempo de lectura modificados entretanto.
+    suspend fun updateReadingStatus(bookId: String, status: ReadingStatus) =
+        bookDao.updateReadingStatus(bookId, status)
+
+    suspend fun updateUserRating(bookId: String, rating: Int?) =
+        bookDao.updateUserRating(bookId, rating)
+
+    suspend fun updateUserNotes(bookId: String, notes: String) =
+        bookDao.updateUserNotes(bookId, notes)
+
+    suspend fun updateDescription(bookId: String, description: String) =
+        bookDao.updateDescription(bookId, description)
+
+    suspend fun updateBookCollection(bookId: String, collectionId: String?) =
+        bookDao.updateCollection(bookId, collectionId)
+
+    suspend fun updateEnrichedMetadata(
+        bookId: String,
+        title: String,
+        author: String,
+        description: String,
+        language: String,
+        coverCachePath: String?,
+        fileHash: String
+    ) = bookDao.updateEnrichedMetadata(bookId, title, author, description, language, coverCachePath, fileHash)
+
+    /**
+     * Fusión atómica de un libro duplicado en el canónico. Dentro de una sola transacción:
+     * relee ambas filas (no usa snapshots previos), calcula la fusión sobre los valores
+     * actuales, traslada subrayados, marcadores, sesiones y reglas TTS del duplicado, guarda
+     * el canónico y borra el duplicado. Sin la reasignación previa, el ON DELETE CASCADE de
+     * las FKs borraría los hijos del duplicado.
+     *
+     * Si el canónico ya no existe no se hace nada (el duplicado se conserva).
+     */
+    suspend fun mergeDuplicateBook(canonicalId: String, duplicateId: String, fallbackCoverPath: String?) {
+        if (canonicalId == duplicateId) return
+        db.withTransaction {
+            val canonical = bookDao.getById(canonicalId) ?: return@withTransaction
+            val duplicate = bookDao.getById(duplicateId)
+
+            if (duplicate != null) {
+                val duplicateIsAhead = duplicate.readingProgressPercent > canonical.readingProgressPercent
+                val mergedStatus = when {
+                    canonical.readingStatus == ReadingStatus.ABANDONED -> ReadingStatus.ABANDONED
+                    canonical.readingStatus == ReadingStatus.COMPLETED -> ReadingStatus.COMPLETED
+                    duplicateIsAhead -> duplicate.readingStatus
+                    else -> canonical.readingStatus
+                }
+                bookDao.upsert(
+                    canonical.copy(
+                        readingProgressPercent = maxOf(canonical.readingProgressPercent, duplicate.readingProgressPercent),
+                        readingStatus = mergedStatus,
+                        currentLocatorJson = if (duplicateIsAhead) duplicate.currentLocatorJson else canonical.currentLocatorJson,
+                        fallbackLocatorHref = if (duplicateIsAhead) duplicate.fallbackLocatorHref else canonical.fallbackLocatorHref,
+                        fallbackLocatorPosition = if (duplicateIsAhead) duplicate.fallbackLocatorPosition else canonical.fallbackLocatorPosition,
+                        totalReadingTimeMs = canonical.totalReadingTimeMs + duplicate.totalReadingTimeMs,
+                        lastOpenedAt = maxOf(canonical.lastOpenedAt ?: 0L, duplicate.lastOpenedAt ?: 0L).takeIf { it > 0L },
+                        userRating = canonical.userRating ?: duplicate.userRating,
+                        userNotes = canonical.userNotes.ifBlank { duplicate.userNotes },
+                        collectionId = canonical.collectionId ?: duplicate.collectionId,
+                        perBookSettingsJson = canonical.perBookSettingsJson ?: duplicate.perBookSettingsJson,
+                        coverCachePath = canonical.coverCachePath ?: fallbackCoverPath
+                    )
+                )
+            }
+
+            highlightDao.reassignBook(duplicateId, canonicalId)
+            bookmarkDao.reassignBook(duplicateId, canonicalId)
+            sessionDao.reassignBook(duplicateId, canonicalId)
+            ttsRuleDao.reassignBook(duplicateId, canonicalId)
+            bookDao.deleteById(duplicateId)
+        }
+    }
 
     // ── Incremental scan support ──────────────────────────────────────────────
     suspend fun getImportedAtByPath(path: String): Long? = bookDao.getImportedAtByPath(path)

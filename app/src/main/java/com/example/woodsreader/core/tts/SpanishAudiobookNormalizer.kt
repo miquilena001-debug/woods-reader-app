@@ -8,6 +8,8 @@ object SpanishAudiobookNormalizer {
     private val thousandCommaRegex = Regex("""\b(\d{1,3}),(\d{3})(?:,(\d{3}))?\b""")
     private val numberWordRegex = Regex("""\b\d{1,4}\b""")
     private val colonSpaceRegex = Regex(""":\s+""")
+    private val repeatedOpeningPunctuationRegex = Regex("""[¿¡]{2,}""")
+    private val repeatedQuestionExclamationRegex = Regex("""[?!]{2,}""")
     private val elongatedVowelsRegex = Regex("""([a\u00E1e\u00E9i\u00EDo\u00F3u\u00FAA\u00C1E\u00C9I\u00CDO\u00D3U\u00DA])\1{2,}""")
     private val elongatedConsonantsRegex = Regex("""([rlsfjmzRLSFFJMZ])\1{2,}""")
     private val laughJaRegex = Regex("""\b(?:ja){2,}[ja]*\b""", RegexOption.IGNORE_CASE)
@@ -145,8 +147,8 @@ object SpanishAudiobookNormalizer {
         }
 
         // Risas e interjecciones alargadas y compuestas
-        text = text.replace(Regex("""[¿¡]{2,}"""), "¿")
-            .replace(Regex("""[?!]{2,}"""), "?")
+        text = text.replace(repeatedOpeningPunctuationRegex, "¿")
+            .replace(repeatedQuestionExclamationRegex, "?")
         text = laughJaRegex.replace(text, "ja, ja, ja")
         text = laughJeRegex.replace(text, "je, je, je")
         text = laughJiRegex.replace(text, "ji, ji, ji")
@@ -162,12 +164,13 @@ object SpanishAudiobookNormalizer {
         return text.trim()
     }
 
+    private val ROMAN_MAP = mapOf('I' to 1, 'V' to 5, 'X' to 10, 'L' to 50, 'C' to 100, 'D' to 500, 'M' to 1000)
+
     private fun romanToInt(s: String): Int {
-        val map = mapOf('I' to 1, 'V' to 5, 'X' to 10, 'L' to 50, 'C' to 100, 'D' to 500, 'M' to 1000)
         var result = 0
         var prev = 0
         for (i in s.length - 1 downTo 0) {
-            val curr = map[s[i]] ?: return -1
+            val curr = ROMAN_MAP[s[i]] ?: return -1
             if (curr < prev) result -= curr else result += curr
             prev = curr
         }

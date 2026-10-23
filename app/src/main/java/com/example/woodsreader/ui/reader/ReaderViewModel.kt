@@ -264,6 +264,9 @@ class ReaderViewModel @Inject constructor(
         if (willBeActive) {
             _isAutoScrollManuallyPaused.value = false
             hideControls()
+            if (ttsState.value == TtsState.PLAYING) {
+                pauseTts()
+            }
         }
     }
 
@@ -280,6 +283,9 @@ class ReaderViewModel @Inject constructor(
         if (active) {
             _isAutoScrollManuallyPaused.value = false
             hideControls()
+            if (ttsState.value == TtsState.PLAYING) {
+                pauseTts()
+            }
         }
     }
 
@@ -588,6 +594,14 @@ class ReaderViewModel @Inject constructor(
                         }
                         else -> Unit
                     }
+                }
+            }
+        }
+        viewModelScope.launch {
+            ttsState.collect { state ->
+                if (state == TtsState.PLAYING) {
+                    _isAutoScrollActive.value = false
+                    _isAutoScrollManuallyPaused.value = false
                 }
             }
         }
@@ -1195,6 +1209,8 @@ class ReaderViewModel @Inject constructor(
 
     private fun onTtsLocatorChanged(locator: Locator) {
         if (_showEpubCoverPage.value) return
+        currentBookmarkLocator = locator
+        lastSavedLocatorJson = locator.toJSON().toString()
         updateChapterMetadata(locator)
         val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
         val totalProgression = locator.locations.totalProgression ?: 0.0
@@ -1499,8 +1515,18 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun goToLocator(nav: Navigator?, locator: Locator) {
-        (nav as? VisualNavigator)?.go(locator, animated = true)
-
+        val visualNav = (nav as? VisualNavigator) ?: (navigator as? VisualNavigator)
+        visualNav?.go(locator, animated = true)
+        if (isReflowMode.value) {
+            locator.locations.position?.let { page ->
+                jumpToReflowPage(page)
+            }
+        }
+        if (ttsState.value == TtsState.PLAYING) {
+            playTts(locator)
+        } else {
+            _lastTtsLocator.value = locator
+        }
         recordActivity()
     }
 
@@ -1627,11 +1653,20 @@ class ReaderViewModel @Inject constructor(
                     val targetPage = nextLink.second
                     if (isReflowMode.value) {
                         jumpToReflowPage(targetPage)
+                        if (ttsState.value == TtsState.PLAYING) {
+                            getLocatorForPdfPage(targetPage)?.let(::playTts)
+                        }
                     } else {
                         val readingOrderLink = pub.readingOrder.firstOrNull()
                         if (readingOrderLink != null) {
                             pub.locatorFromLink(readingOrderLink)?.let { base ->
-                                nav.go(base.copy(locations = Locator.Locations(position = targetPage)), animated = false)
+                                val targetLoc = base.copy(locations = Locator.Locations(position = targetPage))
+                                nav.go(targetLoc, animated = false)
+                                if (ttsState.value == TtsState.PLAYING) {
+                                    playTts(targetLoc)
+                                } else {
+                                    _lastTtsLocator.value = targetLoc
+                                }
                             }
                         }
                     }
@@ -1656,6 +1691,11 @@ class ReaderViewModel @Inject constructor(
             }
             if (nextLocator != null) {
                 nav.go(nextLocator, animated = false)
+                if (ttsState.value == TtsState.PLAYING) {
+                    playTts(nextLocator)
+                } else {
+                    _lastTtsLocator.value = nextLocator
+                }
             } else {
                 nav.go(nextLink, animated = false)
             }
@@ -1730,11 +1770,20 @@ class ReaderViewModel @Inject constructor(
                     val targetPage = prevLink.second
                     if (isReflowMode.value) {
                         jumpToReflowPage(targetPage)
+                        if (ttsState.value == TtsState.PLAYING) {
+                            getLocatorForPdfPage(targetPage)?.let(::playTts)
+                        }
                     } else {
                         val readingOrderLink = pub.readingOrder.firstOrNull()
                         if (readingOrderLink != null) {
                             pub.locatorFromLink(readingOrderLink)?.let { base ->
-                                nav.go(base.copy(locations = Locator.Locations(position = targetPage)), animated = false)
+                                val targetLoc = base.copy(locations = Locator.Locations(position = targetPage))
+                                nav.go(targetLoc, animated = false)
+                                if (ttsState.value == TtsState.PLAYING) {
+                                    playTts(targetLoc)
+                                } else {
+                                    _lastTtsLocator.value = targetLoc
+                                }
                             }
                         }
                     }
@@ -1759,6 +1808,11 @@ class ReaderViewModel @Inject constructor(
             }
             if (prevLocator != null) {
                 nav.go(prevLocator, animated = false)
+                if (ttsState.value == TtsState.PLAYING) {
+                    playTts(prevLocator)
+                } else {
+                    _lastTtsLocator.value = prevLocator
+                }
             } else {
                 nav.go(prevLink, animated = false)
             }
@@ -1866,12 +1920,6 @@ class ReaderViewModel @Inject constructor(
         val pub = publication ?: return
         if (isPdfBook || isReflowMode.value) {
             goToNextChapter(navigator)
-            if (ttsState.value == TtsState.PLAYING) {
-                viewModelScope.launch {
-                    delay(300)
-                    onPlay()
-                }
-            }
             return
         }
 
@@ -2059,9 +2107,13 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun playTts(locator: Locator) {
+        _isAutoScrollActive.value = false
+        _isAutoScrollManuallyPaused.value = false
         _lastTtsLocator.value = null
         switchSessionMode(ReadingMode.TTS)
         if (isReflowMode.value || isPdfBook) {
+            epubFormatManager.stopTts()
+            pdfReflowManager.stopReflowTts()
             viewModelScope.launch {
                 val targetPage = locator.locations.position ?: lastKnownReflowPage.coerceAtLeast(1)
                 var readable = pdfReflowManager.reflowState.value.items.filter {
@@ -2103,6 +2155,11 @@ class ReaderViewModel @Inject constructor(
                 )
             }
         } else {
+            if (pdfReflowManager.ttsState.value == TtsState.PLAYING ||
+                pdfReflowManager.ttsState.value == TtsState.PAUSED
+            ) {
+                pdfReflowManager.stopReflowTts()
+            }
             epubFormatManager.playTts(context, locator, navigator, viewModelScope, publication)
         }
     }
@@ -2141,6 +2198,8 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun resumeTts() {
+        _isAutoScrollActive.value = false
+        _isAutoScrollManuallyPaused.value = false
         val locator = (navigator as? VisualNavigator)?.currentLocator?.value ?: getFallbackLocator()
 
         if (isPdfBook && !isReflowMode.value && locator != null) {
@@ -2245,12 +2304,6 @@ class ReaderViewModel @Inject constructor(
     fun skipTtsChapterForward() {
         if (isReflowMode.value || isPdfBook) {
             goToNextChapter(navigator)
-            if (ttsState.value == TtsState.PLAYING) {
-                viewModelScope.launch {
-                    delay(400)
-                    onPlay()
-                }
-            }
         } else {
             epubFormatManager.skipTtsChapterForward(context, publication, navigator)
         }
@@ -2259,12 +2312,6 @@ class ReaderViewModel @Inject constructor(
     fun skipTtsChapterBackward() {
         if (isReflowMode.value || isPdfBook) {
             goToPreviousChapter(navigator)
-            if (ttsState.value == TtsState.PLAYING) {
-                viewModelScope.launch {
-                    delay(400)
-                    onPlay()
-                }
-            }
         } else {
             epubFormatManager.skipTtsChapterBackward(context, publication, navigator)
         }
@@ -2573,14 +2620,25 @@ class ReaderViewModel @Inject constructor(
      */
     fun flushReadingProgressImmediately() {
         val nav = navigator as? VisualNavigator
-        val currentLoc = nav?.currentLocator?.value
-        val chapterIdx = getCurrentChapterIndex()
-        val locJson = currentLoc?.toJSON()?.toString() ?: ""
+        val ttsLocator = _currentTtsLocator.value.takeIf {
+            ttsState.value == TtsState.PLAYING || ttsState.value == TtsState.PAUSED
+        }
+        val currentLoc = ttsLocator ?: nav?.currentLocator?.value ?: currentBookmarkLocator
+            ?: lastSavedLocatorJson?.let { saved ->
+                runCatching { Locator.fromJSON(org.json.JSONObject(saved)) }.getOrNull()
+            }
+        val chapterIdx = currentLoc?.let { locator ->
+            val order = publication?.readingOrder.orEmpty()
+            findMatchingResourceIndex(locator.href.toString(), order).takeIf { it >= 0 }
+        } ?: getCurrentChapterIndex()
+        val locJson = currentLoc?.toJSON()?.toString() ?: lastSavedLocatorJson ?: ""
         val href = currentLoc?.href?.toString() ?: ""
-        val prog = currentLoc?.locations?.totalProgression?.toFloat() ?: _globalProgress.value
+        val prog = currentLoc?.locations?.totalProgression?.toFloat()
+            ?: currentLoc?.locations?.progression?.toFloat()
+            ?: _globalProgress.value
 
-        // 1. Guardar de inmediato en SharedPreferences (sincrónico vía apply para supervivencia instantánea)
-        runCatching {
+        // 1. Guardar de inmediato en SharedPreferences (sincrónico vía commit para supervivencia instantánea)
+        val checkpointSaved = runCatching {
             val prefs = context.getSharedPreferences("woods_last_reading_checkpoint", Context.MODE_PRIVATE)
             prefs.edit()
                 .putString("last_book_id", bookId)
@@ -2588,41 +2646,47 @@ class ReaderViewModel @Inject constructor(
                 .putString("last_locator_json_${bookId}", locJson)
                 .putFloat("last_progress_${bookId}", prog)
                 .putLong("last_saved_timestamp_${bookId}", System.currentTimeMillis())
-                .apply()
+                .commit()
+        }.onFailure { Log.e(TAG, "No se pudo guardar el checkpoint de lectura", it) }.getOrDefault(false)
+        if (!checkpointSaved) {
+            Log.e(TAG, "SharedPreferences rechazó el checkpoint inmediato para el libro $bookId")
         }
 
         // 2. Guardar de inmediato en Room DB
         if (isReflowMode.value) {
-            val page = lastKnownReflowPage.takeIf { it > 0 }
+            val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
             val totalPages = pdfReflowManager.reflowState.value.totalPages
-            val progress = if (totalPages > 0) (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f) else _globalProgress.value
+            val progress = currentLoc?.locations?.totalProgression?.toFloat()
+                ?: currentLoc?.locations?.progression?.toFloat()
+                ?: if (totalPages > 0) (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f) else _globalProgress.value
 
             CoroutineScope(Dispatchers.IO).launch {
                 bookRepository.updateReadingProgressWithFallback(
                     bookId = bookId,
                     progress = progress,
-                    locatorJson = "",
-                    fallbackHref = "",
+                    locatorJson = currentLoc?.toJSON()?.toString() ?: "",
+                    fallbackHref = currentLoc?.href?.toString() ?: "",
                     fallbackPosition = page
                 )
             }
         } else if (isPdfBook) {
-            val navLoc = nav?.currentLocator?.value
-            val page = navLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
+            val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
             lastKnownReflowPage = page
             val totalPages = totalPositions.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
                 ?: publication?.readingOrder?.size?.takeIf { it > 0 }
                 ?: 1
-            val progress = (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
+            val progress = currentLoc?.locations?.totalProgression?.toFloat()
+                ?: currentLoc?.locations?.progression?.toFloat()
+                ?: (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
 
             CoroutineScope(Dispatchers.IO).launch {
                 bookRepository.updateReadingProgressWithFallback(
                     bookId = bookId,
                     progress = progress,
-                    locatorJson = navLoc?.toJSON()?.toString() ?: "",
-                    fallbackHref = navLoc?.href?.toString() ?: "",
+                    locatorJson = currentLoc?.toJSON()?.toString() ?: "",
+                    fallbackHref = currentLoc?.href?.toString() ?: "",
                     fallbackPosition = page
                 )
             }
@@ -2722,16 +2786,15 @@ class ReaderViewModel @Inject constructor(
         cancelInBookSearch()
         FastEpubSearchEngine.clearCache()
         ambientSoundscapePlayer.onReaderVisibilityChanged(false)
+        flushReadingProgressImmediately()
         stopTts()
         ambienceEngine.stop()
-        saveCurrentProgressBeforeExit()
         stopActiveSession()
         cancelSleepTimer()
 
         pdfReflowManager.onCleared()
         epubFormatManager.onCleared(context)
 
-        super.onCleared()
         ttsManager.onQueueCompletedNaturally = null
         ttsManager.stop()
         ttsManager.setCurrentBookId(null)
@@ -2748,6 +2811,7 @@ class ReaderViewModel @Inject constructor(
         prefetchJob?.cancel()
         prefetchJob = null
         chapterLruCache.evictAll()
+        super.onCleared()
     }
 
     fun generateXRayReport(currentParagraphIndex: Int? = null): ChapterXRayReport {

@@ -27,8 +27,24 @@ class PronunciationLexiconManager @Inject constructor(
     private val _builtInEnabled = MutableStateFlow(prefs.getBoolean("built_in_lexicon_enabled", true))
     val builtInEnabled: StateFlow<Boolean> = _builtInEnabled.asStateFlow()
 
-    private val _customRules = MutableStateFlow<List<PhoneticRule>>(loadCustomRules())
+    private val _customRules = MutableStateFlow<List<PhoneticRule>>(emptyList())
     val customRules: StateFlow<List<PhoneticRule>> = _customRules.asStateFlow()
+
+    @Volatile
+    private var cachedCompiledCustomRules: List<Pair<Regex, String>> = emptyList()
+
+    init {
+        val loaded = loadCustomRules()
+        _customRules.value = loaded
+        recompileCustomRules(loaded)
+    }
+
+    private fun recompileCustomRules(rules: List<PhoneticRule>) {
+        cachedCompiledCustomRules = rules.map { rule ->
+            val opts = if (rule.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+            Regex("""\b${Regex.escape(rule.originalWord)}\b""", opts) to rule.phoneticReplacement
+        }
+    }
 
     // Reglas preinstaladas para que el TTS pronuncie con naturalidad términos de Novelas Web / Cultivo / Fantasía
     private val builtInSpanishWebNovelRules = listOf(
@@ -81,12 +97,14 @@ class PronunciationLexiconManager @Inject constructor(
             isBuiltIn = false
         )
         _customRules.value = updated
+        recompileCustomRules(updated)
         saveCustomRules(updated)
     }
 
     fun removeCustomRule(id: String) {
         val updated = _customRules.value.filterNot { it.id == id }
         _customRules.value = updated
+        recompileCustomRules(updated)
         saveCustomRules(updated)
     }
 
@@ -94,6 +112,7 @@ class PronunciationLexiconManager @Inject constructor(
 
     fun setAllCustomRules(rules: List<PhoneticRule>) {
         _customRules.value = rules
+        recompileCustomRules(rules)
         saveCustomRules(rules)
     }
 
@@ -101,11 +120,10 @@ class PronunciationLexiconManager @Inject constructor(
         if (text.isBlank()) return text
         var result = text
 
-        // 1. Aplicar reglas personalizadas del usuario
-        for (rule in _customRules.value) {
-            val opts = if (rule.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
-            val pattern = Regex("""\b${Regex.escape(rule.originalWord)}\b""", opts)
-            result = pattern.replace(result, rule.phoneticReplacement)
+        // 1. Aplicar reglas personalizadas del usuario con Regex precompilados
+        val compiledRules = cachedCompiledCustomRules
+        for ((pattern, replacement) in compiledRules) {
+            result = pattern.replace(result, replacement)
         }
 
         // 2. Aplicar glosario fonético de novelas web en español si está activo

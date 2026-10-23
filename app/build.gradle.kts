@@ -34,9 +34,18 @@ android {
         versionCode = 11
         versionName = "1.0.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // arm64 para rendimiento, armeabi-v7a para compatibilidad total
+        // arm64 para rendimiento, armeabi-v7a para compatibilidad total (excluye x86/x86_64 de emuladores)
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = false // Cambiar a true si se desean APKs divididos independientes por arquitectura
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
         }
     }
 

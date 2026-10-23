@@ -62,6 +62,9 @@ class BackupManager @Inject constructor(
         prettyPrint = true
         ignoreUnknownKeys = true
         encodeDefaults = true
+        // Un valor de enum desconocido (respaldo de otra versión) cae al valor por defecto
+        // de la propiedad en lugar de abortar toda la restauración.
+        coerceInputValues = true
     }
 
     suspend fun createBackupJson(): String = withContext(Dispatchers.IO) {

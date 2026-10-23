@@ -77,6 +77,15 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
     }
 }
 
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_highlights_bookId_createdAt` ON `highlights` (`bookId`, `createdAt`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId_createdAt` ON `bookmarks` (`bookId`, `createdAt`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_reading_sessions_bookId_startAt` ON `reading_sessions` (`bookId`, `startAt`)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_collections_name` ON `collections` (`name`)")
+    }
+}
+
 val ALL_MIGRATIONS = arrayOf(
     MIGRATION_1_2,
     MIGRATION_2_3,
@@ -85,5 +94,6 @@ val ALL_MIGRATIONS = arrayOf(
     MIGRATION_5_6,
     MIGRATION_6_7,
     MIGRATION_7_8,
-    MIGRATION_8_9
+    MIGRATION_8_9,
+    MIGRATION_9_10
 )

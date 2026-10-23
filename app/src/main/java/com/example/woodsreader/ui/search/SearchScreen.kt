@@ -256,7 +256,7 @@ fun SearchScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                items(recentSearches) { term ->
+                                items(recentSearches, key = { it }) { term ->
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(12.dp))
@@ -553,7 +553,7 @@ fun SearchScreen(
                 }
 
                 if (count > 0) {
-                    items(count) { idx ->
+                    items(count = count, key = { idx -> books.peek(idx)?.id ?: "search_book_$idx" }) { idx ->
                         val book = books[idx]
                         if (book != null) {
                             SearchResultCard(
