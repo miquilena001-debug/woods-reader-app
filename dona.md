@@ -6,18 +6,18 @@
 
 ## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `bc5d134` (rama `master`).
+- **Commit hash de referencia:** `3214a11` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
-  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 185 casos de test en verde (0 fallos, 0 errores).
+  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 186 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
   4. **Descompresión Parcial del Lector:** Extracción inicial de 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator); `ReaderViewModel.kt` conserva 24 dependencias inyectadas directas (25 con Application) y orquesta TTS, teleprompter, sueño, ambientes, preferencias y navegación (C3 activo como deuda técnica).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
 
 - **Resumen de Auditoría de Hallazgos (Sección 14):**
   - ✅ **Verificado / Resuelto:** 10 hallazgos (C1, C2, C5, C9, C12, C13, A1, A12, M4, SEC-1).
-  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 3 hallazgos (C6, C7, M25).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 24 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M26, M27, M28, M29).
+  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 4 hallazgos (C6, C7, M25, M26).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 23 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M27, M28, M29).
   - ⚪ **No verificado:** 0.
 
 ---
@@ -1555,7 +1555,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `ParsedChapterData`, `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
 - **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer, SleepTimer, PdfBookViewSynchronizer, CoverExtractor, TtsPresetCatalog, EdgeNeuralTtsClient, QuoteVideoClipExporter
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.487 líneas)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.510 líneas)
 - **Hallazgos:**
   - **C3 [PENDIENTE]:** God Class con 24 dependencias inyectadas en constructor (25 con Application), frente a 22 (23 con Application) en `4de4bd7^`. Se extrajeron 3 dependencias (`assetRetriever`, `publicationOpener`, `chapterAudioExporter`) a 5 casos de uso/coordinadores, pero persisten dentro responsabilidades críticas: orquestación de TTS, teleprompter WPM y auto-scroll, temporizador de sueño (`SleepTimer`), ambientes/soundscapes (`ForestAmbienceEngine`, `AmbientSoundscapePlayer`), preferencias de usuario (`UserPreferencesRepository`) y navegación multidocumento (EPUB/PDF/Reflow/TOC).
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
@@ -1563,7 +1563,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) confirmados en comentarios de líneas 355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245.
   - **M3 [PENDIENTE]:** Locator CFI persistido como JSON plano propenso a desincronización si cambian esquemas de Readium.
   - **M25 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Unificada la autoridad del temporizador de sueño en `SleepTimerManager` en L304, L582 y L2149. Se eliminó la doble corrutina y el fallback forzado a `MIN_15`, sincronizando fin de capítulo y parada de ambientes sonoros.
-  - **M26 [PENDIENTE]:** `goToNextChapter` (L1324) y `goToPreviousChapter` (L1441) retornan prematuramente (`val nav = navigator as? VisualNavigator ?: return`) antes de evaluar la rama PDF en modo Reflow.
+  - **M26 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Desacoplada la navegación por capítulos en PDF y Reflow de `VisualNavigator` en `goToNextChapter` (L1349) y `goToPreviousChapter` (L1463) mediante funciones puras `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` en companion object (L167–195), permitiendo el salto por botones y el avance automático de TTS (`advanceTtsToNextChapter`).
   - **M27 [PENDIENTE]:** `ReaderViewState` (L2461) tiene 10 de 14 campos nunca actualizados, y `ReaderState` en `ReaderContract.kt:39` duplica sus únicos campos activos de PDF.
   - **M28 [PENDIENTE]:** Lógica de cálculo de tiempo restante y progreso de capítulo duplicada entre `onTtsLocatorChanged` (L1034–1061) y `saveProgress` (L1160–1193).
   - **M29 [PENDIENTE]:** `readingProgressManager` inyectado en el constructor (L141) sin ningún uso en todo el archivo.
@@ -2287,7 +2287,7 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 | **M23** | Baja | `SettingsScreen.kt:1171-1184` | Ficha técnica contiene cadenas de versión hardcodeadas ("v1.0.0-ALPHA", "Build 2026.10") | `SettingsScreen` → Ficha Técnica | 🔴 **Pendiente** | Inspeccionar L1175: valores estáticos en texto multilínea. | Sustituir cadenas fijas por interpolación de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`. |
 | **M24** | Media | `SettingsScreen.kt:940, 1356` | Exposición directa de instancias de dominio (`viewModel.woodsKeepAliveManager`, `viewModel.proLicenseManager`) a vistas Compose | `SettingsScreen` → Gestores de Dominio | 🔴 **Pendiente** | Inspeccionar L940 y L1356: la UI invoca métodos de los gestores directamente. | Delegar las acciones a través de métodos públicos del `SettingsViewModel`. |
 | **M25** | Media | `ReaderViewModel.kt:304, 582, 2149` / `SleepTimerManager.kt:37-43` | Dos temporizadores en paralelo con preset forzado `MIN_15` unificados en `SleepTimerManager` como autoridad única | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🟡 **Validar en tlf.** | Probar en teléfono TECNO-LH7n: temporizador de 20 min (cuenta regresiva real), fin de capítulo (-1, detiene TTS y ambiente) y cancelación (restaura velocidad). | Unificada la autoridad en `SleepTimerManager` con soporte de minutos arbitrarios y fin de capítulo (-1). En `ReaderViewModel` se eliminó la corrutina concurrente de `smartSleepTimerManager`, sincronizando parada de narración y ambientes sonoros. |
-| **M26** | Media | `ReaderViewModel.kt:1324, 1441` | `goToNextChapter` y `goToPreviousChapter` retornan tempranamente si `navigator` no es `VisualNavigator` antes de la rama PDF | `ReaderViewModel` → Navegación PDF Reflow | 🔴 **Pendiente** | En PDF modo Reflow, invocar `goToNextChapter` con navegador nulo: retorna en L1324 sin ejecutar `jumpToReflowPage(targetPage)`. | Mover la validación `isPdfBook` y `isReflowMode` antes de la aserción de `VisualNavigator`. |
+| **M26** | Media | `ReaderViewModel.kt:167-195, 1349-1430, 1463-1540` | `goToNextChapter` y `goToPreviousChapter` desacoplados de `VisualNavigator` en PDF y Reflow usando TOC | `ReaderViewModel` → Navegación PDF Reflow | 🟡 **Validar en tlf.** | Probar en teléfono TECNO-LH7n con un libro PDF: botones de siguiente/anterior capítulo en barra inferior (modo libro y reflow) y avance automático al culminar capítulo en TTS. | Desacoplada la validación de `VisualNavigator`: en Reflow o PDF se calcula la página destino con `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` y se navega vía `jumpToReflowPage` o fallback de `_lastTtsLocator` / `playTts`. |
 | **M27** | Media | `ReaderViewModel.kt:2461`, `ReaderContract.kt:39` | `ReaderViewState` contiene 10 de 14 campos obsoletos/nunca actualizados, y `ReaderState` duplica sus campos activos | `ReaderViewModel` ↔ `ReaderContract` ↔ `ReaderViewState` | 🔴 **Pendiente** | Inspeccionar `_viewState`: solo actualiza bloques de narración y PDF; el resto de campos nunca se mutan y la UI no observa `viewState`. | Eliminar campos muertos de `ReaderViewState` o fusionarlo con `ReaderState` en `ReaderContract.kt`. |
 | **M28** | Media | `ReaderViewModel.kt:1034-1061, 1160-1193` | Bloques duplicados de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` | `ReaderViewModel` ↔ `CalculateReadingStatsUseCase` | 🔴 **Pendiente** | Comparar L1034-1061 con L1160-1193: 28 líneas idénticas de cálculo WPM, tiempo de libro y progreso de capítulo. | Extraer a método privado reutilizable `updateReadingEstimatesAndMetadata(locator, activeWpm)`. |
 | **M29** | Baja | `ReaderViewModel.kt:141` | `readingProgressManager` inyectado en el constructor de `ReaderViewModel` sin ningún uso en todo el archivo | `ReaderViewModel` ↔ `ReadingProgressManager` | 🔴 **Pendiente** | Buscar `readingProgressManager` en `ReaderViewModel.kt`: solo aparece en L141 en la firma del constructor. | Eliminar la inyección de `ReadingProgressManager` del constructor de `ReaderViewModel`. |
@@ -2323,6 +2323,12 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
      - Configurar temporizador personalizado de 20 min y verificar que el contador descienda con precisión.
      - Activar modo "Fin del Cap." (-1) y verificar que la narración y los sonidos de ambiente se detengan al culminar el capítulo actual.
      - Cancelar el temporizador durante la rampa de frenado final y verificar que la velocidad del audio retorne a su valor original sin artefactos.
+8. **Navegación por Capítulos y Avance Automático de TTS en PDF / Reflow (M26)**:
+   - *Riesgo:* En libros PDF (tanto en modo estándar de dos páginas/libro como en modo Reflow vertical), el usuario puede pulsar los botones de salto de capítulo en la barra inferior o finalizar la narración del capítulo actual con avance automático activado (`advanceTtsToNextChapter`).
+   - *Verificación física:* En el teléfono TECNO-LH7n:
+     - Abrir un PDF con tabla de contenidos (TOC) estructurada en modo libro y en modo Reflow.
+     - Pulsar el botón de siguiente capítulo y anterior capítulo en el slider inferior: verificar que la página salte al inicio del capítulo correspondiente sin requerir `navigator` activo en Compose.
+     - Activar TTS cerca del final del capítulo y confirmar que al concluir el último bloque de texto, la app cargue y comience a sintetizar automáticamente el siguiente capítulo sin congelarse ni interrumpir la sesión de lectura.
 
 ---
 
@@ -2334,7 +2340,7 @@ Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
 |---------|-------------------|--------|-----------|
 | `ExampleUnitTest.kt` | Prueba básica | ✅ REVISADO | 1 test trivial (2+2=4), pasa |
 | `EntityHeuristicsTest.kt` | EntityHeuristics | ✅ REVISADO | Localizado en `app/src/test/.../util/` |
-| `ReaderViewModelTest.kt` | ReaderViewModel | ✅ REVISADO | Localizado en `app/src/test/.../ui/reader/` (192 líneas) |
+| `ReaderViewModelTest.kt` | ReaderViewModel | ✅ REVISADO | Localizado en `app/src/test/.../ui/reader/` (260 líneas: tests de navegación por TOC para PDF/Reflow en primera página, intermedia y última) |
 | `ForceLayoutTest.kt` | ForceLayout | ✅ REVISADO | Localizado en `app/src/test/.../ui/graph/` |
 | `BookScannerServiceExtremeTest.kt` | BookScannerService | ✅ REVISADO | Mock-based, testa dedup y batches |
 | `TextRankSummarizerTest.kt` | TextRankSummarizer | ✅ REVISADO | Localizado en `app/src/test/.../service/` |
