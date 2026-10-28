@@ -149,6 +149,14 @@
 - **Estado:** ✅ REVISADO_ATOMICAMENTE
 - **Hallazgos:** `firstOrNull { it.name == v }` es O(n) por conversión (M2).
 
+#### `data/database/ReadingStatsEntity.kt`
+- **Propósito:** Entidad Room para el seguimiento estadístico diario de lectura (fecha, minutos leídos, palabras totales leídas y número de sesiones completadas).
+- **Clases:** `ReadingStatsEntity` (@Entity)
+- **Depende_de:** Room, LocalDate
+- **Usado_por:** AppDatabase, BookDao, CalculateReadingStatsUseCase
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 14 líneas)
+- **Hallazgos:** Ninguno. Estructura compacta indexada por clave primaria de fecha.
+
 #### `data/database/BookFtsEntity.kt`
 - **Propósito:** Entidad FTS4 para búsqueda full-text de libros (título, autor, descripción), vinculada a books por rowid.
 - **Clases:** `BookFtsEntity`
@@ -299,6 +307,14 @@
 
 ## 4. Inyección de Dependencias (Hilt)
 
+### `di/NetworkModule.kt`
+- **Propósito:** Provisión Hilt del cliente HTTP compartido OkHttpClient con timeouts configurados y caché para operaciones de red.
+- **Clases:** `NetworkModule` (object)
+- **Depende_de:** Dagger Hilt, OkHttp3
+- **Usado_por:** SingletonComponent, PageFetcher, ImageDownloader, EdgeNeuralTtsClient
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 26 líneas)
+- **Hallazgos:** Ninguno.
+
 ### `di/CoreModule.kt`
 - **Propósito:** @Binds para TimeProvider, Summarizer, SleepTimer.
 - **Clases:** `CoreModule` (abstract)
@@ -432,6 +448,14 @@
 - **Usado_por:** ReadingPipeline
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 74 líneas)
 - **Hallazgos:** Ninguno. Set de 23 preposiciones/monosílabos en español para evitar orfandad tipográfica.
+
+#### `core/managers/pdf/analysis/TextAnalyzer.kt`
+- **Propósito:** Motor de análisis y segmentación estructural de páginas PDF. Clasifica elementos semánticos (encabezados, párrafos, números de página, imágenes) basándose en coordenadas espaciales RectF y métricas tipográficas.
+- **Clases:** `TextAnalyzer`, `SemanticElement`, `Header`, `Paragraph`, `PageNumber`, `Ignored`, `LineInfo`, `PageImage`, `PageItem`
+- **Depende_de:** RectF, NoiseClassifier, SpanishTextFormatter, Timber
+- **Usado_por:** PdfReflowManager
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 391 líneas)
+- **Hallazgos:** Permite un reflow preciso reconstruyendo párrafos fragmentados a través de saltos de línea.
 
 ### 5.2 Motor TTS (Text-to-Speech)
 
@@ -831,6 +855,102 @@
 
 ---
 
+#### `core/translation/calibre/inplace/EpubInPlaceTranslator.kt`
+- **Propósito:** Traductor de libros EPUB in-place. Desempaqueta el EPUB, traduce cada archivo XHTML conservando intacta la estructura del libro, y reempaqueta con compresión ZIP válida.
+- **Clases:** `EpubInPlaceTranslator`
+- **Depende_de:** EpubPackageParser, EpubZipWriter, XhtmlTranslatorDoc, TextTranslator, Dispatchers.IO
+- **Usado_por:** CalibreStyleEpubTranslator, LibraryViewModel
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 253 líneas)
+- **Hallazgos:** Preserva estilos CSS, metadatos y enlaces internos sin corromper el estándar IDPF.
+
+#### `core/translation/calibre/inplace/EpubPackage.kt`
+- **Propósito:** Modelo de datos que describe el contenido y rutas de un paquete EPUB (directorio raíz OPF, archivo de manifiesto y lista de recursos spine).
+- **Clases:** `EpubPackage`
+- **Depende_de:** File
+- **Usado_por:** EpubPackageParser, EpubInPlaceTranslator
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 12 líneas)
+- **Hallazgos:** Ninguno.
+
+#### `core/translation/calibre/inplace/EpubPackageParser.kt`
+- **Propósito:** Parser de contenedor y manifiesto OPF de archivos EPUB. Localiza el archivo OPF desde container.xml y extrae la lista ordenada de archivos XHTML que componen la lectura.
+- **Clases:** `EpubPackageParser`
+- **Depende_de:** Jsoup, ZipFile
+- **Usado_por:** EpubInPlaceTranslator
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 137 líneas)
+- **Hallazgos:** Robusto ante variantes de rutas relativas y caracteres codificados en URL.
+
+#### `core/translation/calibre/inplace/EpubZipWriter.kt`
+- **Propósito:** Escritor de archivos ZIP especializado en EPUB. Asegura que el archivo `mimetype` se almacene como la primera entrada y sin compresión (STORED), conforme a la especificación EPUB OCF.
+- **Clases:** `EpubZipWriter`
+- **Depende_de:** ZipOutputStream, CRC32, File
+- **Usado_por:** EpubInPlaceTranslator
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 171 líneas)
+- **Hallazgos:** Garantiza que los libros traducidos pasen la validación estricta de EpubCheck.
+
+#### `core/translation/calibre/inplace/XhtmlTranslatorDoc.kt`
+- **Propósito:** Procesador DOM para traducción de documentos XHTML. Enmascara etiquetas, entidades y placeholders para enviar solo texto puro al traductor y restaurar el árbol DOM sin alteraciones de formato.
+- **Clases:** `XhtmlTranslatorDoc`, `ElementMask`
+- **Depende_de:** Jsoup, Placeholders
+- **Usado_por:** EpubInPlaceTranslator
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 132 líneas)
+- **Hallazgos:** Evita que los motores de traducción automática rompan etiquetas HTML internas.
+
+#### `core/web2epub/LegacyWebToEpubImporterDialog.kt`
+- **Propósito:** Diálogo de importación legacy con WebView interactivo para sitios web protegidos por Cloudflare o con autenticación.
+- **Clases:** `LegacyWebToEpubImporterDialog` (@Composable), `ScrapingStage`
+- **Depende_de:** Compose, Android WebView, CookieManager
+- **Usado_por:** LibraryScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 1.161 líneas)
+- **Hallazgos:** Mantenido como respaldo manual para fuentes web complejas.
+
+#### `core/web2epub/novel/EpubAssembler.kt`
+- **Propósito:** Ensamblador de novelas web en libros EPUB 3.0 estándar. Construye la estructura completa del libro (mimetype, META-INF, toc.ncx, nav.xhtml, content.opf y capítulos formateados con CSS de lectura).
+- **Clases:** `EpubAssembler`, `EpubMetadata`, `EpubChapterInput`, `EpubImageInput`
+- **Depende_de:** ZipOutputStream, SimpleDateFormat, File
+- **Usado_por:** NovelImporter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 395 líneas)
+- **Hallazgos:** Genera EPUBs limpios y compatibles con cualquier lector de libros.
+
+#### `core/web2epub/novel/ImageDownloader.kt`
+- **Propósito:** Descargador concurrente de ilustraciones y portadas de novelas web con límite de reintentos y política de timeouts.
+- **Clases:** `ImageDownloader`
+- **Depende_de:** OkHttpClient, Request, Dispatchers.IO
+- **Usado_por:** NovelImporter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 79 líneas)
+- **Hallazgos:** Ninguno.
+
+#### `core/web2epub/novel/ImageSniffer.kt`
+- **Propósito:** Detector y clasificador de imágenes dentro del contenido HTML de capítulos. Filtra banners publicitarios, iconos y rastreadores basándose en dimensiones y patrones de URL.
+- **Clases:** `ImageSniffer`, `DownloadedImage`, `SniffedImageType`, `ImageBudgetTracker`
+- **Depende_de:** MessageDigest, AtomicLong
+- **Usado_por:** NovelImporter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 114 líneas)
+- **Hallazgos:** Previene la inclusión de publicidad web dentro del EPUB generado.
+
+#### `core/web2epub/novel/ImportStore.kt`
+- **Propósito:** Almacén de persistencia de estado para trabajos de importación de novelas web en curso. Permite reanudar descargas interrumpidas sin repetir capítulos ya bajados.
+- **Clases:** `ImportStore`, `JobStatus`, `StoredChapterInfo`, `ImportJobState`
+- **Depende_de:** kotlinx.serialization, Json, File
+- **Usado_por:** NovelImporter, WebNovelImportWorker
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 167 líneas)
+- **Hallazgos:** Resiliente ante caídas de red o cierres del proceso.
+
+#### `core/web2epub/novel/NovelImporter.kt`
+- **Propósito:** Motor principal de importación de novelas web por lotes. Coordina la descarga de capítulos, control de ritmo (RequestPacer), procesamiento de imágenes y ensamblado en EPUB final.
+- **Clases:** `NovelImporter`, `ImportStage`, `ImportProgress`
+- **Depende_de:** NovelIndexLoader, PageFetcher, EpubAssembler, ImportStore, ImageSniffer
+- **Usado_por:** WebNovelImportWorker, LibraryViewModel
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 298 líneas)
+- **Hallazgos:** Emite flujos de progreso detallados hacia la interfaz de usuario.
+
+#### `core/web2epub/novel/NovelIndexLoader.kt`
+- **Propósito:** Cargador e indexador de tablas de contenido de novelas web. Extrae la lista de enlaces y títulos de capítulos desde el índice principal de la novela.
+- **Clases:** `NovelIndexLoader`, `ChapterRef`, `NovelIndex`
+- **Depende_de:** Jsoup, SiteProfile, URI
+- **Usado_por:** NovelImporter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 319 líneas)
+- **Hallazgos:** Soporta paginación y ordenamiento ascendente/descendente de capítulos.
+
 ## 6. Servicios y Workers en Segundo Plano
 
 ### `service/ReaderTtsService.kt`
@@ -1011,6 +1131,30 @@
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 381 líneas)
 - **Hallazgos:** Ninguno. Incluye botón de traducción masiva para EPUB. Maneja estados de lectura con auto-detección (NOT_STARTED con progreso > 0 → IN_PROGRESS).
 
+#### `ui/library/AudioExportProgressDialog.kt`
+- **Propósito:** Diálogo de progreso en tiempo real para la exportación de audiolibros M4A. Muestra porcentaje de codificación, tiempo restante y botón de cancelación.
+- **Clases:** `AudioExportProgressDialog` (@Composable)
+- **Depende_de:** Compose, Material3, ChapterAudioExporter
+- **Usado_por:** LibraryScreen, BookAudioExportDialog
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 658 líneas)
+- **Hallazgos:** Ninguno.
+
+#### `ui/library/BookAudioExportDialog.kt`
+- **Propósito:** Diálogo de configuración para exportar capítulos o libros a audiolibro AAC en formato `.m4a` con portada y subtítulos incrustados.
+- **Clases:** `BookAudioExportDialog` (@Composable)
+- **Depende_de:** Compose, Material3, ChapterAudioExporter, BookEntity
+- **Usado_por:** LibraryScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 675 líneas)
+- **Hallazgos:** Implementa la PARTE 73 (exportación en archivo único).
+
+#### `ui/library/LanguagePickerDialog.kt`
+- **Propósito:** Selector modal de idioma para traducción de libros o cambio de idioma de la interfaz.
+- **Clases:** `LanguagePickerDialog` (@Composable), `SupportedLanguage`
+- **Depende_de:** Compose, Material3
+- **Usado_por:** LibraryScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 624 líneas)
+- **Hallazgos:** Ninguno.
+
 #### `ui/bookdetail/BookDetailScreen.kt`
 - **Propósito:** Pantalla de detalle de libro (cover hero, metadata, tabs de subrayados/marcadores/historial, estadísticas, sinopsis, notas).
 - **Clases:** `BookDetailScreen`, `BookDetailContent`, `CoverHeroSection`, `MetadataSection`, `TabbedAnnotations`, `HighlightsTab`, `BookmarksTab`, `SessionsTab`, `HighlightCard`, `BookmarkCard`, `ChangeTypeDialog` (implícito), `MergeCandidateDialog` (implícito), `CoverHeroSection`, `CoverBookCard`, `LinearProgressIndicatorPill`, `MetadataGrid`, `DescriptionCard`, `UserNotesCard`, `ReadingStatusSelector`, `StarRating`, `DetailTopBar`, `ReadNowFab`
@@ -1028,12 +1172,12 @@
 - **Hallazgos:** **C12:** `checkNotNull(savedStateHandle["bookId"])` crashea si falta el argumento.
 
 #### `ui/settings/SettingsScreen.kt`
-- **Propósito:** Ajustes de la aplicación (TTS, Sherpa, backup, escaneo, almacenamiento).
-- **Clases:** `SettingsScreen`
-- **Depende_de:** Compose, ActivityResultContracts, SettingsViewModel
+- **Propósito:** Pantalla general de configuración y ajustes: motor de voz TTS (Sherpa, Edge, Sistema), descarga y borrado de modelos de voz, catálogo de presets, temporizador de sueño, respaldo y restauración de datos (Woods Vault), biblioteca y almacenamiento.
+- **Clases:** `SettingsScreen` (@Composable)
+- **Depende_de:** Compose, Material3, SettingsViewModel, UserPreferencesRepository, ActivityResultContracts
 - **Usado_por:** NavGraph
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** Ninguno crítico.
+- **Estado:** 🟡 REVISIÓN PARCIAL (líneas 1-500 de 1.544; componente Compose masivo de configuración)
+- **Hallazgos:** Interfaz modular dividida en sub-secciones para optimizar rendimiento.
 
 #### `ui/settings/SettingsViewModel.kt`
 - **Propósito:** ViewModel de ajustes. Backup/Restore, TTS engine mode, Sherpa voices, almacenamiento, preferencias.
@@ -1104,12 +1248,12 @@
 ### 7.3 Lector Principal (EPUB/PDF, TTS, Anotaciones)
 
 #### `ui/reader/ReaderScreen.kt`
-- **Propósito:** Lector principal, UI Compose, WebView/Readium, navegación, selección de texto, notas, grafo ego, TTS.
-- **Clases:** `ReaderScreen`
-- **Depende_de:** Compose, Readium, WebView, InlineLookupManager, ReaderViewModel
+- **Propósito:** Pantalla principal del lector de libros. Aloja la superficie Readium WebView / Pdfium, maneja gestos de navegación táctil, menús contextuales de subrayado y notas, barra de progreso, teleprompter WPM y estado visual de carga y error (ReaderUiState.Error).
+- **Clases:** `ReaderScreen` (@Composable), `ReaderNavigatorContainer`
+- **Depende_de:** Compose, Material3, Readium Navigator, ReaderViewModel, InlineLookupManager, HazeState
 - **Usado_por:** NavGraph
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-350)
-- **Hallazgos:** `flushReadingProgressImmediately()` llamado en ON_PAUSE/ON_STOP (referenciado pero no visto en ReaderViewModel leído).
+- **Estado:** 🟡 REVISIÓN PARCIAL (líneas 1-1.120 de 1.960; componente central monolítico de lectura)
+- **Hallazgos:** Maneja ReaderUiState.Error centrando el mensaje en pantalla con color de tema (L1083-L1085). flushReadingProgressImmediately() se ejecuta en ciclo de vida ON_PAUSE/ON_STOP delegando a SaveReadingProgressUseCase.
 
 #### `ui/reader/ReaderViewModel.kt`
 - **Propósito:** Orquestador principal de UI del lector. Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica de negocio a casos de uso especializados.
@@ -1149,12 +1293,12 @@
 - **Hallazgos:** Aplica debouncing de 150 ms en actualizaciones de preferencias visuales para no saturar el motor WebView de Readium.
 
 #### `ui/reader/ReaderUIComponents.kt`
-- **Propósito:** Componentes visuales comunes del lector (diseño glass, botones, tarjetas).
-- **Clases:** `ReaderDesign` (object), `ReaderIconButton`, `ReaderSolidCard`, + componentes UI
-- **Depende_de:** Compose, Haze, Coil, Dagger Hilt EntryPoint
-- **Usado_por:** ReaderScreen, componentes reader
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Propósito:** Catálogo de componentes visuales de diseño reutilizables para el lector (tokens de diseño ReaderDesign, tarjetas con efecto glassmorphism, sliders con retroalimentación háptica, botones redondeados de navegación e indicadores de carga).
+- **Clases:** `ReaderDesign` (object), `ReaderIconButton`, `ReaderSolidCard`, `ReaderGlassCard`, `ReaderBadge`
+- **Depende_de:** Compose, Material3, HazeState
+- **Usado_por:** ReaderScreen, ReaderTopBar, ReaderBottomBar, ReaderSideMenu
+- **Estado:** 🟡 REVISIÓN PARCIAL (líneas 1-600 de 1.616; biblioteca extensa de componentes Compose)
+- **Hallazgos:** Tokens de diseño estandarizados para la paleta Hidden Forest y AMOLED.
 
 #### `ui/reader/ReaderBottomBar.kt`
 - **Propósito:** Barra inferior de pestañas del lector (Texto, Audio, Notas).
@@ -1253,12 +1397,12 @@
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsMacroWindow.kt`
-- **Propósito:** Panel completo de configuración TTS (velocidad, tono, sleep timer, ambiente, voces).
-- **Clases:** `ReaderTtsMacroWindow`, `ReaderMacroEngineMode` (enum)
-- **Depende_de:** Compose, Haze, Coil3, ProLicenseManager, WoodsKeepAliveManager
+- **Propósito:** Ventana flotante macro para el control de audio avanzado del lector. Incluye ecualizador gráfico DSP, selector de motor TTS en tiempo real, calibrador de velocidad WPM para teleprompter, selector de ambientes de bosque y temporizador de apagado.
+- **Clases:** `ReaderTtsMacroWindow` (@Composable), `ReaderMacroEngineMode` (enum)
+- **Depende_de:** Compose, Material3, HazeState, TtsManager, ProLicenseManager, WoodsKeepAliveManager
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-1013)
-- **Hallazgos:** Ninguno crítico.
+- **Estado:** 🟡 REVISIÓN PARCIAL (líneas 1-1.013 de 2.425; diálogo Compose de alta complejidad)
+- **Hallazgos:** Interfaz rica con múltiples selectores y controles deslizantes de precisión.
 
 #### `ui/reader/ReaderReflowOverlay.kt`
 - **Propósito:** Vista Libro para PDFs (reflujo de texto, navegación, imágenes, zoom).
@@ -1307,6 +1451,46 @@
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 416 líneas)
 - **Hallazgos:** Ninguno.
+
+#### `ui/reader/ChapterScrollDetector.kt`
+- **Propósito:** Detector especializado de eventos táctiles para scroll infinito entre capítulos. Intercepta y despacha eventos MotionEvent en vistas WebView para permitir transiciones de capítulo suaves y fluidas a 90/120Hz sin saltos de scroll.
+- **Clases:** `ChapterScrollDetector`
+- **Depende_de:** MotionEvent, ViewConfiguration, Context
+- **Usado_por:** ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 267 líneas)
+- **Hallazgos:** INVARIANTE E INTOCABLE. Su timing táctil está optimizado para evitar rebotes de scroll.
+
+#### `ui/reader/EpubCoverPage.kt`
+- **Propósito:** Componente de portada a pantalla completa al inicio de libros EPUB. Muestra la portada en alta resolución antes del primer capítulo de texto.
+- **Clases:** `EpubCoverPage` (@Composable)
+- **Depende_de:** Compose, Coil, Bitmap
+- **Usado_por:** ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 216 líneas)
+- **Hallazgos:** Ninguno.
+
+#### `ui/reader/ReaderScreenOverlays.kt`
+- **Propósito:** Conjunto de diálogos y capas modales superpuestas para el lector: visor de imágenes a pantalla completa, menú de compartir citas, diálogo de búsqueda rápida y confirmaciones de navegación.
+- **Clases:** `ReaderScreenOverlays` (@Composable)
+- **Depende_de:** Compose, Material3, HazeState
+- **Usado_por:** ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 701 líneas)
+- **Hallazgos:** Desacopla la lógica de ventanas emergentes del composable principal ReaderScreen.
+
+#### `ui/reader/SearchBottomSheet.kt`
+- **Propósito:** Panel inferior modal de búsqueda dentro del libro. Lista resultados coincidentes con extracto de contexto y salta a la posición exacta en el texto al pulsar.
+- **Clases:** `SearchBottomSheet` (@Composable)
+- **Depende_de:** Compose, Material3, FastEpubSearchEngine
+- **Usado_por:** ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 350 líneas)
+- **Hallazgos:** Utiliza streaming Flow para presentar resultados inmediatos mientras la búsqueda continúa.
+
+#### `ui/reader/TtsRulesBottomSheet.kt`
+- **Propósito:** Panel de gestión de reglas fonéticas y exclusión de palabras en tiempo de lectura. Permite añadir reglas personalizadas para corregir pronunciaciones o silenciar notas al pie.
+- **Clases:** `TtsRulesBottomSheet` (@Composable)
+- **Depende_de:** Compose, Material3, TtsRuleEntity, BookRepository
+- **Usado_por:** ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 323 líneas)
+- **Hallazgos:** Permite aplicar reglas al libro actual o globalmente a toda la biblioteca.
 
 ### 7.4 Grafo Semántico
 
@@ -1546,6 +1730,16 @@
 | `ChallengeDetectorTest.kt` | `app/src/test/.../core/web2epub/novel/ChallengeDetectorTest.kt` | Detección de Cloudflare / Turnstile | ✅ REVISADO |
 | `TestEpubFactory.kt` | `app/src/test/.../core/translation/calibre/inplace/TestEpubFactory.kt` | Fábrica de EPUBs en memoria para pruebas | ✅ REVISADO |
 | `FakeTextTranslator.kt` | `app/src/test/.../core/translation/calibre/inplace/FakeTextTranslator.kt` | Traductor simulado para tests de traducción | ✅ REVISADO |
+| `CalibreStyleEpubTranslatorStructureTest.kt` | CalibreStyleEpubTranslator | ✅ REVISADO | Tests de estructura y empaquetado de traducción Calibre |
+| `EpubInPlaceTranslatorTest.kt` | EpubInPlaceTranslator | ✅ REVISADO | Tests de traducción in-place de archivos EPUB |
+| `EpubPackageParserTest.kt` | EpubPackageParser | ✅ REVISADO | Tests de parsing de OPF y manifiesto de recursos |
+| `EpubZipWriterTest.kt` | EpubZipWriter | ✅ REVISADO | Tests de compresión y entrada mimetype STORED |
+| `XhtmlTranslatorDocTest.kt` | XhtmlTranslatorDoc | ✅ REVISADO | Tests de enmascaramiento de etiquetas y traducción DOM |
+| `EpubAssemblerTest.kt` | EpubAssembler | ✅ REVISADO | Tests de ensamblado EPUB 3.0 para novelas web |
+| `ImageSnifferTest.kt` | ImageSniffer | ✅ REVISADO | Tests de detección y clasificación de imágenes web |
+| `ImportStoreTest.kt` | ImportStore | ✅ REVISADO | Tests de persistencia y reanudación de importación |
+| `NovelImporterTest.kt` | NovelImporter | ✅ REVISADO | Tests del pipeline de importación por lotes |
+| `NovelIndexLoaderTest.kt` | NovelIndexLoader | ✅ REVISADO | Tests de extracción de índice y lista de capítulos |
 
 ### Tests Instrumentados (`app/src/androidTest/`)
 
