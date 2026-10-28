@@ -1,7 +1,6 @@
 package com.example.woodsreader.ui.reader
 import android.app.Application
 import com.example.woodsreader.core.pipeline.PdfBookViewSynchronizer
-import com.example.woodsreader.core.managers.SleepTimer
 import com.example.woodsreader.core.managers.ReadingSessionManager
 import com.example.woodsreader.core.managers.ReadingProgressManager
 import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
@@ -39,18 +38,14 @@ import com.example.woodsreader.data.repository.BookRepository
 
 import com.example.woodsreader.core.tts.TtsManager
 import com.example.woodsreader.core.tts.AmbiencePreset
-import com.example.woodsreader.core.tts.ForestAmbienceEngine
-import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
-import com.example.woodsreader.core.tts.TtsPresetCatalog
 import com.example.woodsreader.core.tts.TtsPresetPack
 import com.example.woodsreader.core.tts.SherpaVoiceOption
-import com.example.woodsreader.core.tts.PronunciationLexiconManager
 import com.example.woodsreader.core.tts.SupportedTtsLanguage
 import com.example.woodsreader.core.tts.SleepTimerPreset
-import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.tts.AmbientSoundscapePlayer
+import com.example.woodsreader.domain.reader.ReaderVoiceAndAmbienceController
 import com.example.woodsreader.core.search.FastInBookSearchHit
 import com.example.woodsreader.core.search.FastSearchProgress
 import com.example.woodsreader.core.managers.PdfReflowManager
@@ -141,17 +136,11 @@ class ReaderViewModel @Inject constructor(
 
     private val readingSessionManager: ReadingSessionManager,
     private val readingProgressManager: ReadingProgressManager,
-    private val sleepTimer: SleepTimer,
     private val pdfBookViewSynchronizer: PdfBookViewSynchronizer,
-    private val sherpaModelManager: SherpaModelManager,
-    private val ambienceEngine: ForestAmbienceEngine,
     private val coverExtractor: CoverExtractor,
-    private val ttsPresetCatalog: TtsPresetCatalog,
     private val readerIntelligenceAndExportCoordinator: ReaderIntelligenceAndExportCoordinator,
-    private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
-    private val pronunciationLexiconManager: PronunciationLexiconManager,
+    private val voiceAndAmbienceController: ReaderVoiceAndAmbienceController,
     val proLicenseManager: ProLicenseManager,
-    val ambientSoundscapePlayer: AmbientSoundscapePlayer,
     val woodsKeepAliveManager: WoodsKeepAliveManager,
     val quoteVideoClipExporter: QuoteVideoClipExporter,
     private val saveReadingProgressUseCase: SaveReadingProgressUseCase,
@@ -319,20 +308,21 @@ class ReaderViewModel @Inject constructor(
     }
 
     val currentTtsPage = pdfReflowManager.currentTtsPage
-    val sleepTimerRemaining = sleepTimer.sleepTimerRemaining
-    val activeAmbiencePreset = ambienceEngine.activePreset
-    val ambienceVolume = ambienceEngine.volume
+    val sleepTimerRemaining = voiceAndAmbienceController.sleepTimerRemaining
+    val activeAmbiencePreset = voiceAndAmbienceController.activeAmbiencePreset
+    val ambienceVolume = voiceAndAmbienceController.ambienceVolume
+    val ambientSoundscapePlayer: AmbientSoundscapePlayer get() = voiceAndAmbienceController.ambientSoundscapePlayer
 
     fun toggleNextAmbience() {
-        ambienceEngine.cycleNextPreset()
+        voiceAndAmbienceController.toggleNextAmbience()
     }
 
     fun setAmbiencePreset(preset: AmbiencePreset) {
-        ambienceEngine.setPreset(preset)
+        voiceAndAmbienceController.setAmbiencePreset(preset)
     }
 
     fun setAmbienceVolume(volume: Float) {
-        ambienceEngine.setVolume(volume)
+        voiceAndAmbienceController.setAmbienceVolume(volume)
     }
 
     fun installTtsPresetPack(pack: TtsPresetPack) = viewModelScope.launch {
@@ -340,7 +330,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     suspend fun installTtsPresetPackWithResult(pack: TtsPresetPack): Int {
-        val addedRules = ttsPresetCatalog.installPresetPack(pack)
+        val addedRules = voiceAndAmbienceController.installTtsPresetPack(pack)
         epubFormatManager.invalidateCache()
         return addedRules
     }
@@ -387,32 +377,17 @@ class ReaderViewModel @Inject constructor(
     val currentTtsRange = _currentTtsRange.asStateFlow()
 
     val audioExportState = readerIntelligenceAndExportCoordinator.audioExportState
-    val selectedSherpaVoice = sherpaModelManager.selectedVoice
+    val selectedSherpaVoice = voiceAndAmbienceController.selectedSherpaVoice
 
     fun isSherpaVoiceDownloaded(option: com.example.woodsreader.core.tts.SherpaVoiceOption): Boolean =
-        sherpaModelManager.isVoiceDownloaded(option)
+        voiceAndAmbienceController.isSherpaVoiceDownloaded(option)
 
     fun selectOrDownloadSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
-        viewModelScope.launch {
-            if (sherpaModelManager.isVoiceDownloaded(option)) {
-                ttsManager.switchSherpaVoice(option)
-            } else {
-                sherpaModelManager.selectVoiceOption(option)
-                val res = sherpaModelManager.downloadAndExtractModel()
-                if (res.isSuccess) {
-                    ttsManager.switchSherpaVoice(option)
-                }
-            }
-        }
+        voiceAndAmbienceController.selectOrDownloadSherpaVoice(viewModelScope, option)
     }
 
     fun deleteSherpaVoiceFromReader(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
-        viewModelScope.launch {
-            ttsManager.stop()
-            sherpaModelManager.selectVoiceOption(option)
-            sherpaModelManager.deleteModel()
-            ttsManager.resetSherpa()
-        }
+        voiceAndAmbienceController.deleteSherpaVoiceFromReader(viewModelScope, option)
     }
 
     fun resetAudioExportState() {
@@ -425,21 +400,19 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    val useEdgeNeuralTts = edgeNeuralTtsClient.isEnabled
-    val selectedEdgeVoice = edgeNeuralTtsClient.selectedVoice
+    val useEdgeNeuralTts = voiceAndAmbienceController.useEdgeNeuralTts
+    val selectedEdgeVoice = voiceAndAmbienceController.selectedEdgeVoice
 
     fun setUseEdgeNeuralTts(enabled: Boolean) {
-        edgeNeuralTtsClient.setEnabled(enabled)
+        voiceAndAmbienceController.setUseEdgeNeuralTts(enabled)
     }
 
     fun selectEdgeVoice(option: EdgeVoiceOption) {
-        edgeNeuralTtsClient.setVoice(option)
+        voiceAndAmbienceController.selectEdgeVoice(option)
     }
 
     fun switchSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
-        viewModelScope.launch {
-            ttsManager.switchSherpaVoice(option)
-        }
+        voiceAndAmbienceController.switchSherpaVoice(viewModelScope, option)
     }
 
     fun cancelAudioExport() {
@@ -510,7 +483,7 @@ class ReaderViewModel @Inject constructor(
     // Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
     init {
-        ambientSoundscapePlayer.onReaderVisibilityChanged(true)
+        voiceAndAmbienceController.onReaderVisibilityChanged(true)
         viewModelScope.launch {
             bookmarks.collect {
                 refreshCurrentBookmarkState()
@@ -599,10 +572,7 @@ class ReaderViewModel @Inject constructor(
         }
         viewModelScope.launch {
             ttsManager.smartSleepTimerManager.activePreset.collect { preset ->
-                if (preset == SleepTimerPreset.OFF && sleepTimer.sleepTimerRemaining.value == -1L) {
-                    sleepTimer.cancelSleepTimer { updateActiveTtsSpeedOnly(it) }
-                    ambienceEngine.stop()
-                }
+                voiceAndAmbienceController.handleSmartSleepTimerPreset(preset) { updateActiveTtsSpeedOnly(it) }
             }
         }
 
@@ -615,7 +585,7 @@ class ReaderViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            ambientSoundscapePlayer.onReaderVisibilityChanged(true)
+            voiceAndAmbienceController.onReaderVisibilityChanged(true)
             _uiState.value = ReaderUiState.Loading
             try {
                 stopTts()
@@ -858,36 +828,19 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun onTtsAutoScrollChange(enabled: Boolean) = viewModelScope.launch { userPreferencesRepository.updateTtsAutoScroll(enabled) }
-    val sherpaDownloadState = sherpaModelManager.downloadState
-    private val _showSherpaDownloadDialog = MutableStateFlow(false)
-    val showSherpaDownloadDialog = _showSherpaDownloadDialog.asStateFlow()
+    val sherpaDownloadState = voiceAndAmbienceController.sherpaDownloadState
+    val showSherpaDownloadDialog = voiceAndAmbienceController.showSherpaDownloadDialog
 
     fun dismissSherpaDownloadDialog() {
-        _showSherpaDownloadDialog.value = false
+        voiceAndAmbienceController.dismissSherpaDownloadDialog()
     }
 
     fun downloadSherpaModel() {
-        _showSherpaDownloadDialog.value = false
-        viewModelScope.launch {
-            val result = sherpaModelManager.downloadAndExtractModel()
-            if (result.isSuccess) {
-                userPreferencesRepository.updateUseSherpaTts(true)
-                ttsManager.initSherpaIfNeeded()
-            }
-        }
+        voiceAndAmbienceController.downloadSherpaModel(viewModelScope)
     }
 
     fun updateUseSherpaTts(enabled: Boolean) = viewModelScope.launch {
-        if (!enabled) {
-            userPreferencesRepository.updateUseSherpaTts(false)
-        } else {
-            if (sherpaModelManager.isModelReady()) {
-                userPreferencesRepository.updateUseSherpaTts(true)
-                ttsManager.initSherpaIfNeeded()
-            } else {
-                _showSherpaDownloadDialog.value = true
-            }
-        }
+        voiceAndAmbienceController.updateUseSherpaTts(viewModelScope, enabled)
     }
 
     fun updateTtsUiStyle(style: com.example.woodsreader.model.TtsUiStyle) = viewModelScope.launch { userPreferencesRepository.updateTtsUiStyle(style) }
@@ -1889,73 +1842,51 @@ class ReaderViewModel @Inject constructor(
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Sleep timer ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 
     fun startSleepTimer(minutes: Int) {
-        if (minutes == -1) {
-            ttsManager.smartSleepTimerManager.setSleepTimer(SleepTimerPreset.END_OF_CHAPTER)
-            sleepTimer.startSleepTimer(
-                minutes = -1,
-                currentSpeed = currentSpeed.value,
-                scope = viewModelScope,
-                onSpeedChange = { speed -> updateActiveTtsSpeedOnly(speed) },
-                onTimerExpired = {
-                    stopTts()
-                    ambienceEngine.stop()
-                }
-            )
-        } else if (minutes > 0) {
-            ttsManager.smartSleepTimerManager.setSleepTimer(SleepTimerPreset.OFF)
-            sleepTimer.startSleepTimer(
-                minutes = minutes,
-                currentSpeed = currentSpeed.value,
-                scope = viewModelScope,
-                onSpeedChange = { speed -> updateActiveTtsSpeedOnly(speed) },
-                onTimerExpired = {
-                    stopTts()
-                    ambienceEngine.stop()
-                }
-            )
-        } else {
-            cancelSleepTimer()
-        }
+        voiceAndAmbienceController.startSleepTimer(
+            minutes = minutes,
+            currentSpeed = currentSpeed.value,
+            scope = viewModelScope,
+            onSpeedChange = { speed -> updateActiveTtsSpeedOnly(speed) },
+            onTimerExpired = {
+                stopTts()
+                voiceAndAmbienceController.stopAmbience()
+            }
+        )
     }
 
     fun cancelSleepTimer() {
-        ttsManager.smartSleepTimerManager.setSleepTimer(SleepTimerPreset.OFF)
-        sleepTimer.cancelSleepTimer { speed -> updateActiveTtsSpeedOnly(speed) }
+        voiceAndAmbienceController.cancelSleepTimer { speed -> updateActiveTtsSpeedOnly(speed) }
     }
 
-    val selectedLanguageFilter = sherpaModelManager.selectedLanguageFilter
-    val autoDetectBookLanguage = sherpaModelManager.autoDetectBookLanguage
-    val downloadedModelIds = sherpaModelManager.downloadedModelIds
+    val selectedLanguageFilter = voiceAndAmbienceController.selectedLanguageFilter
+    val autoDetectBookLanguage = voiceAndAmbienceController.autoDetectBookLanguage
+    val downloadedModelIds = voiceAndAmbienceController.downloadedModelIds
 
     fun setSelectedLanguageFilter(language: SupportedTtsLanguage) {
-        sherpaModelManager.setSelectedLanguageFilter(language)
+        voiceAndAmbienceController.setSelectedLanguageFilter(language)
     }
 
     fun setAutoDetectBookLanguage(enabled: Boolean) {
-        sherpaModelManager.setAutoDetectBookLanguage(enabled)
+        voiceAndAmbienceController.setAutoDetectBookLanguage(enabled)
     }
 
     fun deleteDownloadedModel(modelId: String) {
-        viewModelScope.launch {
-            ttsManager.stop()
-            sherpaModelManager.deleteDownloadedModel(modelId)
-            ttsManager.resetSherpa()
-        }
+        voiceAndAmbienceController.deleteDownloadedModel(viewModelScope, modelId)
     }
 
-    val builtInLexiconEnabled = pronunciationLexiconManager.builtInEnabled
-    val customPhoneticRules = pronunciationLexiconManager.customRules
+    val builtInLexiconEnabled = voiceAndAmbienceController.builtInLexiconEnabled
+    val customPhoneticRules = voiceAndAmbienceController.customPhoneticRules
 
     fun setBuiltInLexiconEnabled(enabled: Boolean) {
-        pronunciationLexiconManager.setBuiltInEnabled(enabled)
+        voiceAndAmbienceController.setBuiltInLexiconEnabled(enabled)
     }
 
     fun addCustomPhoneticRule(original: String, phonetic: String, caseSensitive: Boolean = false) {
-        pronunciationLexiconManager.addCustomRule(original, phonetic, caseSensitive)
+        voiceAndAmbienceController.addCustomPhoneticRule(original, phonetic, caseSensitive)
     }
 
     fun removeCustomPhoneticRule(id: String) {
-        pronunciationLexiconManager.removeCustomRule(id)
+        voiceAndAmbienceController.removeCustomPhoneticRule(id)
     }
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Optimized sleep timer with minimal wake-ups ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 
@@ -2151,12 +2082,10 @@ class ReaderViewModel @Inject constructor(
 
     override fun onCleared() {
         readerIntelligenceAndExportCoordinator.clearSearchCache()
-        ambientSoundscapePlayer.onReaderVisibilityChanged(false)
+        voiceAndAmbienceController.onCleared { updateActiveTtsSpeedOnly(it) }
         flushReadingProgressImmediately()
         stopTts()
-        ambienceEngine.stop()
         stopActiveSession()
-        cancelSleepTimer()
 
         pdfReflowManager.onCleared()
         epubFormatManager.onCleared(context)
