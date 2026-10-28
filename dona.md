@@ -6,7 +6,7 @@
 
 ## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `7274847` (rama `master`).
+- **Commit hash de referencia:** `fc4319a` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
   2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
