@@ -1631,27 +1631,51 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Aplica debouncing de 150 ms en actualizaciones de preferencias visuales para no saturar el motor WebView de Readium.
 
 #### `ui/reader/ReaderUIComponents.kt`
-- **Propósito:** Catálogo central de componentes visuales, menús contextuales, selectores modales y generadores gráficos del lector. Aloja los tokens de diseño glassmorphism (`ReaderDesign`), componentes atómicos (`ReaderIconButton`, `ReaderSolidCard`, `ReaderCrystalCard`, `PremiumSlider`), la barra flotante de subrayado y diccionario contextual (`HighlightColorMenu`), el diálogo de captura de entidades para el grafo narrativo (`SaveCharacterDialog`) y el motor de compartición de citas con tarjetas gráficas temáticas y exportación de video MP4 con voz neural (`QuoteShareDialog`).
+- **Propósito:** Catálogo base de componentes visuales, tokens de diseño y tarjetas reutilizables del lector. Aloja los tokens de diseño glassmorphism (`ReaderDesign`) y componentes atómicos de alta frecuencia (`ReaderIconButton`, `ReaderSolidCard`, `ReaderCrystalCard`, `PremiumSlider`).
 - **Clases y Composables:**
   - `ReaderDesign` (object, L94–111): Tokens de diseño estandarizados (`GlassStyle` con `HazeStyle`, blur 32.dp y tinte bosque oscuro; radios de curvatura `CardRadius = 24.dp`, `ButtonRadius = 14.dp`, `PillRadius = 20.dp`).
   - `ReaderIconButton` (público, L113–146): Botón circular táctil de 48.dp con icono estilizado y fondo translúcido.
   - `ReaderSolidCard` (público, L148–164): Tarjeta con fondo sólido (`#14241B`) y borde tenue para renderizado ligero sin efecto blur.
   - `ReaderCrystalCard` (público, L166–191): Contenedor con efecto de vidrio translúcido mediante `hazeChild(style = ReaderDesign.GlassStyle)`.
   - `PremiumSlider` (público, L193–226): Slider personalizado para velocidad de TTS, tamaño de tipografía y márgenes, con acentos en verde esmeralda y feedback háptico.
-  - `HighlightColorMenu` (público, L229–872): Barra de herramientas flotante (`Popup`) invocada en selección de texto. Controla la paleta de 5 colores de subrayado (`HighlightColor`), ampliación a oración completa (`FormatQuote`), registro de términos en grafo (+ Personaje), botones de acción (Copiar, Compartir, Narrar TTS, Traducir, Diccionario, Buscar, Ignorar en TTS) y tarjeta expandible de resultados (`LookupResult`).
-  - `ActionIconCircle` (privado, L875–893): Icono circular interactivo para las acciones de la barra de selección.
-  - `SaveCharacterDialog` (público, L896–1039): Diálogo modal para capturar nombres, categorías narrativas ("Protagonista", "Aliado", "Enemigo", "Clan / Lugar", "Artefacto") y notas para el grafo de entidades.
-  - `QuoteCardTheme` (enum, L1041–1077): Temas de citas: `BOSQUE_ESMERALDA` (oscuro, degradado verde bosque), `PERGAMINO_CLASICO` (fondo cálido marfil), `NOCHE_OLED` (negro puro #000000 con acentos verdes).
-  - `renderThemedQuoteBitmap` (privado, L1079–1221): Generador nativo en Canvas 2D que renderiza un Bitmap de 1080x1350 px con comillas tipográficas, texto adaptativo (`StaticLayout`), metadatos del libro y firma "🌿 Woods Reader".
-  - `QuoteVideoClipEntryPoint` (interfaz Dagger/Hilt, L1223–1227): EntryPoint para acceder a `QuoteVideoClipExporter` desde el árbol de Compose.
-  - `QuoteShareDialog` (público, L1230–1616): Diálogo modal de exportación de citas literarias. Incluye carrusel de temas, previsualización en vivo, exportador de video MP4 animado con síntesis de voz (`QuoteVideoClipExporter.exportQuoteVideoMp4`), exportador de imagen PNG a MediaStore (`Pictures/WoodsReader`) y compartición de texto nativo vía `Intent.ACTION_SEND`.
-- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`, `HazeStyle`), Android Graphics (`Bitmap`, `Canvas`, `StaticLayout`, `TextPaint`, `Paint`), MediaStore, Dagger-Hilt (`EntryPointAccessors`), `QuoteVideoClipExporter`, `LookupResult`, `HighlightColor`.
-- **Usado_por:** `ReaderScreen.kt`, `ReaderScreenOverlays.kt`, `ReaderBottomControls.kt`, `ReaderTtsMacroWindow.kt`.
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 1.616 líneas)
+- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`, `HazeStyle`), `HiddenForest`.
+- **Usado_por:** `ReaderScreen.kt`, `ReaderScreenOverlays.kt`, `ReaderBottomControls.kt`, `ReaderTtsMacroWindow.kt`, `ReaderTtsAmbienceTab.kt`, `ReaderTtsActiveControls.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 226 líneas - validar en TECNO-LH7n)
+- **Hallazgos:** Ninguno.
+
+#### `ui/reader/HighlightColorMenu.kt`
+- **Propósito:** Barra de herramientas flotante (`Popup`) invocada ante la selección de texto en el lector. Controla la paleta de colores de subrayado (`HighlightColor`), ampliación de selección a oración completa (`FormatQuote`), registro de personajes/entidades en grafo narrativo (`SaveCharacterDialog`), botones de acción rápida (Copiar, Compartir cita, Narrar TTS, Traducir, Diccionario, Buscar, Ignorar en TTS) y tarjeta expandible con resultados de consulta léxica offline (`LookupResult`).
+- **Clases y Composables:**
+  - `HighlightColorMenu` (público, L43–702): Barra flotante contextual y tarjeta léxica expandible.
+  - `ActionIconCircle` (privado, L705–726): Botón circular táctil con icono representativo para las acciones secundarias.
+- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `HighlightColor`, `LookupResult`, `SaveCharacterDialog`, `HiddenForest`.
+- **Usado_por:** `ReaderScreen.kt`, `ReaderScreenOverlays.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 726 líneas - validar en TECNO-LH7n)
 - **Hallazgos:**
-  - **M20:** Captura de excepciones vacía (`catch (_: Exception) {}`) en L838 en el fallback del navegador web para traducciones/definiciones cuando `onErrorOpenBrowser == null`.
-  - **M21:** `QuoteVideoClipEntryPoint` utiliza `EntryPointAccessors.fromApplication` manualmente dentro de un `remember` en Compose (L1241–1245) para resolver `QuoteVideoClipExporter` en lugar de inyectarlo en el ViewModel o pasarlo formalmente.
-  - **M22:** `renderThemedQuoteBitmap` genera directamente un Bitmap de 1080x1350 en memoria (5.8 MB ARGB_8888) de forma síncrona en el hilo de UI cuando el usuario pulsa "Imagen" (L1530–1536), antes de escribirlo en MediaStore.
+  - **M20:** Captura de excepciones vacía (`catch (_: Exception) {}`) en el fallback del navegador web para traducciones/definiciones cuando `onErrorOpenBrowser == null`.
+
+#### `ui/reader/SaveCharacterDialog.kt`
+- **Propósito:** Diálogo modal (`Dialog`) para capturar y clasificar nombres propios, entidades y conceptos encontrados en el texto ("Protagonista", "Aliado", "Enemigo", "Clan / Lugar", "Artefacto") con notas opcionales antes de vincularlos al grafo narrativo del lector (`EgoGraph`).
+- **Clases y Composables:**
+  - `SaveCharacterDialog` (público, L25–171): Diálogo de categorización y persistencia de personajes.
+- **Depende_de:** Compose UI, Material 3, `HiddenForest`.
+- **Usado_por:** `HighlightColorMenu.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 171 líneas - validar en TECNO-LH7n)
+- **Hallazgos:** Ninguno.
+
+#### `ui/reader/QuoteShareDialog.kt`
+- **Propósito:** Diálogo modal de exportación visual y multimedia de citas literarias. Proporciona un carrusel de temas estéticos (`QuoteCardTheme`: Bosque Esmeralda, Pergamino Clásico, Noche OLED), renderizado nativo 2D de alta fidelidad en Canvas a Bitmap PNG de 1080x1350 px para MediaStore (`Pictures/WoodsReader`), exportación de clips de video MP4 animados con voz sintetizada (`QuoteVideoClipExporter`) y compartición de texto nativo vía `Intent.ACTION_SEND`.
+- **Clases y Composables:**
+  - `QuoteCardTheme` (enum, L43–80): Temas visuales para tarjetas de citas (`BOSQUE_ESMERALDA`, `PERGAMINO_CLASICO`, `NOCHE_OLED`).
+  - `renderThemedQuoteBitmap` (privado, L82–224): Generador en Canvas Android de bitmaps 1080x1350 px con tipografía adaptativa y firma editorial.
+  - `QuoteVideoClipEntryPoint` (interfaz Dagger/Hilt, L226–230): EntryPoint para resolver `QuoteVideoClipExporter` desde Compose.
+  - `QuoteShareDialog` (público, L233–633): Diálogo de previsualización, personalización y despacho de exportaciones.
+- **Depende_de:** Compose UI, Material 3, Android Graphics (`Bitmap`, `Canvas`, `StaticLayout`, `TextPaint`, `Paint`), MediaStore, Dagger-Hilt (`EntryPointAccessors`), `QuoteVideoClipExporter`, `HiddenForest`.
+- **Usado_por:** `ReaderScreen.kt`, `HighlightColorMenu.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 633 líneas - validar en TECNO-LH7n)
+- **Hallazgos:**
+  - **M21:** `QuoteVideoClipEntryPoint` utiliza `EntryPointAccessors.fromApplication` manualmente dentro de un `remember` en Compose para resolver `QuoteVideoClipExporter` en lugar de inyectarlo formalmente en el ViewModel.
+  - **M22:** `renderThemedQuoteBitmap` genera directamente un Bitmap de 1080x1350 en memoria (5.8 MB ARGB_8888) en el hilo de UI cuando el usuario pulsa "Imagen", antes de escribirlo en MediaStore.
 
 #### `ui/reader/ReaderBottomBar.kt`
 - **Propósito:** Barra inferior de pestañas del lector (Texto, Audio, Notas).
