@@ -1460,7 +1460,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 #### `ui/settings/SettingsScreen.kt`
 - **Propósito:** Pantalla general de configuración y control global de Woods Reader. Gestiona la suscripción y licencias PRO (`ProLicenseManager`), escaneo/enriquecimiento de la biblioteca local, configuración avanzada del motor de narración TTS (selección entre Sherpa ONNX VITS y TTS del sistema, catálogo multilingüe de 12 voces offline, auto-detección de idioma por capítulo, glosario fonético Xuanhuan/LitRPG y reglas personalizadas), preferencias de lectura y notificaciones, blindaje de ejecución en segundo plano con pantalla apagada (`WoodsKeepAliveManager`), exportación e importación de copias de seguridad portátiles (`WoodsBackup Vault`), métricas de almacenamiento (Room DB, caché Coil, modelos Sherpa) con limpieza selectiva, y ficha técnica del sistema con copiado al portapapeles.
 - **Clases y Composables:**
-  - `SettingsScreen` (público, L49–1361): Composable principal que orquesta todas las tarjetas de configuración dentro de un `LazyColumn`, gestionando lanzadores SAF (`ActivityResultContracts.GetContent`) y diálogos modales.
+  - `SettingsScreen` (público, L49–1361): Composable principal que orquesta todas las tarjetas de configuración dentro de un `LazyColumn`. Gestiona ciclo de vida (`DisposableEffect` para refrescar estado de optimización de batería en `ON_RESUME`), cálculo asíncrono de almacenamiento (`LaunchedEffect(Unit)`), lanzadores SAF (`rememberLauncherForActivityResult` con `ActivityResultContracts.CreateDocument` y `ActivityResultContracts.GetContent`), y diálogos modales (`AlertDialog` para Sherpa, `AddPhoneticRuleDialog`, `WoodsProUnlockDialog`).
   - `SettingsSection` (público, L1364–1383): Contenedor estilizado con borde verde bosque y título para agrupar bloques funcionales.
   - `SettingsToggleRow` (público, L1385–1418): Fila de ajuste booleano con icono estilizado, título, descripción y componente `Switch`.
   - `SettingsActionRow` (público, L1420–1445): Fila interactiva para acciones directas (navegación, diálogos, reseteo) con chevron indicador.
@@ -1469,16 +1469,40 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `SettingsIcon` (privado, L1491–1503): Contenedor visual cuadrado con esquinas redondeadas para iconos temáticos.
   - `formatBytes` (público, L1505–1510): Función utilitaria pura para formateo legible de magnitudes en bytes (B, KB, MB, GB).
   - `BuildSpecRow` (privado, L1512–1543): Fila de dos columnas con alineación justificada para ítems de la ficha técnica.
+- **Mapeo de Ajustes, Claves DataStore y Consumidores:**
+  | Ajuste en UI | Clave / Almacenamiento DataStore | Tipo | Componentes Consumidores |
+  |---|---|---|---|
+  | Modo de Motor TTS (`currentEngineMode`) | `UserPreferences.useSherpaTts` (`DataStore<UserPreferences>`) | `Boolean` | `TtsManager`, `ReaderViewModel`, `ReaderScreen`, `ReaderTtsMacroWindow`, `ReaderTtsVoiceTab` |
+  | Perfil Acústico DSP (`acousticsProfile`) | `acoustics_profile` (`DataStore` en `PronunciationLexiconManager`) | `StudioAcousticsProfile` | `SherpaTtsEngine`, `MultilingualAudiobookNormalizer`, `ReaderTtsAmbienceTab` |
+  | Prosodia Expresiva | `expressive_prosody_enabled` (`PronunciationLexiconManager`) | `Boolean` | `MultilingualAudiobookNormalizer`, `SherpaTtsEngine`, `ReaderTtsAmbienceTab` |
+  | Modo Novela Dramatizada | `dramatized_dialogue_enabled` (`PronunciationLexiconManager`) | `Boolean` | `MultilingualAudiobookNormalizer`, `SherpaTtsEngine`, `ReaderTtsAmbienceTab` |
+  | Auto-detectar Idioma del Libro | `auto_detect_book_language` (`SherpaModelManager`) | `Boolean` | `TtsManager`, `ReaderVoiceAndAmbienceController`, `ReaderTtsVoiceTab` |
+  | Filtro de Idioma de Voces | `selected_language_filter` (`SherpaModelManager`) | `SupportedTtsLanguage` | `SettingsScreen`, `ReaderTtsVoiceTab` |
+  | Voz Sherpa Activa | `selected_voice` (`SherpaModelManager`) | `SherpaVoiceOption` | `SherpaTtsEngine`, `TtsManager`, `ReaderTtsVoiceTab` |
+  | Velocidad de Voz por Defecto | `UserPreferences.ttsSpeed` (`DataStore<UserPreferences>`) | `Float` (0.5f–3.0f) | `TtsManager`, `ReaderViewModel`, `ReaderTtsActiveControls` |
+  | Tono de Voz por Defecto | `UserPreferences.ttsPitch` (`DataStore<UserPreferences>`) | `Float` (0.5f–2.0f) | `TtsManager`, `ReaderViewModel`, `ReaderTtsAmbienceTab` |
+  | Glosario Novelas Web (Xuanhuan) | `builtin_lexicon_enabled` (`PronunciationLexiconManager`) | `Boolean` | `MultilingualAudiobookNormalizer`, `SherpaTtsEngine`, `ReaderTtsAmbienceTab` |
+  | Reglas Fonéticas Personalizadas | `custom_phonetic_rules` (JSON en `PronunciationLexiconManager`) | `List<CustomPhoneticRule>` | `MultilingualAudiobookNormalizer`, `SherpaTtsEngine`, `ReaderTtsAmbienceTab` |
+  | Notificaciones de lectura | `UserPreferences.notificationsEnabled` (`DataStore<UserPreferences>`) | `Boolean` | `TtsNotificationManager`, `TtsManager` |
+  | TTS automático al abrir | `UserPreferences.ttsAutoStart` (`DataStore<UserPreferences>`) | `Boolean` | `ReaderViewModel`, `ReaderScreen` |
+  | Estadísticas de lectura | `UserPreferences.analyticsEnabled` (`DataStore<UserPreferences>`) | `Boolean` | `ReadingSessionManager`, `CalculateReadingStatsUseCase`, `ReadingStatsViewModel` |
+  | Restablecer Bienvenida | `UserPreferences.hasCompletedOnboarding` (`DataStore<UserPreferences>`) | `Boolean` (fija `false`) | `MainActivity`, `NavGraph`, `OnboardingViewModel` |
 - **Contrato con ViewModel:**
   - *StateFlows y estados observados:* `preferences`, `sherpaDownloadState`, `showSherpaDownloadDialog`, `storageSizes`, `backupStatusMessage`, `selectedLanguageFilter`, `selectedSherpaVoice`, `isScanning`, `scanProgress`, `isEnriching`, `autoDetectBookLanguage`, `builtInLexiconEnabled`, `customPhoneticRules`, `acousticsProfile`, `expressiveProsodyEnabled`, `dramatizedDialogueEnabled`.
-  - *Propiedades y gestores accedidos:* `proLicenseManager`, `woodsKeepAliveManager`.
-  - *Métodos invocados:* `setTtsEngineMode(mode)`, `downloadSherpaModel()`, `dismissSherpaDownloadDialog()`, `downloadSherpaVoice(voice)`, `selectAndActivateSherpaVoice(voice)`, `deleteSherpaVoice(voice)`, `isVoiceDownloaded(voice)`, `getVoiceSizeBytes(voice)`, `setSelectedLanguageFilter(lang)`, `setAutoDetectBookLanguage(bool)`, `setTtsSpeed(speed)`, `setTtsPitch(pitch)`, `setBuiltInLexiconEnabled(bool)`, `addCustomPhoneticRule(orig, phon)`, `removeCustomPhoneticRule(id)`, `setNotificationsEnabled(bool)`, `setTtsAutoStart(bool)`, `setAnalyticsEnabled(bool)`, `resetOnboarding()`, `startScan()`, `createBackupFile()`, `restoreBackup(uri)`, `clearBackupStatusMessage()`, `deleteSherpaModel(context)`, `clearCoverCache(context)`, `calculateStorageSizes()`.
-- **Depende_de:** Compose UI, Material 3, `SettingsViewModel`, `UserPreferencesRepository`, `ActivityResultContracts`, `ProLicenseManager`, `WoodsKeepAliveManager`, `WoodsProUnlockDialog`, `AddPhoneticRuleDialog`, `SherpaVoiceOption`, `SupportedTtsLanguage`, `TtsEngineMode`, `SherpaDownloadState`, `StorageSizes`.
+  - *Propiedades y gestores accedidos:* `proLicenseManager` (observa `isProUnlocked`), `woodsKeepAliveManager` (observa `isUnrestrictedBattery`, invoca `refreshBatteryStatus()`, `requestIgnoreBatteryOptimizations(context)`).
+  - *Métodos invocados:* `setTtsEngineMode(mode)`, `downloadSherpaModel()`, `dismissSherpaDownloadDialog()`, `downloadSherpaVoice(voice)`, `selectAndActivateSherpaVoice(voice)`, `deleteSherpaVoice(voice)`, `isVoiceDownloaded(voice)`, `getVoiceSizeBytes(voice)`, `setSelectedLanguageFilter(lang)`, `setAutoDetectBookLanguage(bool)`, `setTtsSpeed(speed)`, `setTtsPitch(pitch)`, `setAcousticsProfile(prof)`, `setExpressiveProsodyEnabled(bool)`, `setDramatizedDialogueEnabled(bool)`, `setBuiltInLexiconEnabled(bool)`, `addCustomPhoneticRule(orig, phon)`, `removeCustomPhoneticRule(id)`, `setNotificationsEnabled(bool)`, `setTtsAutoStart(bool)`, `setAnalyticsEnabled(bool)`, `resetOnboarding()`, `startScan()`, `createBackupFile()`, `exportFullBackup(uri)`, `restoreBackup(uri, callback)`, `clearBackupStatusMessage()`, `deleteSherpaModel(context)`, `clearCoverCache(context)`, `calculateStorageSizes(context)`.
+- **Navegación y Efectos:**
+  - `DisposableEffect(lifecycleOwner)` (L76–86): Observa `Lifecycle.Event.ON_RESUME` para invocar `viewModel.woodsKeepAliveManager.refreshBatteryStatus()`.
+  - `LaunchedEffect(Unit)` (L119–121): Dispara `viewModel.calculateStorageSizes(context)` al montar la pantalla.
+  - `rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument)` (L90–94): Crea documento SAF JSON y delega en `viewModel.exportFullBackup(uri)`.
+  - `rememberLauncherForActivityResult(ActivityResultContracts.GetContent)` (L96–116): Selecciona archivo SAF JSON y delega en `viewModel.restoreBackup(uri) { ... }` con feedback visual vía `Toast`.
+  - `Intent(ACTION_SEND)` (L1049–1058): Despacha el archivo de respaldo generado por `createBackupFile()` a través del selector de apps del sistema (`Intent.createChooser`).
+- **Depende_de:** Compose UI, Material 3, `SettingsViewModel`, `UserPreferences`, `UserPreferencesRepository`, `ActivityResultContracts`, `ProLicenseManager`, `WoodsKeepAliveManager`, `WoodsProUnlockDialog`, `AddPhoneticRuleDialog`, `SherpaVoiceOption`, `SupportedTtsLanguage`, `StudioAcousticsProfile`, `TtsEngineMode`, `SherpaDownloadState`, `StorageSizes`, `HiddenForest`.
 - **Usado_por:** `NavGraph.kt`.
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 1.544 líneas)
 - **Hallazgos:**
   - **M23:** `technicalSheetText` (L1171–1184) contiene cadenas fijas de versión ("v1.0.0-ALPHA", "Build 2026.10") en lugar de obtenerlas dinámicamente de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`.
-  - **M24:** Acceso directo a propiedades de gestores en `viewModel.woodsKeepAliveManager` (L940) y `viewModel.proLicenseManager` (L1356) exponiendo referencias de dominio internas a la vista Compose en lugar de encapsularlas mediante métodos del ViewModel.
+  - **M24:** Acceso directo a propiedades de gestores en `viewModel.woodsKeepAliveManager` (L71, L79, L940) y `viewModel.proLicenseManager` (L53, L1356) exponiendo referencias de dominio internas a la vista Compose en lugar de encapsularlas mediante métodos del ViewModel.
 
 #### `ui/settings/SettingsViewModel.kt`
 - **Propósito:** ViewModel de ajustes. Backup/Restore, TTS engine mode, Sherpa voices, almacenamiento, preferencias.
