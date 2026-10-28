@@ -6,13 +6,54 @@
 
 ## 📌 ESTADO ACTUAL DEL PROYECTO (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `480f604` (rama `master`).
+- **Commit hash de referencia:** `75c91e5` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
   2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
   4. **Arquitectura del Lector Descomprimida:** `ReaderViewModel.kt` desacoplado con éxito mediante el patrón *Strangler Fig*, extrayendo 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (reducción de más de 1.100 líneas y 5 inyecciones directas eliminadas).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
+
+---
+
+## 🗺️ MAPA DE CAPAS DE LA ARQUITECTURA
+
+Woods Reader sigue una arquitectura modular en capas orientada al dominio y altamente reactiva. La capa de presentación (Jetpack Compose + ViewModels desacoplados) interactúa exclusivamente con Casos de Uso y Coordinadores de dominio, los cuales encapsulan la lógica de lectura, audio, búsqueda y anotaciones. El dominio delega la persistencia a Repositorios Room/DataStore y la renderización/síntesis a motores de bajo nivel (Readium 3.x para EPUB/PDF y Sherpa ONNX / Android TTS para síntesis vocal), mientras que Servicios en primer plano (*Foreground Services*) y Workers en segundo plano garantizan la supervivencia ininterrumpida de la reproducción de audio y tareas asíncronas pesadas.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             CAPA DE UI / PRESENTACIÓN                       │
+│    Jetpack Compose UI (Screens, BottomSheets, Dialogs, Theme, Canvas)      │
+│         ▲                                                            │
+│         │ Observa StateFlows (sin recomposiciones masivas)           │
+│         ▼                                                            │
+│    ViewModels (@HiltViewModel: ReaderViewModel, LibraryViewModel, etc.)     │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │ Invoca
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CAPA DE DOMINIO                                │
+│    Casos de Uso: SaveReadingProgressUseCase, CalculateReadingStatsUseCase,   │
+│                  LoadBookFastUseCase, ManageReaderAnnotationsUseCase        │
+│    Coordinadores: ReaderIntelligenceAndExportCoordinator                    │
+└───────────────────────┬─────────────────────────────┬───────────────────────┘
+                        │ Delega                      │ Orquesta
+                        ▼                             ▼
+┌───────────────────────────────────┐   ┌─────────────────────────────────────┐
+│          CAPA DE DATOS            │   │         MOTORES CORE Y AUDIO        │
+│  Repositories (Book, Graph, Prefs)│   │  Readium 3.x (Publication, Locator) │
+│  DAOs Room v11 (books, sessions)  │   │  Sherpa ONNX (Piper, VITS, Kokoro)  │
+│  DataStore (UserPreferences)      │   │  Android TTS + Media3 / MediaCodec  │
+│  Scanners (MediaStore, DeepFS)    │   │  M4aMetadataEmbedder (covr, ©lyr)   │
+└───────────────────────────────────┘   └─────────────────────────────────────┘
+                                      ▲
+                                      │ Controla
+┌─────────────────────────────────────┴───────────────────────────────────────┐
+│                      SERVICIOS Y WORKERS EN BACKGROUND                      │
+│    ReaderTtsService (Foreground) · WoodsKeepAliveManager (WakeLock/LMKD)   │
+│    BookScannerForegroundService · WorkManager (Sync, Graph, WebNovel)       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -45,12 +86,26 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
+## 📖 GLOSARIO DE TÉRMINOS DEL PROYECTO
+- **`Locator`**: Objeto fundamental de Readium que representa una posición canónica y persistente dentro de un libro (href del spine, fragmento CFI/progression 0.0..1.0, y snippets de texto circundante). Permite restaurar el punto de lectura exacto entre reinicios y sincronizar la narración de audio con el texto visual.
+- **`Publication`**: Estructura principal en memoria provista por Readium que representa el libro abierto (EPUB o PDF). Contiene la tabla de contenidos (`tableOfContents`), el orden de lectura (`readingOrder`), metadatos y acceso a recursos internos.
+- **`Positions Sintéticas O(1)`**: Array virtual de progresiones matemáticas generado instantáneamente en `LoadBookFastUseCase` para libros con más de 80 capítulos/spines, omitiendo el cálculo intensivo de bytes de Readium para reducir el tiempo de apertura de ~12s a <200ms sin provocar ANR.
+- **`Sherpa ONNX`**: Motor de síntesis de voz neural offline de última generación basado en redes neuronales (VITS, Piper, Kokoro). Corre localmente en el dispositivo sin enviar datos a internet ni consumir cuotas de API.
+- **`ReadingBlock`**: Unidad semántica de texto estructurado generada por el `ReadingPipeline`. Agrupa párrafos continuos o encabezados tras limpiar ruido recurrente (números de página, encabezados repetitivos de página, créditos de maquetador).
+- **`TtsNarrationUnit`**: Unidad de narración atómica (oración o párrafo) derivada de un `ReadingBlock`. Asocia el texto limpio a reproducir con su posición exacta en el texto (`Locator`) para resaltado y auto-scroll.
+- **`AutoMigration (Room)`**: Mecanismo declarativo de AndroidX Room para evolucionar el esquema de base de datos entre versiones contiguas (ej. v10 → v11) sin scripts SQL manuales, aplicable cuando los cambios consisten exclusivamente en añadir nuevas tablas o columnas sin borrados ni renombres.
+- **`M4aMetadataEmbedder`**: Componente de bajo nivel que escribe átomos MP4/ISO (`moov.udta.meta.ilst`) para incrustar portada en la caja `covr` y letras LRC sincronizadas en la caja `©lyr`, permitiendo exportaciones de audio autocontenidas en un único archivo `.m4a` limpio sin contaminación de archivos sueltos.
+- **`Strangler Fig Pattern`**: Patrón de refactorización incremental que extrae responsabilidades de una clase monolítica (*God Class*) hacia casos de uso y coordinadores independientes de afuera hacia adentro, verificando que cada paso intermedio compile y pase el 100% de los tests antes del siguiente.
+
+---
+
 ## 📋 REGLAS DE TRABAJO PARA DESARROLLADORES Y AGENTES DE IA
 1. **Punto de Restauración Previo Obligatorio:** Antes de aplicar cualquier cambio o refactorización, registrar el estado con `git add -A && git commit -m "..."`.
 2. **Tolerancia Cero a Errores de Build:** Todo cambio debe verificar `:app:compileDebugKotlin` y `:app:testDebugUnitTest` con 0 errores antes de dar por buena una intervención.
 3. **Atomicidad de Fases:** Un commit descriptivo por fase o componente. Nunca acumular múltiples tareas no relacionadas en un solo commit.
 4. **Evidencia Antes de Aserción:** Prohibido afirmar que un bug está resuelto o que un módulo funciona sin haber inspeccionado el código fuente, ejecutado las pruebas o validado en logcat.
 5. **Criterio de Validación Dispositivo (🟡 → ✅):** Todo hallazgo o refactor que involucre hardware o subsistemas de Android (TTS nativo, Sherpa ONNX, audio focus, ciclo de vida del WebView) se marca como 🟡 hasta ser ejecutado y comprobado físicamente en el teléfono (`TECNO-LH7n`).
+6. **Mantenimiento del Documento Ancla:** Todo commit que modifique la firma o propósito de un archivo debe actualizar su entrada en `dona.md`.
 
 ---
 
@@ -65,7 +120,8 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
    - Alternancia fluida entre modo Reflow accesible (extracción semántica) y modo Réplica Original con zoom, conservando la sincronización de lectura bidireccional.
 4. **Deuda Técnica Crítica Pendiente:**
    - 🔴 **C4:** Cancelación ordenada de la corrutina de limpieza en `SherpaModelManager.kt:280`.
-   - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos de 5 archivos (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `ReaderViewModel.kt`).
+   - 🔴 **C5:** Desacoplamiento de logging nativo C++ de Sherpa atado a `BuildConfig.DEBUG` en `SherpaModelManager.kt:437`.
+   - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos de 4 archivos (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderViewModel.kt`).
 
 ---
 
@@ -73,13 +129,9 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 | Commit | Fecha | Tipo | Descripción |
 |---|---|---|---|
-| `480f604` | 2026-10-28 | docs | Bloque C: corregir inconsistencias internas, flujo de datos 13 y unicidad de tests |
-| `6c80c85` | 2026-10-28 | docs | Bloque B Tanda 5 y completitud: documentar 4 UI parciales, incorporar 23 clases y 10 tests faltantes |
-| `d795719` | 2026-10-28 | docs | Bloque B Tanda 4: revisión completa de ReaderTopBar, ReaderSideMenu, ReaderAudioBottomSheet, ReaderTtsBar, ReaderNotesTab |
-| `9f26bba` | 2026-10-28 | docs | Bloque B Tanda 3: revisión completa de PdfReflowManager, ReaderTtsService, BookScannerService, LibraryHeader, LibraryScreen |
-| `eda579d` | 2026-10-28 | docs | Bloque B Tanda 2: revisión completa de QuoteVideoClipExporter, WoodsBackupManager, ProLicenseManager, ReaderContract, EpubFormatManager |
-| `4ec744c` | 2026-10-28 | docs | Bloque B Tanda 1: revisión completa de MainActivity, BookRepository, LibraryModule, FastEpubSearchEngine, BookXRayEngine |
-| `e03c6e0` | 2026-10-28 | docs | Bloque A: corregir estados de hallazgos C1-C13 y recalcular contadores con leyenda estricta |
+| `75c91e5` | 2026-10-28 | docs | Fase 3: registro consolidado de errores, conexiones y riesgos en dispositivo |
+| `029dd43` | 2026-10-28 | docs | Fase 2: mapa de conexiones Hilt, Room, Android y 9 flujos de datos |
+| `e18afd7` | 2026-10-28 | docs | Fase 1: veracidad estricta, inventario 237/237 kt y hallazgos con evidencia |
 | `5a9b341` | 2026-10-28 | fix | blindar carrera de preferencias en arranque en frío y evitar continuaciones colgadas en tts nativo |
 | `93e4dc2` | 2026-10-28 | fix | eliminar `.first()` bloqueante y desacoplar UtteranceProgressListener en TtsManager (C6, C7) |
 | `7ac5385` | 2026-10-28 | fix | lectura segura de bookId en savedStateHandle (C2, C12, C13) en ViewModels |
@@ -104,7 +156,6 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 - `hallazgos` — advertencias, riesgos de crash o deuda técnica identificada.
 
 ---
-
 ## 🌐 MAPA DE CONEXIONES DEL SISTEMA
 
 ### 1. Grafo de Inyección de Dependencias (Hilt)
@@ -2256,16 +2307,16 @@ Cualquier sesión de desarrollo o intervención de un asistente de IA debe consu
 
 ### Protocolo de Inicio de Sesión
 Inicia la interacción estableciendo:
-> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual del Proyecto, los Invariantes e Intocables (Sección 🛡️), las Decisiones de Arquitectura (Sección 🏛️) y las Reglas de Trabajo antes de proponer cualquier cambio al código."*
+> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual del Proyecto, el Mapa de Capas (Sección 🗺️), los Invariantes e Intocables (Sección 🛡️), las Decisiones de Arquitectura (Sección 🏛️), el Glosario de Términos (Sección 📖) y las Reglas de Trabajo antes de proponer cualquier cambio al código."*
 
 ### Protocolo de Modificación de Archivos
 Antes de alterar cualquier componente:
 1. **Comprobar Intocables:** Verifica que el archivo objetivo no forme parte de los invariantes del lector (`ChapterScrollDetector.kt`, CSS de `ReaderExtensions.kt`, `AudioFocus` en `TtsManager.kt`, firmas públicas de `ReaderViewModel.kt`).
 2. **Consultar Entrada Atómica:** Localiza la ruta del archivo en las secciones 0 a 12 del índice para conocer sus dependencias ascendentes (`depende_de`) y descendentes (`usado_por`).
-3. **Revisar Hallazgos Asociados:** Consulta la columna de hallazgos del archivo y la matriz de criticidad de la Sección 14 para evitar reintroducir bugs corregidos o pasar por alto casos borde.
+3. **Revisar Registro Consolidado (Sección 14):** Consulta la Matriz Consolidada de Hallazgos y la subsección de Riesgos en Dispositivo para no reintroducir bugs ya mitigados ni pasar por alto condiciones de carrera de hardware.
 4. **Respetar la Leyenda de Estados:**
    - ✅ **Resuelto y verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
-   - 🟡 **Resuelto en código, pendiente de validación en dispositivo:** Requiere comprobación física en `TECNO-LH7n` antes de considerarse cerrado.
+   - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** Requiere comprobación física en hardware antes de promoverse a ✅.
    - 🔴 **Pendiente:** Deuda técnica identificada que debe abordarse bajo un plan dedicado.
    - ⚪ **No verificado:** Estado preventivo de componentes no auditados.
 5. **Verificación Continua:** Ejecutar obligatoriamente `.\gradlew.bat :app:compileDebugKotlin` y `.\gradlew.bat :app:testDebugUnitTest` tras cada fase de trabajo.
