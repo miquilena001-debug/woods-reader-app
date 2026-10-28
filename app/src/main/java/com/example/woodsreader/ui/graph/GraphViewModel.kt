@@ -74,25 +74,30 @@ class GraphViewModel @Inject constructor(
 
     private val workManager = WorkManager.getInstance(context)
 
-    val analysisProgress: StateFlow<GraphAnalysisProgress> = workManager
-        .getWorkInfosForUniqueWorkFlow("graph_extraction_$bookId")
-        .map { workInfos ->
-            val active = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-            if (active != null) {
-                val p = active.progress.getInt(GraphExtractionWorker.KEY_PROGRESS, 0)
-                val s = active.progress.getString(GraphExtractionWorker.KEY_STATUS) ?: "Analizando..."
-                GraphAnalysisProgress(isRunning = true, progress = p, status = s)
-            } else {
-                GraphAnalysisProgress(isRunning = false, progress = 0, status = "")
+    val analysisProgress: StateFlow<GraphAnalysisProgress> = if (bookId.isBlank()) {
+        MutableStateFlow(GraphAnalysisProgress())
+    } else {
+        workManager
+            .getWorkInfosForUniqueWorkFlow("graph_extraction_$bookId")
+            .map { workInfos ->
+                val active = workInfos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+                if (active != null) {
+                    val p = active.progress.getInt(GraphExtractionWorker.KEY_PROGRESS, 0)
+                    val s = active.progress.getString(GraphExtractionWorker.KEY_STATUS) ?: "Analizando..."
+                    GraphAnalysisProgress(isRunning = true, progress = p, status = s)
+                } else {
+                    GraphAnalysisProgress(isRunning = false, progress = 0, status = "")
+                }
             }
-        }
-        .stateIn(
-            viewModelScope,
-            SharingStarted.WhileSubscribed(5000),
-            GraphAnalysisProgress()
-        )
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                GraphAnalysisProgress()
+            )
+    }
 
     fun startBookAnalysis() {
+        if (bookId.isBlank()) return
         val request = OneTimeWorkRequestBuilder<GraphExtractionWorker>()
             .setInputData(workDataOf(GraphExtractionWorker.KEY_BOOK_ID to bookId))
             .build()
@@ -104,11 +109,16 @@ class GraphViewModel @Inject constructor(
         )
     }
 
-    val bookTitle: StateFlow<String> = bookRepository.getBookFlow(bookId)
-        .map { it?.title ?: "Glosario" }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Glosario")
+    val bookTitle: StateFlow<String> = if (bookId.isBlank()) {
+        MutableStateFlow("Glosario")
+    } else {
+        bookRepository.getBookFlow(bookId)
+            .map { it?.title ?: "Glosario" }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Glosario")
+    }
 
     suspend fun getExportJson(): String {
+        if (bookId.isBlank()) return "{}"
         val book = bookRepository.getBook(bookId)
         val title = book?.title ?: "Libro"
         val exportData = graphRepository.exportAll(bookId)
@@ -116,6 +126,7 @@ class GraphViewModel @Inject constructor(
     }
 
     suspend fun importGlossary(jsonString: String): Int {
+        if (bookId.isBlank()) return 0
         return GraphJsonHelper.importGlossary(bookId, jsonString, graphRepository)
     }
 

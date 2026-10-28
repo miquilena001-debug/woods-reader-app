@@ -66,6 +66,13 @@ class BookDetailViewModel @Inject constructor(
     }
 
     private fun loadBookData() {
+        if (bookId.isBlank()) {
+            _uiState.value = BookDetailUiState(
+                isLoading = false,
+                error = "ID de libro no proporcionado o no válido"
+            )
+            return
+        }
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {

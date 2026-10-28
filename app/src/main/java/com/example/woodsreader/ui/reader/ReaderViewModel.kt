@@ -594,6 +594,10 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun loadBook() {
+        if (bookId.isBlank()) {
+            _uiState.value = ReaderUiState.Error("ID de libro no válido o no proporcionado")
+            return
+        }
         viewModelScope.launch {
             ambientSoundscapePlayer.onReaderVisibilityChanged(true)
             _uiState.value = ReaderUiState.Loading

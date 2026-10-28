@@ -49,62 +49,75 @@ class CandidatesViewModel @Inject constructor(
     private val graphRepository: GraphRepository
 ) : ViewModel() {
 
-    val bookId: String = checkNotNull(savedStateHandle["bookId"])
+    val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()
 
     val searchQuery = MutableStateFlow("")
 
-    val candidates: StateFlow<List<GraphEntity>> = combine(
-        graphRepository.candidates(bookId),
-        searchQuery
-    ) { candidateList, query ->
-        if (query.isBlank()) {
-            candidateList
-        } else {
-            candidateList.filter { it.name.contains(query, ignoreCase = true) }
-        }
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        emptyList()
-    )
-
-    val confirmedEntities: StateFlow<List<GraphEntity>> = graphRepository
-        .entities(bookId, Int.MAX_VALUE, limit = 150)
-        .stateIn(
+    val candidates: StateFlow<List<GraphEntity>> = if (bookId.isBlank()) {
+        MutableStateFlow(emptyList())
+    } else {
+        combine(
+            graphRepository.candidates(bookId),
+            searchQuery
+        ) { candidateList, query ->
+            if (query.isBlank()) {
+                candidateList
+            } else {
+                candidateList.filter { it.name.contains(query, ignoreCase = true) }
+            }
+        }.stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5000),
             emptyList()
         )
+    }
+
+    val confirmedEntities: StateFlow<List<GraphEntity>> = if (bookId.isBlank()) {
+        MutableStateFlow(emptyList())
+    } else {
+        graphRepository
+            .entities(bookId, Int.MAX_VALUE, limit = 150)
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                emptyList()
+            )
+    }
 
     fun setSearchQuery(query: String) {
         searchQuery.value = query
     }
 
     fun confirmCandidate(candidate: GraphEntity) {
+        if (bookId.isBlank()) return
         viewModelScope.launch {
             graphRepository.updateEntity(candidate.copy(confirmed = true, ignored = false))
         }
     }
 
     fun ignoreCandidate(candidate: GraphEntity) {
+        if (bookId.isBlank()) return
         viewModelScope.launch {
             graphRepository.updateEntity(candidate.copy(ignored = true))
         }
     }
 
     fun changeType(candidate: GraphEntity, newType: EntityType) {
+        if (bookId.isBlank()) return
         viewModelScope.launch {
             graphRepository.updateEntity(candidate.copy(type = newType))
         }
     }
 
     fun mergeInto(sourceId: Long, targetId: Long) {
+        if (bookId.isBlank()) return
         viewModelScope.launch {
             graphRepository.mergeInto(sourceId, targetId)
         }
     }
 
     fun confirmAll() {
+        if (bookId.isBlank()) return
         viewModelScope.launch {
             val list = candidates.value
             for (c in list) {
