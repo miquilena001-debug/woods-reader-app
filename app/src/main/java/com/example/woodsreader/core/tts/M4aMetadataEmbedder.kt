@@ -123,7 +123,7 @@ object M4aMetadataEmbedder {
         )
     }
 
-    private fun prepareCoverBytes(coverFile: File?): ByteArray? {
+    fun prepareCoverBytes(coverFile: File?): ByteArray? {
         if (coverFile == null || !coverFile.exists() || coverFile.length() == 0L) return null
         return runCatching {
             val isJpeg = coverFile.name.endsWith(".jpg", ignoreCase = true) || coverFile.name.endsWith(".jpeg", ignoreCase = true)

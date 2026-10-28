@@ -156,12 +156,14 @@ class ChapterAudioExporter @Inject constructor(
                     throw IllegalStateException("La exportación no produjo un archivo de audio válido")
                 }
 
-                val effectiveAuthor = bookAuthor.trim().ifBlank { "Woods Reader IA" }
+                val effectiveAuthor = bookAuthor.trim().ifBlank { "Woods Reader Studio" }
                 val lrcContent = if (includeSyncedLyrics && syncedCues.isNotEmpty()) {
                     generateLrc(syncedCues, bookTitle, effectiveAuthor)
                 } else {
                     ""
                 }
+
+                val coverJpegBytes = M4aMetadataEmbedder.prepareCoverBytes(coverImageFile)
 
                 // Incrustar en binario todo dentro del contenedor .M4A (Título, Autor, Álbum, Letras LRC y Portada)
                 runCatching {
@@ -171,7 +173,7 @@ class ChapterAudioExporter @Inject constructor(
                         author = effectiveAuthor,
                         bookTitle = bookTitle,
                         synchronizedLyricsLrc = lrcContent,
-                        coverFile = coverImageFile
+                        coverJpegBytes = coverJpegBytes
                     )
                 }.onFailure { Timber.w(it, "No se pudo incrustar metadatos dentro del archivo .M4A") }
 
@@ -209,6 +211,7 @@ class ChapterAudioExporter @Inject constructor(
                     coroutineContext.ensureActive()
 
                     published = true
+                    cleanupLegacyExternalFiles()
 
                     // ÚNICO archivo generado: .m4a que contiene audio, portada y letras sincronizadas
                     val hasLyrics = lrcContent.isNotBlank()
