@@ -35,9 +35,16 @@ class SleepTimerManager @Inject constructor(
         onTimerExpired: () -> Unit
     ) {
         cancelSleepTimer(onSpeedChange)
-        if (minutes <= 0) return
+        if (minutes == 0) return
 
         cachedOriginalSpeed = currentSpeed
+
+        if (minutes == -1) {
+            _sleepTimerRemaining.value = -1L
+            return
+        }
+        if (minutes < -1) return
+
         val durationMs = minutes * 60 * 1000L
         _sleepTimerRemaining.value = durationMs
 
