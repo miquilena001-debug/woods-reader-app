@@ -4,6 +4,8 @@ import com.example.woodsreader.core.pipeline.PdfBookViewSynchronizer
 import com.example.woodsreader.core.managers.SleepTimer
 import com.example.woodsreader.core.managers.ReadingSessionManager
 import com.example.woodsreader.core.managers.ReadingProgressManager
+import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
+import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
 import android.content.Context
 import java.util.Locale
 
@@ -150,7 +152,9 @@ class ReaderViewModel @Inject constructor(
     val proLicenseManager: ProLicenseManager,
     val ambientSoundscapePlayer: AmbientSoundscapePlayer,
     val woodsKeepAliveManager: WoodsKeepAliveManager,
-    val quoteVideoClipExporter: QuoteVideoClipExporter
+    val quoteVideoClipExporter: QuoteVideoClipExporter,
+    private val saveReadingProgressUseCase: SaveReadingProgressUseCase,
+    private val calculateReadingStatsUseCase: CalculateReadingStatsUseCase
 ) : ViewModel() {
 
     companion object {
@@ -169,7 +173,6 @@ class ReaderViewModel @Inject constructor(
 
     private var navigatorLocatorJob: Job? = null
     private var lastSavedLocatorJson: String? = null
-    private var lastSaveTimeMs: Long = 0L
     private var lastProcessedChapterHref: String? = null
 
     var navigator: Navigator? = null
@@ -1214,69 +1217,46 @@ class ReaderViewModel @Inject constructor(
 
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Progress ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 
-    private var lastTtsDbSaveTime = 0L
-
     private fun onTtsLocatorChanged(locator: Locator) {
         if (_showEpubCoverPage.value) return
         currentBookmarkLocator = locator
-        lastSavedLocatorJson = locator.toJSON().toString()
+        val locJson = saveReadingProgressUseCase.serializeLocator(locator)
+        lastSavedLocatorJson = locJson
+        saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
         updateChapterMetadata(locator)
         val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
         val totalProgression = locator.locations.totalProgression ?: 0.0
         val activeWpm = 200
-        val bookWordsRemaining = (totalWords * (1.0 - totalProgression)).coerceAtLeast(0.0)
-        val bookMinLeft = (bookWordsRemaining / activeWpm).toInt()
-        _bookTimeRemaining.value = if (bookMinLeft > 0) {
-            if (bookMinLeft >= 60) "${bookMinLeft / 60}h ${bookMinLeft % 60}m restantes"
-            else "$bookMinLeft min restantes en el libro"
-        } else "Terminando libro"
+        _bookTimeRemaining.value = calculateReadingStatsUseCase.calculateBookTimeRemaining(
+            totalWords = totalWords,
+            totalProgression = totalProgression,
+            activeWpm = activeWpm
+        )
 
         if (totalPositions > 0) {
             val pub = publication
             if (pub != null) {
                 val resourceIndex = resourceIndexCache?.get(locator.href.toString()) 
                     ?: pub.readingOrder.indexOfFirst { it.href.toString() == locator.href.toString() }
-                if (resourceIndex != -1) {
-                    val currentResourcePositions = positionsByResource.getOrNull(resourceIndex) ?: emptyList()
-                    if (currentResourcePositions.isNotEmpty()) {
-                        val positionInResource = currentResourcePositions
-                            .indexOfFirst { (it.locations.progression ?: 0.0) >= (locator.locations.progression ?: 0.0) }
-                            .coerceAtLeast(0)
-                        val remainingPages = (currentResourcePositions.size - positionInResource).coerceAtLeast(0)
-                        val chapterWordsRemaining = remainingPages * 250
-                        val chapterMinLeft = (chapterWordsRemaining / activeWpm).toInt()
-                        _chapterTimeRemaining.value = if (chapterMinLeft > 0) {
-                            "$chapterMinLeft min para el capítulo"
-                        } else "Terminando capítulo"
-
-                        var positionsBefore = 0
-                        val limit = minOf(resourceIndex, positionsByResource.size)
-                        for (i in 0 until limit) {
-                            positionsBefore += positionsByResource[i].size
-                        }
-                        _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
-                    }
+                val chapterStats = calculateReadingStatsUseCase.calculateChapterProgress(
+                    locatorProgression = locator.locations.progression ?: 0.0,
+                    resourceIndex = resourceIndex,
+                    positionsByResource = positionsByResource,
+                    totalPositions = totalPositions,
+                    activeWpm = activeWpm
+                )
+                if (chapterStats != null) {
+                    _chapterTimeRemaining.value = chapterStats.chapterTimeRemaining
+                    _globalProgress.value = chapterStats.globalProgress
                 }
             }
         }
 
-        val now = System.currentTimeMillis()
-        if (now - lastTtsDbSaveTime > 10_000L) {
-            lastTtsDbSaveTime = now
-            val totalProg = (locator.locations.totalProgression ?: 0.0).toFloat()
-            val locJson = locator.toJSON().toString()
-            val fHref = locator.href.toString()
-            val fPos = locator.locations.position ?: 0
-            viewModelScope.launch(Dispatchers.IO) {
-                bookRepository.updateReadingProgressWithFallback(
-                    bookId = bookId,
-                    progress = totalProg,
-                    locatorJson = locJson,
-                    fallbackHref = fHref,
-                    fallbackPosition = fPos
-                )
-            }
-        }
+        saveReadingProgressUseCase.saveTtsProgressDebounced(
+            scope = viewModelScope,
+            bookId = bookId,
+            locator = locator
+        )
     }
 
     fun onLocatorChanged(locator: Locator) {
@@ -1294,26 +1274,21 @@ class ReaderViewModel @Inject constructor(
                 ?: 1
             _globalProgress.value = (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
 
-            val now = System.currentTimeMillis()
-            if (now - lastSaveTimeMs > 800L) {
-                lastSaveTimeMs = now
-                viewModelScope.launch(Dispatchers.IO) {
-                    bookRepository.updateReadingProgressWithFallback(
-                        bookId = bookId,
-                        progress = _globalProgress.value,
-                        locatorJson = locator.toJSON().toString(),
-                        fallbackHref = locator.href.toString(),
-                        fallbackPosition = page
-                    )
-                }
-            }
+            saveReadingProgressUseCase.saveProgressDebounced(
+                scope = viewModelScope,
+                bookId = bookId,
+                progress = _globalProgress.value,
+                locator = locator,
+                fallbackPosition = page
+            )
             return
         }
 
         if (!isPdfBook) {
-            val locJson = locator.toJSON().toString()
+            val locJson = saveReadingProgressUseCase.serializeLocator(locator)
             if (locJson != lastSavedLocatorJson) {
                 lastSavedLocatorJson = locJson
+                saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
                 saveProgress(locator)
             }
         }
@@ -1321,16 +1296,16 @@ class ReaderViewModel @Inject constructor(
 
     fun saveProgress(locator: Locator) {
         if (readingSessionManager.currentSessionMode == ReadingMode.MANUAL) {
-
             val currentProg = locator.locations.totalProgression ?: 0.0
-            val delta = abs(currentProg - lastRecordedProgression)
-
-            if (delta > 0 && delta < 0.1) {
-                val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
-
-                readingSessionManager.incrementWords((delta * totalWords).toLong())
+            val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
+            val wordsRead = calculateReadingStatsUseCase.calculateWordsDelta(
+                currentProgression = currentProg,
+                lastRecordedProgression = lastRecordedProgression,
+                estimatedWordCount = totalWords
+            )
+            if (wordsRead > 0) {
+                readingSessionManager.incrementWords(wordsRead)
             }
-
             lastRecordedProgression = currentProg
         }
 
@@ -1340,13 +1315,9 @@ class ReaderViewModel @Inject constructor(
         if (isNewPage) {
             readingSessionManager.addPageRead(pageKey)
             viewModelScope.launch {
-                val today = java.time.LocalDate.now().toString()
-                val stats = bookRepository.getReadingStats(today) ?: ReadingStatsEntity(today)
-                bookRepository.saveReadingStats(
-                    stats.copy(
-                        pagesRead = stats.pagesRead + 1,
-                        booksActive = if (stats.booksActive == 0) 1 else stats.booksActive
-                    )
+                calculateReadingStatsUseCase.recordPageRead(
+                    pageKey = pageKey,
+                    isAlreadyRead = false
                 )
             }
         }
@@ -1380,46 +1351,33 @@ class ReaderViewModel @Inject constructor(
 
         // Calculate WPM & Time remaining estimates
         val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
-        val sessionDurationMs = System.currentTimeMillis() - readingSessionManager.sessionStartTime
-        val durationMin = sessionDurationMs.toDouble() / 60_000.0
-        val sessionWords = readingSessionManager.wordsProcessed.value
-        val activeWpm = if (durationMin > 0.5 && sessionWords > 50) {
-            (sessionWords.toDouble() / durationMin).toInt().coerceIn(80, 500)
-        } else {
-            200
-        }
+        val activeWpm = calculateReadingStatsUseCase.calculateActiveWpm(
+            sessionStartTimeMs = readingSessionManager.sessionStartTime,
+            wordsProcessed = readingSessionManager.wordsProcessed.value
+        )
 
         val totalProgression = locator.locations.totalProgression ?: 0.0
-        val bookWordsRemaining = (totalWords * (1.0 - totalProgression)).coerceAtLeast(0.0)
-        val bookMinLeft = (bookWordsRemaining / activeWpm).toInt()
-        _bookTimeRemaining.value = if (bookMinLeft > 0) {
-            if (bookMinLeft >= 60) "${bookMinLeft / 60}h ${bookMinLeft % 60}m restantes"
-            else "$bookMinLeft min restantes en el libro"
-        } else "Terminando libro"
+        _bookTimeRemaining.value = calculateReadingStatsUseCase.calculateBookTimeRemaining(
+            totalWords = totalWords,
+            totalProgression = totalProgression,
+            activeWpm = activeWpm
+        )
+
         if (totalPositions > 0) {
             val pub = publication
             if (pub != null) {
-                val resourceIndex = resourceIndexCache?.get(locator.href.toString()) ?: pub.readingOrder.indexOfFirst { it.href.toString() == locator.href.toString() }
-                if (resourceIndex != -1) {
-                    val currentResourcePositions = positionsByResource.getOrNull(resourceIndex) ?: emptyList()
-                    if (currentResourcePositions.isNotEmpty()) {
-                        val positionInResource = currentResourcePositions
-                            .indexOfFirst { (it.locations.progression ?: 0.0) >= (locator.locations.progression ?: 0.0) }
-                            .coerceAtLeast(0)
-                        val remainingPages = (currentResourcePositions.size - positionInResource).coerceAtLeast(0)
-                        val chapterWordsRemaining = remainingPages * 250
-                        val chapterMinLeft = (chapterWordsRemaining / activeWpm).toInt()
-                        _chapterTimeRemaining.value = if (chapterMinLeft > 0) {
-                            "$chapterMinLeft min para el capítulo"
-                        } else "Terminando capítulo"
-
-                        var positionsBefore = 0
-                        val limit = minOf(resourceIndex, positionsByResource.size)
-                        for (i in 0 until limit) {
-                            positionsBefore += positionsByResource[i].size
-                        }
-                        _globalProgress.value = ((positionsBefore + positionInResource).toFloat() / totalPositions).coerceIn(0f, 1f)
-                    }
+                val resourceIndex = resourceIndexCache?.get(locator.href.toString()) 
+                    ?: pub.readingOrder.indexOfFirst { it.href.toString() == locator.href.toString() }
+                val chapterStats = calculateReadingStatsUseCase.calculateChapterProgress(
+                    locatorProgression = locator.locations.progression ?: 0.0,
+                    resourceIndex = resourceIndex,
+                    positionsByResource = positionsByResource,
+                    totalPositions = totalPositions,
+                    activeWpm = activeWpm
+                )
+                if (chapterStats != null) {
+                    _chapterTimeRemaining.value = chapterStats.chapterTimeRemaining
+                    _globalProgress.value = chapterStats.globalProgress
                 }
             }
         }
@@ -1429,23 +1387,13 @@ class ReaderViewModel @Inject constructor(
         val calculatedProg = _globalProgress.value
         val locProg = (locator.locations.totalProgression ?: 0.0).toFloat()
         val totalProg = if (calculatedProg > 0f) calculatedProg else locProg
-        val locJson = locator.toJSON().toString()
-        val fHref = locator.href.toString()
-        val fPos = locator.locations.position ?: 0
 
-        val now = System.currentTimeMillis()
-        if (now - lastSaveTimeMs > 800L) {
-            lastSaveTimeMs = now
-            viewModelScope.launch(Dispatchers.IO) {
-                bookRepository.updateReadingProgressWithFallback(
-                    bookId = bookId,
-                    progress = totalProg,
-                    locatorJson = locJson,
-                    fallbackHref = fHref,
-                    fallbackPosition = fPos
-                )
-            }
-        }
+        saveReadingProgressUseCase.saveProgressDebounced(
+            scope = viewModelScope,
+            bookId = bookId,
+            progress = totalProg,
+            locator = locator
+        )
 
         recordActivity()
     }
@@ -2398,20 +2346,26 @@ class ReaderViewModel @Inject constructor(
             }
             if (!isScrolling && pageNumber > 0) {
                 val pageKey = "pdf_reflow#$pageNumber"
-                if (!readingSessionManager.pagesRead.value.contains(pageKey)) {
+                val isNewPage = !readingSessionManager.pagesRead.value.contains(pageKey)
+                if (isNewPage) {
                     readingSessionManager.addPageRead(pageKey)
+                    viewModelScope.launch {
+                        calculateReadingStatsUseCase.recordPageRead(
+                            pageKey = pageKey,
+                            isAlreadyRead = false
+                        )
+                    }
                 }
 
                 recordActivity()
-                viewModelScope.launch(Dispatchers.IO) {
-                    bookRepository.updateReadingProgressWithFallback(
-                        bookId = bookId,
-                        progress = progress,
-                        locatorJson = "",
-                        fallbackHref = "",
-                        fallbackPosition = pageNumber
-                    )
-                }
+                saveReadingProgressUseCase.saveProgressDebounced(
+                    scope = viewModelScope,
+                    bookId = bookId,
+                    progress = progress,
+                    locator = null,
+                    fallbackPosition = pageNumber,
+                    force = true
+                )
             }
         }
     }
@@ -2646,22 +2600,6 @@ class ReaderViewModel @Inject constructor(
             ?: currentLoc?.locations?.progression?.toFloat()
             ?: _globalProgress.value
 
-        // 1. Guardar de inmediato en SharedPreferences (sincrónico vía commit para supervivencia instantánea)
-        val checkpointSaved = runCatching {
-            val prefs = context.getSharedPreferences("woods_last_reading_checkpoint", Context.MODE_PRIVATE)
-            prefs.edit()
-                .putString("last_book_id", bookId)
-                .putInt("last_chapter_index_${bookId}", chapterIdx)
-                .putString("last_locator_json_${bookId}", locJson)
-                .putFloat("last_progress_${bookId}", prog)
-                .putLong("last_saved_timestamp_${bookId}", System.currentTimeMillis())
-                .commit()
-        }.onFailure { Log.e(TAG, "No se pudo guardar el checkpoint de lectura", it) }.getOrDefault(false)
-        if (!checkpointSaved) {
-            Log.e(TAG, "SharedPreferences rechazó el checkpoint inmediato para el libro $bookId")
-        }
-
-        // 2. Guardar de inmediato en Room DB
         if (isReflowMode.value) {
             val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
@@ -2670,15 +2608,15 @@ class ReaderViewModel @Inject constructor(
                 ?: currentLoc?.locations?.progression?.toFloat()
                 ?: if (totalPages > 0) (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f) else _globalProgress.value
 
-            CoroutineScope(Dispatchers.IO).launch {
-                bookRepository.updateReadingProgressWithFallback(
-                    bookId = bookId,
-                    progress = progress,
-                    locatorJson = currentLoc?.toJSON()?.toString() ?: "",
-                    fallbackHref = currentLoc?.href?.toString() ?: "",
-                    fallbackPosition = page
-                )
-            }
+            saveReadingProgressUseCase.flushImmediately(
+                bookId = bookId,
+                chapterIndex = chapterIdx,
+                progress = progress,
+                currentLocator = currentLoc,
+                fallbackLocatorJson = locJson,
+                fallbackHref = href,
+                fallbackPosition = page
+            )
         } else if (isPdfBook) {
             val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
             lastKnownReflowPage = page
@@ -2690,28 +2628,28 @@ class ReaderViewModel @Inject constructor(
                 ?: currentLoc?.locations?.progression?.toFloat()
                 ?: (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
 
-            CoroutineScope(Dispatchers.IO).launch {
-                bookRepository.updateReadingProgressWithFallback(
-                    bookId = bookId,
-                    progress = progress,
-                    locatorJson = currentLoc?.toJSON()?.toString() ?: "",
-                    fallbackHref = currentLoc?.href?.toString() ?: "",
-                    fallbackPosition = page
-                )
-            }
+            saveReadingProgressUseCase.flushImmediately(
+                bookId = bookId,
+                chapterIndex = chapterIdx,
+                progress = progress,
+                currentLocator = currentLoc,
+                fallbackLocatorJson = locJson,
+                fallbackHref = href,
+                fallbackPosition = page
+            )
         } else {
             if (currentLoc != null) {
                 saveProgress(currentLoc)
-                CoroutineScope(Dispatchers.IO).launch {
-                    bookRepository.updateReadingProgressWithFallback(
-                        bookId = bookId,
-                        progress = prog,
-                        locatorJson = locJson,
-                        fallbackHref = href,
-                        fallbackPosition = currentLoc.locations.position ?: 0
-                    )
-                }
             }
+            saveReadingProgressUseCase.flushImmediately(
+                bookId = bookId,
+                chapterIndex = chapterIdx,
+                progress = prog,
+                currentLocator = currentLoc,
+                fallbackLocatorJson = locJson,
+                fallbackHref = href,
+                fallbackPosition = currentLoc?.locations?.position ?: 0
+            )
         }
     }
 
