@@ -6,18 +6,18 @@
 
 ## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `c757d62` (rama `master`).
+- **Commit hash de referencia:** `7274847` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
   2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
-  4. **Arquitectura del Lector Descomprimida:** `ReaderViewModel.kt` desacoplado con éxito mediante el patrón *Strangler Fig*, extrayendo 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (reducción de más de 1.100 líneas y 5 inyecciones directas eliminadas).
+  4. **Descompresión Parcial del Lector:** Extracción inicial de 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator); `ReaderViewModel.kt` conserva 24 dependencias inyectadas directas (25 con Application) y orquesta TTS, teleprompter, sueño, ambientes, preferencias y navegación (C3 activo como deuda técnica).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
 
 - **Resumen de Auditoría de Hallazgos (Sección 14):**
-  - ✅ **Verificado / Resuelto:** 11 hallazgos (C1, C2, C3, C5, C9, C12, C13, A1, A12, M4, SEC-1).
+  - ✅ **Verificado / Resuelto:** 10 hallazgos (C1, C2, C5, C9, C12, C13, A1, A12, M4, SEC-1).
   - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 2 hallazgos (C6, C7).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 19 hallazgos (C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 25 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29).
   - ⚪ **No verificado:** 0.
 
 ---
@@ -125,9 +125,10 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 3. **Fase 3 del Roadmap: Doble Vista para Documentos PDF**:
    - Alternancia fluida entre modo Reflow accesible (extracción semántica) y modo Réplica Original con zoom, conservando la sincronización de lectura bidireccional.
 4. **Deuda Técnica Crítica Pendiente:**
+   - 🔴 **C3:** Descompresión de God Class en `ReaderViewModel.kt` (24 dependencias inyectadas en constructor, ~2.476 líneas).
    - 🔴 **C4:** Cancelación ordenada de la corrutina de limpieza en `SherpaModelManager.kt:280`.
-   - 🔴 **C5:** Desacoplamiento de logging nativo C++ de Sherpa atado a `BuildConfig.DEBUG` en `SherpaModelManager.kt:437`.
-   - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos de 4 archivos (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderViewModel.kt`).
+   - ✅ **C5 [Mitigado]:** Logging nativo C++ de Sherpa atado a `BuildConfig.DEBUG` en `SherpaModelManager.kt:437` (desactivado en release).
+   - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos y regex en 5 archivos adicionales (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `MultilingualAudiobookNormalizer.kt`).
 
 ---
 
@@ -725,7 +726,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:**
   - **C6:** `.first()` en `userPreferencesRepository.userPreferencesFlow.first()` dentro de `speak()` puede bloquear TTS.
   - **C7:** `setOnUtteranceProgressListener` redefinido en cada iteración del bucle TTS (race condition).
-  - **C11:** Mojibake en comentarios (líneas 572, 586, 656, 671, 679, 738).
+  - **C11:** Mojibake en comentarios (líneas 309, 548, 613, 627, 697, 711, 720, 779).
   - **A5:** `playPcmSamplesBlocking` sin dispatcher explícito (riesgo ANR si se llama desde Main).
   - **M10:** `requestAudioFocus()` siempre devuelve `true` sin gestionar AudioManager real.
   - **M12:** Wake lock de 45 min sin renovación garantizada.
@@ -1547,19 +1548,25 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:**
   - **M18:** Inyección de JavaScript directo en L1158–1163 (`s.modify('move', 'backward', 'sentence')`) sobre instancias de WebView sin timeout de ejecución ni callback de error ante sintaxis no soportada en motores WebView desactualizados.
   - **M19:** Captura de excepciones vacía (`catch (_: Exception) {}`) en L1207–1215 al disparar el intent implícito `ACTION_VIEW` para abrir definiciones web externas, ocultando posibles `ActivityNotFoundException` si el dispositivo no tiene navegador instalado.
+  - **C11:** Mojibake en comentarios descriptivos de líneas 546, 563 y 1919.
 
 #### `ui/reader/ReaderViewModel.kt`
-- **Propósito:** Orquestador principal de UI del lector. Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica de negocio a casos de uso especializados.
-- **Clases:** `ReaderViewModel` (@HiltViewModel), `ParsedChapterData`, `AutoScrollTeleprompterState`, `ChapterInfo`
-- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer
+- **Propósito:** Orquestador principal de UI del lector (~2.476 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando parte de la lógica a casos de uso especializados.
+- **Clases:** `ReaderViewModel` (@HiltViewModel), `ParsedChapterData`, `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
+- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer, SleepTimer, PdfBookViewSynchronizer, CoverExtractor, TtsPresetCatalog, EdgeNeuralTtsClient, QuoteVideoClipExporter
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.472 líneas)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.476 líneas)
 - **Hallazgos:**
-  - **C3 [RESUELTO]:** Descompresión completada mediante 5 casos de uso y coordinadores de dominio. Reducción de más de 430 líneas de lógica acoplada.
+  - **C3 [PENDIENTE]:** God Class con 24 dependencias inyectadas en constructor (25 con Application), frente a 22 (23 con Application) en `4de4bd7^`. Se extrajeron 3 dependencias (`assetRetriever`, `publicationOpener`, `chapterAudioExporter`) a 5 casos de uso/coordinadores, pero persisten dentro responsabilidades críticas: orquestación de TTS, teleprompter WPM y auto-scroll, temporizador de sueño (`SleepTimer`), ambientes/soundscapes (`ForestAmbienceEngine`, `AmbientSoundscapePlayer`), preferencias de usuario (`UserPreferencesRepository`) y navegación multidocumento (EPUB/PDF/Reflow/TOC).
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
   - **C2 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Emite `ReaderUiState.Error` seguro si falta el parámetro.
-  - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) persistentes en comentarios de líneas 355, 502 y 755. Pendiente corrección cosmética.
+  - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) confirmados en comentarios de líneas 355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245.
   - **M3 [PENDIENTE]:** Locator CFI persistido como JSON plano propenso a desincronización si cambian esquemas de Readium.
+  - **M25 [PENDIENTE]:** Dos temporizadores de sueño en paralelo (`SleepTimer` y `ttsManager.smartSleepTimerManager`) en L304–314 y L2149–2164, con preset `MIN_15` forzado por defecto ante minutos no exactos.
+  - **M26 [PENDIENTE]:** `goToNextChapter` (L1324) y `goToPreviousChapter` (L1441) retornan prematuramente (`val nav = navigator as? VisualNavigator ?: return`) antes de evaluar la rama PDF en modo Reflow.
+  - **M27 [PENDIENTE]:** `ReaderViewState` (L2461) tiene 10 de 14 campos nunca actualizados, y `ReaderState` en `ReaderContract.kt:39` duplica sus únicos campos activos de PDF.
+  - **M28 [PENDIENTE]:** Lógica de cálculo de tiempo restante y progreso de capítulo duplicada entre `onTtsLocatorChanged` (L1034–1061) y `saveProgress` (L1160–1193).
+  - **M29 [PENDIENTE]:** `readingProgressManager` inyectado en el constructor (L141) sin ningún uso en todo el archivo.
 
 #### `ui/reader/ReaderContract.kt`
 - **Propósito:** Definición de contratos y modelos de navegación para la interfaz del lector: pestañas del panel lateral (TOC, Marcadores, Subrayados, Notas, Configuración) y modelos inmutables de resaltado de texto para la narración de TTS.
@@ -1567,7 +1574,9 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** Readium Locator
 - **Usado_por:** ReaderViewModel, ReaderScreen, ReaderSideMenu, ReaderTopBar
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 42 líneas)
-- **Hallazgos:** Contrato estricto y desacoplado de Compose que previene dependencias cíclicas entre vistas del lector.
+- **Hallazgos:**
+  - Contrato estricto y desacoplado de Compose que previene dependencias cíclicas entre vistas del lector.
+  - **M27 [PENDIENTE]:** `ReaderState` (L39–42) contiene únicamente `isPdfBookViewActive` y `pdfBookViewBlockIndex`, duplicando la definición de estado PDF de `ReaderViewState` en `ReaderViewModel.kt`.
 
 #### `ui/reader/TtsState.kt`
 - **Propósito:** Estados de TTS.
@@ -2247,15 +2256,15 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 |---|---|---|---|---|---|---|---|
 | **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` confirman que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
 | **C2** | Crítica | `ReaderViewModel.kt:171, 597` | Cierre forzado inmediato (`IllegalStateException`) si el lector se abre con URI sin `bookId` | `NavGraph` → `ReaderScreen` → `ReaderViewModel` | ✅ **Resuelto** | Navegar a `Screen.Reader.createRoute("")`. Antes crasheaba en `checkNotNull(savedStateHandle["bookId"])`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene en blanco, emite `ReaderUiState.Error` seguro. |
-| **C3** | Crítica | `ReaderViewModel.kt:124-153` | God Class monolítica de 2.905 líneas con 17 dependencias inyectadas directas | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | ✅ **Resuelto** | Inspección de dependencias en constructor. Alto acoplamiento y riesgo de regresiones en cualquier cambio. | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`: Strangler Fig en 5 Casos de Uso/Coordinadores. 5 inyecciones directas eliminadas. |
+| **C3** | Crítica | `ReaderViewModel.kt:134-158` | God Class monolítica con 24 dependencias inyectadas en constructor (25 con Application) frente a 22 en `4de4bd7^` | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | 🔴 **Pendiente** | Contar parámetros en constructor (L134-158): 24 dependencias (25 con Application). En `4de4bd7^` eran 22 (23 con Application). | Deuda técnica documentada. Se extrajeron 3 dependencias a casos de uso pero se agregaron 5 casos de uso/coordinadores; siguen dentro TTS, teleprompter, sueño, ambientes, preferencias y navegación. |
 | **C4** | Alta | `SherpaModelManager.kt:280` | Corrutina huérfana en `init` lanzada en singleton sin control de cancelación | `SherpaModelManager` → Ciclo de vida de app | 🔴 **Pendiente** | Inspeccionar línea 280: `managerScope.launch` borra directorio de Kokoro recursivamente sin almacenar el `Job`. | Deuda técnica documentada. No impacta runtime crítico al ser `@Singleton`, pero carece de método de cancelación ordenado. |
 | **C5** | Baja | `SherpaModelManager.kt:437` | Logging nativo C++ de Sherpa ONNX emitido en logcat durante depuración | `SherpaModelManager` → Logcat del sistema | ✅ **Mitigado** | Inspeccionar línea 437: pasa `debug = BuildConfig.DEBUG`. En release compila como `false`, anulando logs en producción. | No representa riesgo en producción (`BuildConfig.DEBUG == false`). En depuración local genera trazas nativas estándar en logcat. |
 | **C6** | Crítica | `TtsManager.kt:1375` | Congelamiento o suspensión prolongada del hilo de síntesis de TTS en arranque en frío | `TtsManager` → `narrateSequence` → `ReaderTtsService` | 🟡 **Validar en tlf.** | Pulsar Play de TTS inmediatamente tras abrir la app en frío con motor Sherpa activado. | Commits `93e4dc2` y `5a9b341`: eliminó `.first()`, usa `@Volatile cachedUseSherpaTts` y `ensurePreferencesLoaded(300ms)`. |
 | **C7** | Crítica | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización de oraciones, continuaciones colgadas o silencio por carreras en listeners | `TtsManager` → `TextToSpeech` nativo → `ReaderScreen` | 🟡 **Validar en tlf.** | Reproducir secuencias largas con saltos de párrafo rápidos o pausas intempestivas. | Commits `93e4dc2` y `5a9b341`: listener único en `initialize()`, IDs con `AtomicLong`, manejo de error y fallback OEM para `utteranceId == null`. |
-| **C8** | Media | `ReaderViewModel.kt:355, 502, 755` | Caracteres corruptos (mojibake) en comentarios de código fuente del ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Búsqueda grep de caracteres Latin1/Windows-1252: líneas 355, 502 y 755 aún contienen signos `?` y secuencias corruptas. | Pendiente saneamiento ortográfico manual. No altera bytecode ni ejecución. |
+| **C8** | Media | `ReaderViewModel.kt:355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245` | Caracteres corruptos (mojibake: `Ã`, `â€`, `Â`) en comentarios de código fuente del ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Búsqueda grep de caracteres Latin1/Windows-1252: 12 líneas contienen signos `?` y secuencias corruptas. | Pendiente saneamiento ortográfico manual. No altera bytecode ni ejecución. |
 | **C9** | Crítica | `AppDatabase.kt:37` | Confirma duplicidad de C1 sobre migración de Room | `AppDatabase` | ✅ **Resuelto** | Verificado en conjunto con C1. | Resuelto mediante `@AutoMigration(from = 10, to = 11)`. |
-| **C10** | Media | `ReaderViewModel.kt:355, 502, 755` | Confirma duplicidad de C8 sobre mojibake en el ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Mismo hallazgo C8: pendiente saneamiento ortográfico en líneas 355, 502 y 755. | No afecta ejecución ejecutable ni compilación. |
-| **C11** | Baja | `TtsManager.kt:309`, `BookScannerService.kt:566`, `LibraryScreen.kt:64`, `ReaderViewModel.kt:355` | Mojibake residual en comentarios descriptivos (signos `?`, tildes rotas) en 4 archivos | Comentarios internos en 4 archivos | 🔴 **Pendiente** | Buscar secuencias Latin1 / Windows-1252 con grep. No afecta compilación ni lógica de ejecución. | Pendiente saneamiento ortográfico manual global en los 4 archivos detectados. |
+| **C10** | Media | `ReaderViewModel.kt:355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245` | Confirma duplicidad de C8 sobre mojibake en el ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Mismo hallazgo C8: pendiente saneamiento ortográfico en 12 líneas del archivo. | No afecta ejecución ejecutable ni compilación. |
+| **C11** | Baja | `TtsManager.kt:309, 548, 613, 627, 697, 711, 720, 779`, `BookScannerService.kt:100, 180, 545, 566, 639`, `LibraryScreen.kt:63-65, 116, 119, 156, 237, 259, 277`, `ReaderScreen.kt:546, 563, 1919`, `MultilingualAudiobookNormalizer.kt:30` | Mojibake residual en comentarios descriptivos y regex en 5 archivos adicionales | Comentarios internos en 5 archivos | 🔴 **Pendiente** | Búsqueda exhaustiva con grep (`Ã`, `â€`, `Â`): 26 ocurrencias en 5 archivos. | Pendiente saneamiento ortográfico manual global. No altera compilación ni bytecode. |
 | **C12** | Crítica | `BookDetailViewModel.kt:59, 69` | Cierre forzado (`IllegalStateException`) al abrir detalle de libro con `bookId` nulo o inválido | `NavGraph` → `BookDetailScreen` → `BookDetailViewModel` | ✅ **Resuelto** | Navegar a `Screen.BookDetail.createRoute("")`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Expone `BookDetailUiState(error = "...")`. |
 | **C13** | Crítica | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre forzado (`IllegalStateException`) al abrir grafo o candidatos de entidades sin `bookId` | `NavGraph` → `GraphScreen` / `CandidatesScreen` → ViewModels | ✅ **Resuelto** | Abrir grafo sin parámetro de libro. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Abortan retorno seguro con colecciones vacías. |
 | **A1** | Alta | `GraphRepository.kt:80` | Riesgo de inconsistencia si `mergeInto` falla a mitad de transacción | `GraphRepository` → `GraphDao` → Room | ✅ **Verificado** | Revisar implementación de `mergeInto`. | La operación ejecuta dentro de `@Transaction` de Room, garantizando rollback atómico ante cualquier excepción. |
@@ -2277,6 +2286,11 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 | **M22** | Media | `ReaderUIComponents.kt:1530-1536` | Generación de Bitmap (1080x1350 px, 5.8 MB) síncrona en el hilo principal de UI al pulsar "Imagen" | `ReaderUIComponents` → Canvas Android → Hilo Main | 🔴 **Pendiente** | Inspeccionar L1530: `renderThemedQuoteBitmap` corre en hilo UI antes de insertar en MediaStore. | Mover la generación y compresión del Bitmap a `Dispatchers.Default` o `Dispatchers.IO`. |
 | **M23** | Baja | `SettingsScreen.kt:1171-1184` | Ficha técnica contiene cadenas de versión hardcodeadas ("v1.0.0-ALPHA", "Build 2026.10") | `SettingsScreen` → Ficha Técnica | 🔴 **Pendiente** | Inspeccionar L1175: valores estáticos en texto multilínea. | Sustituir cadenas fijas por interpolación de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`. |
 | **M24** | Media | `SettingsScreen.kt:940, 1356` | Exposición directa de instancias de dominio (`viewModel.woodsKeepAliveManager`, `viewModel.proLicenseManager`) a vistas Compose | `SettingsScreen` → Gestores de Dominio | 🔴 **Pendiente** | Inspeccionar L940 y L1356: la UI invoca métodos de los gestores directamente. | Delegar las acciones a través de métodos públicos del `SettingsViewModel`. |
+| **M25** | Media | `ReaderViewModel.kt:304-314, 2149-2164` | Dos temporizadores de sueño ejecutando en paralelo (`SleepTimer` y `SmartSleepTimerManager`) con preset forzado `MIN_15` | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🔴 **Pendiente** | Iniciar temporizador con minutos personalizados (ej. 20 min): L2156 fuerza `MIN_15` en `smartSleepTimerManager` mientras `sleepTimer` corre a 20 min. | Unificar la gestión de temporizador en un único motor o sincronizar los presets continuos. |
+| **M26** | Media | `ReaderViewModel.kt:1324, 1441` | `goToNextChapter` y `goToPreviousChapter` retornan tempranamente si `navigator` no es `VisualNavigator` antes de la rama PDF | `ReaderViewModel` → Navegación PDF Reflow | 🔴 **Pendiente** | En PDF modo Reflow, invocar `goToNextChapter` con navegador nulo: retorna en L1324 sin ejecutar `jumpToReflowPage(targetPage)`. | Mover la validación `isPdfBook` y `isReflowMode` antes de la aserción de `VisualNavigator`. |
+| **M27** | Media | `ReaderViewModel.kt:2461`, `ReaderContract.kt:39` | `ReaderViewState` contiene 10 de 14 campos obsoletos/nunca actualizados, y `ReaderState` duplica sus campos activos | `ReaderViewModel` ↔ `ReaderContract` ↔ `ReaderViewState` | 🔴 **Pendiente** | Inspeccionar `_viewState`: solo actualiza bloques de narración y PDF; el resto de campos nunca se mutan y la UI no observa `viewState`. | Eliminar campos muertos de `ReaderViewState` o fusionarlo con `ReaderState` en `ReaderContract.kt`. |
+| **M28** | Media | `ReaderViewModel.kt:1034-1061, 1160-1193` | Bloques duplicados de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` | `ReaderViewModel` ↔ `CalculateReadingStatsUseCase` | 🔴 **Pendiente** | Comparar L1034-1061 con L1160-1193: 28 líneas idénticas de cálculo WPM, tiempo de libro y progreso de capítulo. | Extraer a método privado reutilizable `updateReadingEstimatesAndMetadata(locator, activeWpm)`. |
+| **M29** | Baja | `ReaderViewModel.kt:141` | `readingProgressManager` inyectado en el constructor de `ReaderViewModel` sin ningún uso en todo el archivo | `ReaderViewModel` ↔ `ReadingProgressManager` | 🔴 **Pendiente** | Buscar `readingProgressManager` en `ReaderViewModel.kt`: solo aparece en L141 en la firma del constructor. | Eliminar la inyección de `ReadingProgressManager` del constructor de `ReaderViewModel`. |
 
 ### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en TECNO-LH7n)
 
