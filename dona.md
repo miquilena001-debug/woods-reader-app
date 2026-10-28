@@ -4,7 +4,7 @@
 
 ---
 
-## 📌 ESTADO ACTUAL DEL PROYECTO (Al 28/10/2026)
+## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
 - **Commit hash de referencia:** `75c91e5` (rama `master`).
 - **Resumen Ejecutivo:**
@@ -14,9 +14,15 @@
   4. **Arquitectura del Lector Descomprimida:** `ReaderViewModel.kt` desacoplado con éxito mediante el patrón *Strangler Fig*, extrayendo 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (reducción de más de 1.100 líneas y 5 inyecciones directas eliminadas).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
 
+- **Resumen de Auditoría de Hallazgos (Sección 14):**
+  - ✅ **Verificado / Resuelto:** 11 hallazgos (C1, C2, C3, C5, C9, C12, C13, A1, A12, M4, SEC-1).
+  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 2 hallazgos (C6, C7).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 9 hallazgos (C4, C8, C10, C11, A9, A10, M2, M13, M15).
+  - ⚪ **No verificado:** 0.
+
 ---
 
-## 🗺️ MAPA DE CAPAS DE LA ARQUITECTURA
+## 0.1 Mapa de Capas de la Arquitectura
 
 Woods Reader sigue una arquitectura modular en capas orientada al dominio y altamente reactiva. La capa de presentación (Jetpack Compose + ViewModels desacoplados) interactúa exclusivamente con Casos de Uso y Coordinadores de dominio, los cuales encapsulan la lógica de lectura, audio, búsqueda y anotaciones. El dominio delega la persistencia a Repositorios Room/DataStore y la renderización/síntesis a motores de bajo nivel (Readium 3.x para EPUB/PDF y Sherpa ONNX / Android TTS para síntesis vocal), mientras que Servicios en primer plano (*Foreground Services*) y Workers en segundo plano garantizan la supervivencia ininterrumpida de la reproducción de audio y tareas asíncronas pesadas.
 
@@ -57,7 +63,7 @@ Woods Reader sigue una arquitectura modular en capas orientada al dominio y alta
 
 ---
 
-## 🛡️ INVARIANTES E INTOCABLES (Reglas del Proyecto)
+## 0.2 Invariantes e Intocables (Reglas del Proyecto)
 Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA DEBEN MODIFICARSE** sin aprobación expresa ni sin una suite de pruebas de regresión visual/auditiva:
 1. `ChapterScrollDetector.kt`:
    - **Razón:** Maneja la detección sensible de scroll horizontal y vertical de Readium con heurísticas de tolerancia gestual. Cualquier alteración de sus umbrales produce saltos de página erráticos, bloqueos de scroll o regresiones en modo continuo.
@@ -70,7 +76,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
-## 🏛️ DECISIONES DE ARQUITECTURA Y MOTIVOS
+## 0.3 Decisiones de Arquitectura y Motivos
 1. **Strangler Fig de Adentro Hacia Afuera para `ReaderViewModel`**:
    - *Decisión:* En lugar de reescribir el ViewModel de 2.900 líneas en un solo paso de alto riesgo, se extrajeron gradualmente las responsabilidades de dominio comenzando por las hojas periféricas (`SaveReadingProgressUseCase`, `CalculateReadingStatsUseCase`, `LoadBookFastUseCase`, `ManageReaderAnnotationsUseCase`, `ReaderIntelligenceAndExportCoordinator`).
    - *Motivo:* Permitió mantener la compilación y las 182 pruebas unitarias pasando en cada commit individual, con cero regresiones en la UI y facilitando la cobertura aislada de pruebas.
@@ -81,15 +87,15 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
    - *Decisión:* Para libros voluminosos con más de 80 capítulos/spines, se omite el cálculo tradicional y pesado de posiciones de Readium (`computePositions()`) y se genera un array sintético de posiciones virtuales proporcionales.
    - *Motivo:* Reduce el tiempo de apertura de libros masivos (>1.000 páginas) de ~12 segundos a menos de 200 milisegundos, erradicando los congelamientos de ANR al abrir libros grandes.
 4. **Un Solo Archivo Contenedor `.m4a` con Metadatos Binarios**:
-   - *Decisión:* En lugar de generar hasta 7 archivos externos complementarios (`.jpg`, `.lrc`, `.srt`, `.txt`), la exportación de audio sintetizado genera exclusivamente un archivo `.m4a` que aloja la pista de audio AAC a 128 kbps, la portada JPEG en la caja `covr` y la letra sincronizada en la caja `©lyr` del átomo `moov.udta.meta.ilst`.
+   - *Decisión:* En lugar de generar hasta 7 archivos externos complementarios (`.jpg`, `.lrc`, `.srt`, `.txt`), la exportación de audio sintetizado genera exclusivamente un archivo `.m4a` que aloja la pista de audio AAC a 48 kbps (KEY_BIT_RATE = 48_000, voz optimizada), la portada JPEG en la caja `covr` y la letra sincronizada en la caja `©lyr` del átomo `moov.udta.meta.ilst`.
    - *Motivo:* Cero contaminación de carpetas en `Music/WoodsReader`, compatibilidad inmediata con reproductores estándar (Samsung Music, Poweramp, Musicolet, VLC) y portabilidad completa de la biblioteca de audio.
 
 ---
 
-## 📖 GLOSARIO DE TÉRMINOS DEL PROYECTO
+## 0.4 Glosario de Términos del Proyecto
 - **`Locator`**: Objeto fundamental de Readium que representa una posición canónica y persistente dentro de un libro (href del spine, fragmento CFI/progression 0.0..1.0, y snippets de texto circundante). Permite restaurar el punto de lectura exacto entre reinicios y sincronizar la narración de audio con el texto visual.
 - **`Publication`**: Estructura principal en memoria provista por Readium que representa el libro abierto (EPUB o PDF). Contiene la tabla de contenidos (`tableOfContents`), el orden de lectura (`readingOrder`), metadatos y acceso a recursos internos.
-- **`Positions Sintéticas O(1)`**: Array virtual de progresiones matemáticas generado instantáneamente en `LoadBookFastUseCase` para libros con más de 80 capítulos/spines, omitiendo el cálculo intensivo de bytes de Readium para reducir el tiempo de apertura de ~12s a <200ms sin provocar ANR.
+- **`Positions Sintéticas O(1)`**: Array virtual de progresiones matemáticas generado instantáneamente en `LoadBookFastUseCase` para libros con más de 80 capítulos/spines, omitiendo el cálculo intensivo de bytes de Readium para reducir el tiempo de apertura de tiempo lineal O(ZIP) a tiempo instantáneo O(N) en memoria (tiempo objetivo estimado: <200 ms) sin provocar ANR.
 - **`Sherpa ONNX`**: Motor de síntesis de voz neural offline de última generación basado en redes neuronales (VITS, Piper, Kokoro). Corre localmente en el dispositivo sin enviar datos a internet ni consumir cuotas de API.
 - **`ReadingBlock`**: Unidad semántica de texto estructurado generada por el `ReadingPipeline`. Agrupa párrafos continuos o encabezados tras limpiar ruido recurrente (números de página, encabezados repetitivos de página, créditos de maquetador).
 - **`TtsNarrationUnit`**: Unidad de narración atómica (oración o párrafo) derivada de un `ReadingBlock`. Asocia el texto limpio a reproducir con su posición exacta en el texto (`Locator`) para resaltado y auto-scroll.
@@ -99,7 +105,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
-## 📋 REGLAS DE TRABAJO PARA DESARROLLADORES Y AGENTES DE IA
+## 0.5 Reglas de Trabajo para Desarrolladores y AgENTES DE IA
 1. **Punto de Restauración Previo Obligatorio:** Antes de aplicar cualquier cambio o refactorización, registrar el estado con `git add -A && git commit -m "..."`.
 2. **Tolerancia Cero a Errores de Build:** Todo cambio debe verificar `:app:compileDebugKotlin` y `:app:testDebugUnitTest` con 0 errores antes de dar por buena una intervención.
 3. **Atomicidad de Fases:** Un commit descriptivo por fase o componente. Nunca acumular múltiples tareas no relacionadas en un solo commit.
@@ -109,7 +115,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
-## 🗺️ PENDIENTES PRIORIZADOS Y ROADMAP
+## 0.6 Pendientes Priorizados y Roadmap
 *(Referencia completa: [ROADMAP.md](file:///c:/Users/Orbit/Downloads/woods%20reader/ROADMAP.md))*
 
 1. **Fase 1 del Roadmap: TTS Karaoke Sincronizado Palabra por Palabra**:
@@ -125,7 +131,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
-## 📜 HISTORIAL DE COMMITS RECIENTES (Cadena de Refactor y Blindaje)
+## 0.7 Historial de Commits Recientes (Cadena de Refactor y Blindaje)
 
 | Commit | Fecha | Tipo | Descripción |
 |---|---|---|---|
@@ -143,7 +149,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 ---
 
-## 🏷️ LEYENDA Y FORMATO DEL ÍNDICE POR ARCHIVO
+## 0.8 Leyenda y Formato del Índice por Archivo
 Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 - `ruta` — ubicación relativa desde la raíz del proyecto.
 - `propósito` — responsabilidad técnica resumida en una frase clara.
@@ -156,9 +162,9 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 - `hallazgos` — advertencias, riesgos de crash o deuda técnica identificada.
 
 ---
-## 🌐 MAPA DE CONEXIONES DEL SISTEMA
+## 0.9 Mapa de Conexiones del Sistema
 
-### 1. Grafo de Inyección de Dependencias (Hilt)
+### 0.9.1 Grafo de Inyección de Dependencias (Hilt)
 El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance singleton en el contenedor de aplicación:
 
 ```
@@ -208,7 +214,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 
 ---
 
-### 2. Cadena de Datos (Persistencia Room → DAO → Repositorio → ViewModel → UI)
+### 0.9.2 Cadena de Datos (Persistencia Room → DAO → Repositorio → ViewModel → UI)
 
 ```
 [Tablas Room]                 [DAOs]                 [Repositorios/Managers]            [ViewModels]               [Pantallas Compose]
@@ -236,7 +242,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 
 ---
 
-### 3. Componentes de Android Declarados en el Manifest y Lanzadores
+### 0.9.3 Componentes de Android Declarados en el Manifest y Lanzadores
 
 | Componente | Tipo Android | Permisos / Flags | Responsabilidad | Quién lo Inicia |
 |---|---|---|---|---|
@@ -250,7 +256,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 
 ---
 
-### 4. Dependencias Externas y Archivos Consumidores
+### 0.9.4 Dependencias Externas y Archivos Consumidores
 
 | Dependencia Externa | Versión / Tipo | Archivos que la Consumen Directamente | Rol en el Proyecto |
 |---|---|---|---|
@@ -471,7 +477,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 ### 3.5 Capa de Dominio (Casos de Uso y Coordinadores del Lector)
 
 #### `domain/reader/SaveReadingProgressUseCase.kt`
-- **Propósito:** Persistencia atómica y resiliente del progreso de lectura (`Locator`), cálculo de sesiones y estadísticas en Room, debouncing de 700 ms y flush inmediato (`flushReadingProgressImmediately`).
+- **Propósito:** Persistencia atómica y resiliente del progreso de lectura (`Locator`), cálculo de sesiones y estadísticas en Room, debouncing de 800 ms (10.000 ms para TTS) y flush inmediato (`flushReadingProgressImmediately`).
 - **Clases:** `SaveReadingProgressUseCase` (@Inject constructor)
 - **Depende_de:** BookRepository, ReadingSessionManager, TimeProvider, ReadingProgressManager, Locator
 - **Usado_por:** ReaderViewModel
@@ -2033,7 +2039,7 @@ Usuario hace scroll o cambia página / TTS avanza párrafo:
   ReaderScreen / WebView
     → ReaderViewModel.onLocatorChanged(locator) / onTtsLocatorChanged(locator)
         ├─ SaveReadingProgressUseCase.invoke(bookId, locator)
-        │   ├─ Debounce reactivo de 700 ms para scroll continuo (evita IO masivo en DB)
+        │   ├─ Debounce reactivo de 800 ms (DEFAULT_DEBOUNCE_MS = 800L; TTS: TTS_DEBOUNCE_MS = 10.000 ms) para scroll continuo (evita IO masivo en DB)
         │   ├─ flushReadingProgressImmediately() invocado en ON_PAUSE / ON_STOP / cierre
         │   ├─ ReadingProgressManager: serializa Locator JSON
         │   ├─ BookDao.updateProgressWithFallback(bookId, progression, locatorJson)
@@ -2062,7 +2068,7 @@ Usuario selecciona texto en el lector:
 ### Flujo 4: Búsqueda Streaming, Rayos-X y Exportación Unificada `.m4a`
 ```
 Búsqueda y Análisis Semántico:
-  ReaderViewModel.search(query) / generateXRay()
+  ReaderViewModel.searchInBook(query) / generateXRayReport()
     → ReaderIntelligenceAndExportCoordinator
         ├─ FastEpubSearchEngine.search(publication, query)
         │   └─ Kotlin Flow streaming: emite coincidencias parciales con snippet y Locator
@@ -2070,13 +2076,13 @@ Búsqueda y Análisis Semántico:
             └─ Extracción de entidades clave (personajes, lugares, términos) para ReaderXRayBottomSheet
 
 Exportación a Archivo .M4A Único (PARTE 73):
-  ReaderViewModel.exportChapterAudio(chapterIndex)
+  ReaderViewModel.exportCurrentChapterToAudio() / exportAudioChapters(maxChaptersToExport)
     → ReaderIntelligenceAndExportCoordinator.exportChapterAudio(...)
         → ChapterAudioExporter.exportChapterAudio(...)
             ├─ 1. Extrae texto limpio del capítulo desde Readium Publication
             ├─ 2. Sintetiza audio PCM con Sherpa ONNX o Android TTS nativo
-            ├─ 3. Codifica stream AAC a 128 kbps usando MediaCodec en contenedor ISO MP4 (.m4a)
-            ├─ 4. M4aMetadataEmbedder.embedMetadata(m4aFile, coverBitmap, lrcString, title, author)
+            ├─ 3. Codifica stream AAC a 48 kbps (KEY_BIT_RATE = 48_000, voz optimizada) usando MediaCodec en contenedor ISO MP4 (.m4a)
+            ├─ 4. M4aMetadataEmbedder.embedAllIntoM4a(m4aFile, coverBitmap, lrcString, title, author)
             │   ├─ Incrusta portada JPEG en átomo moov.udta.meta.ilst.covr
             │   ├─ Incrusta subtítulos sincronizados en átomo moov.udta.meta.ilst.©lyr
             │   └─ Escribe etiquetas estándar de título (©nam) y autor (©ART)
@@ -2185,30 +2191,28 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 
 | ID | Sev. | Archivo : Línea | Síntoma / Riesgo | Componentes Afectados (Conexiones) | Estado | Cómo Reproducirlo o Verificarlo | Workaround / Solución Aplicada |
 |---|---|---|---|---|---|---|---|
-| **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` demuestran que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
+| **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` confirman que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
 | **C2** | Crítica | `ReaderViewModel.kt:171, 597` | Cierre forzado inmediato (`IllegalStateException`) si el lector se abre con URI sin `bookId` | `NavGraph` → `ReaderScreen` → `ReaderViewModel` | ✅ **Resuelto** | Navegar a `Screen.Reader.createRoute("")`. Antes crasheaba en `checkNotNull(savedStateHandle["bookId"])`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene en blanco, emite `ReaderUiState.Error` seguro. |
-| **C3** | Crítica | `ReaderViewModel.kt:124-153` | God Class monolítica de 2.905 líneas con 17 dependencias inyectadas directas | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | ✅ **Resuelto** | Inspección de dependencias en constructor. Alto acoplamiento y riesgo masivo de regresiones en cualquier cambio. | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`: Strangler Fig en 5 Casos de Uso/Coordinadores. 5 dependencias eliminadas. |
+| **C3** | Crítica | `ReaderViewModel.kt:124-153` | God Class monolítica de 2.905 líneas con 17 dependencias inyectadas directas | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | ✅ **Resuelto** | Inspección de dependencias en constructor. Alto acoplamiento y riesgo de regresiones en cualquier cambio. | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`: Strangler Fig en 5 Casos de Uso/Coordinadores. 5 inyecciones directas eliminadas. |
 | **C4** | Alta | `SherpaModelManager.kt:280` | Corrutina huérfana en `init` lanzada en singleton sin control de cancelación | `SherpaModelManager` → Ciclo de vida de app | 🔴 **Pendiente** | Inspeccionar línea 280: `managerScope.launch` borra directorio de Kokoro recursivamente sin almacenar el `Job`. | Deuda técnica documentada. No impacta runtime crítico al ser `@Singleton`, pero carece de método de cancelación ordenado. |
-| **C5** | Media | `SherpaModelManager.kt:437` | Logs nativos exhaustivos de Sherpa ONNX saturan logcat en compilaciones Debug | `SherpaModelManager` → Logcat del sistema | 🔴 **Pendiente** | Ejecutar TTS en build Debug con `adb logcat`: C++ emite trazas continuas por frame de audio. | Línea 437 pasa `debug = BuildConfig.DEBUG`. En Release compila como `false`. Pendiente añadir toggle runtime opcional. |
+| **C5** | Baja | `SherpaModelManager.kt:437` | Logging nativo C++ de Sherpa ONNX emitido en logcat durante depuración | `SherpaModelManager` → Logcat del sistema | ✅ **Mitigado** | Inspeccionar línea 437: pasa `debug = BuildConfig.DEBUG`. En release compila como `false`, anulando logs en producción. | No representa riesgo en producción (`BuildConfig.DEBUG == false`). En depuración local genera trazas nativas estándar en logcat. |
 | **C6** | Crítica | `TtsManager.kt:1375` | Congelamiento o suspensión prolongada del hilo de síntesis de TTS en arranque en frío | `TtsManager` → `narrateSequence` → `ReaderTtsService` | 🟡 **Validar en tlf.** | Pulsar Play de TTS inmediatamente tras abrir la app en frío con motor Sherpa activado. | Commits `93e4dc2` y `5a9b341`: eliminó `.first()`, usa `@Volatile cachedUseSherpaTts` y `ensurePreferencesLoaded(300ms)`. |
 | **C7** | Crítica | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización de oraciones, continuaciones colgadas o silencio por carreras en listeners | `TtsManager` → `TextToSpeech` nativo → `ReaderScreen` | 🟡 **Validar en tlf.** | Reproducir secuencias largas con saltos de párrafo rápidos o pausas intempestivas. | Commits `93e4dc2` y `5a9b341`: listener único en `initialize()`, IDs con `AtomicLong`, manejo de error y fallback OEM para `utteranceId == null`. |
-| **C8** | Media | `ReaderViewModel.kt` | Caracteres corruptos (mojibake) en comentarios de código del ViewModel | `ReaderViewModel.kt` | ✅ **Resuelto** | Revisión de codificación de caracteres. | Saneado a UTF-8 estándar en refactors de los Pasos 1 a 4. |
+| **C8** | Media | `ReaderViewModel.kt:355, 502, 755` | Caracteres corruptos (mojibake) en comentarios de código fuente del ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Búsqueda grep de caracteres Latin1/Windows-1252: líneas 355, 502 y 755 aún contienen signos `?` y secuencias corruptas. | Pendiente saneamiento ortográfico manual. No altera bytecode ni ejecución. |
 | **C9** | Crítica | `AppDatabase.kt:37` | Confirma duplicidad de C1 sobre migración de Room | `AppDatabase` | ✅ **Resuelto** | Verificado en conjunto con C1. | Resuelto mediante `@AutoMigration(from = 10, to = 11)`. |
-| **C10** | Media | `ReaderViewModel.kt` | Confirma duplicidad de C8 sobre mojibake en el ViewModel | `ReaderViewModel.kt` | ✅ **Resuelto** | Verificado en conjunto con C8. | Saneado a UTF-8 estándar. |
-| **C11** | Baja | `TtsManager.kt:309`, `BookScannerService.kt:566`, `LibraryScreen.kt:64`, `ReaderViewModel.kt:355` | Mojibake residual en comentarios descriptivos (signos `?`, tildes rotas) | Comentarios internos en 4 archivos | 🔴 **Pendiente** | Buscar secuencias Latin1 / Windows-1252 con grep. No afecta bytecode ni ejecución. | Pendiente saneamiento ortográfico manual. No altera lógica ejecutable. |
+| **C10** | Media | `ReaderViewModel.kt:355, 502, 755` | Confirma duplicidad de C8 sobre mojibake en el ViewModel | `ReaderViewModel.kt` | 🔴 **Pendiente** | Mismo hallazgo C8: pendiente saneamiento ortográfico en líneas 355, 502 y 755. | No afecta ejecución ejecutable ni compilación. |
+| **C11** | Baja | `TtsManager.kt:309`, `BookScannerService.kt:566`, `LibraryScreen.kt:64`, `ReaderViewModel.kt:355` | Mojibake residual en comentarios descriptivos (signos `?`, tildes rotas) en 4 archivos | Comentarios internos en 4 archivos | 🔴 **Pendiente** | Buscar secuencias Latin1 / Windows-1252 con grep. No afecta compilación ni lógica de ejecución. | Pendiente saneamiento ortográfico manual global en los 4 archivos detectados. |
 | **C12** | Crítica | `BookDetailViewModel.kt:59, 69` | Cierre forzado (`IllegalStateException`) al abrir detalle de libro con `bookId` nulo o inválido | `NavGraph` → `BookDetailScreen` → `BookDetailViewModel` | ✅ **Resuelto** | Navegar a `Screen.BookDetail.createRoute("")`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Expone `BookDetailUiState(error = "...")`. |
 | **C13** | Crítica | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre forzado (`IllegalStateException`) al abrir grafo o candidatos de entidades sin `bookId` | `NavGraph` → `GraphScreen` / `CandidatesScreen` → ViewModels | ✅ **Resuelto** | Abrir grafo sin parámetro de libro. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Abortan retorno seguro con colecciones vacías. |
 | **A1** | Alta | `GraphRepository.kt:80` | Riesgo de inconsistencia si `mergeInto` falla a mitad de transacción | `GraphRepository` → `GraphDao` → Room | ✅ **Verificado** | Revisar implementación de `mergeInto`. | La operación ejecuta dentro de `@Transaction` de Room, garantizando rollback atómico ante cualquier excepción. |
 | **A9** | Alta | `LibraryViewModel.kt:315` | Fallo de permisos silencioso si `takePersistableUriPermission` arroja `SecurityException` | `LibraryViewModel` → Android SAF / Storage Access | 🔴 **Pendiente** | Importar libro desde un proveedor SAF que revoque permisos o no admita flags de persistencia. | Envolver la llamada en `runCatching` y mostrar feedback visual en `LibraryScreen` en lugar de fallar silenciosamente. |
 | **A10** | Alta | `GraphScreen.kt:180` | Intent de exportación de JSON del grafo excede límite de IPC de Binder (~1 MB) | `GraphScreen` → Android Binder → Apps externas | 🔴 **Pendiente** | Exportar un libro con más de 1.500 entidades o relaciones vía Intent directo (`EXTRA_TEXT`). | Deuda técnica: sustituir pasaje en memoria por archivo temporal compartido vía `FileProvider`. |
-| **A12** | Alta | `ReaderViewModel.kt` | Divergencia entre progreso guardado por scroll visual y progreso de narración TTS | `ReaderViewModel` ↔ `SaveReadingProgressUseCase` | ✅ **Resuelto** | Leer con scroll y activar TTS alternadamente. | Resuelto en Paso 1: ambos caminos invocan `SaveReadingProgressUseCase.invoke()`, unificando la base de datos Room. |
+| **A12** | Alta | `ReaderViewModel.kt:760` | Divergencia entre progreso guardado por scroll visual y progreso de narración TTS | `ReaderViewModel` ↔ `SaveReadingProgressUseCase` | ✅ **Resuelto** | Leer con scroll y activar TTS alternadamente. | Resuelto en Paso 1: ambos flujos delegan en `SaveReadingProgressUseCase`, unificando la base de datos Room. |
 | **M2** | Media | `AppTypeConverters.kt:20-60` | Búsqueda $O(N)$ en conversiones de enums mediante `firstOrNull` | `AppTypeConverters` → Room queries | 🔴 **Pendiente** | Uso continuo en mapeo de listas Room. Al tener los enums 3 a 5 elementos, el costo en CPU es de microsegundos. | Optimización recomendada: mapear vía `Map<String, Enum>` estático indexado. |
 | **M4** | Media | `BookDao.kt:110` | `@Transaction @Query` retornando `PagingSource` puede disparar invalidaciones masivas | `BookDao` → Paging 3 → `LibraryScreen` | ✅ **Verificado** | Carga de listas paginadas en Compose. | Patrón oficial recomendado por AndroidX Room Paging para tablas con relaciones foráneas. |
 | **M13** | Baja | `DatabaseModule.kt:85` | Inconsistencia de estilo: `provideGraphDao` utiliza FQCN en vez de import limpio | `DatabaseModule.kt` | 🔴 **Pendiente** | Inspección de imports. Cero impacto técnico. | Limpieza de import pendiente en refactor cosmético. |
 | **M15** | Media | `InlineLookupManager.kt:45` | Scope global `appScope` no dispone de método de cancelación ante salida de lectura | `InlineLookupManager` → Diccionario flotante | 🔴 **Pendiente** | Realizar múltiples consultas de diccionario continuas al cerrar el lector. | Migrar a coroutine scope vinculado al ciclo de vida del lector (`coroutineScope` local). |
 | **SEC-1** | Alta | `KeyMaker.kt:18` | Clave privada ECDSA embebida en código fuente (`PRIVATE_KEY_BASE64`) | Módulo `:keymaker` | ✅ **Verificado** | Inspección de `:keymaker`. | El módulo `:keymaker` es una herramienta interna de escritorio para el desarrollador, excluida del build del APK `:app`. |
-
----
 
 ### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en TECNO-LH7n)
 
@@ -2231,10 +2235,10 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
      - No existen archivos `.lrc`, `.srt` ni `.jpg` sueltos en `Music/WoodsReader`.
 5. **Fluidez de Scroll a 60 FPS en la GPU Mali (Evitar Lag de Recomposición en Compose)**:
    - *Riesgo:* En procesadores MediaTek con GPU Mali-G52/G57, recomposiciones innecesarias de Compose durante el scroll continuo en el WebView provocan caídas perceptibles de frames (jank).
-   - *Verificación física:* Realizar scroll continuo rápido a través de varios capítulos y verificar que el debouncing de 700 ms en `SaveReadingProgressUseCase` y los `StateFlow` desacoplados mantengan 60 FPS estables.
+   - *Verificación física:* Realizar scroll continuo rápido a través de varios capítulos y verificar que el debouncing de 800 ms (10.000 ms para TTS) en `SaveReadingProgressUseCase` y los `StateFlow` desacoplados mantengan 60 FPS estables.
 6. **Apertura de Libros Masivos (>80 Capítulos / Spines) y Prevención de ANR**:
    - *Riesgo:* El cálculo pesado de posiciones de Readium en libros con cientos de divisiones (`readingOrder.size > 80`) puede saturar el hilo principal y disparar diálogo de ANR.
-   - *Verificación física:* Abrir un libro voluminoso (>1.000 páginas) en el teléfono y cronometrar que el fast-path sintético $O(1)$ abra la pantalla en menos de 200 ms.
+   - *Verificación física:* Abrir un libro voluminoso (>1.000 páginas) en el teléfono y cronometrar que el fast-path sintético $O(1)$ abra la pantalla instantáneamente en memoria (tiempo objetivo estimado <200 ms).
 
 ---
 
@@ -2307,15 +2311,15 @@ Cualquier sesión de desarrollo o intervención de un asistente de IA debe consu
 
 ### Protocolo de Inicio de Sesión
 Inicia la interacción estableciendo:
-> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual del Proyecto, el Mapa de Capas (Sección 🗺️), los Invariantes e Intocables (Sección 🛡️), las Decisiones de Arquitectura (Sección 🏛️), el Glosario de Términos (Sección 📖) y las Reglas de Trabajo antes de proponer cualquier cambio al código."*
+> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual (Sección 0.0), el Mapa de Capas (Sección 0.1), los Invariantes e Intocables (Sección 0.2), las Decisiones de Arquitectura (Sección 0.3), el Glosario de Términos (Sección 0.4), las Reglas de Trabajo (Sección 0.5) y el Mapa de Conexiones (Sección 0.9) antes de proponer cualquier cambio al código."*
 
 ### Protocolo de Modificación de Archivos
 Antes de alterar cualquier componente:
-1. **Comprobar Intocables:** Verifica que el archivo objetivo no forme parte de los invariantes del lector (`ChapterScrollDetector.kt`, CSS de `ReaderExtensions.kt`, `AudioFocus` en `TtsManager.kt`, firmas públicas de `ReaderViewModel.kt`).
+1. **Comprobar Intocables:** Verifica que el archivo objetivo no forme parte de los invariantes del lector (Sección 0.2: `ChapterScrollDetector.kt`, CSS de `ReaderExtensions.kt`, `AudioFocus` en `TtsManager.kt`, firmas públicas de `ReaderViewModel.kt`).
 2. **Consultar Entrada Atómica:** Localiza la ruta del archivo en las secciones 0 a 12 del índice para conocer sus dependencias ascendentes (`depende_de`) y descendentes (`usado_por`).
 3. **Revisar Registro Consolidado (Sección 14):** Consulta la Matriz Consolidada de Hallazgos y la subsección de Riesgos en Dispositivo para no reintroducir bugs ya mitigados ni pasar por alto condiciones de carrera de hardware.
 4. **Respetar la Leyenda de Estados:**
-   - ✅ **Resuelto y verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
+   - ✅ **Resuelto / Verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
    - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** Requiere comprobación física en hardware antes de promoverse a ✅.
    - 🔴 **Pendiente:** Deuda técnica identificada que debe abordarse bajo un plan dedicado.
    - ⚪ **No verificado:** Estado preventivo de componentes no auditados.
