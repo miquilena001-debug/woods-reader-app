@@ -499,12 +499,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno. Lógica pura y testeable sin dependencias de Android.
 
 #### `domain/reader/LoadBookFastUseCase.kt`
-- **Propósito:** Apertura ultrarrápida O(1) de publicaciones EPUB y PDF, bypass sintético de posiciones para novelas de miles de capítulos (`readingOrder.size > 80`), aplanado de TOC y resolución resiliente de checkpoint con fallback de SharedPreferences / Room.
+- **Propósito:** Apertura ultrarrápida O(1) de publicaciones EPUB y PDF, bypass sintético de posiciones para novelas de miles de capítulos (`readingOrder.size > 80`), aplanado de TOC con detección de capítulos en novelas PDF sin índice (`PdfParagraphHealer`), y resolución resiliente de checkpoint con fallback de SharedPreferences / Room.
 - **Clases:** `LoadBookFastUseCase` (@Inject constructor), `LoadBookResult`
-- **Depende_de:** BookRepository, PublicationOpener, AssetRetriever, Context, Publication, Locator
+- **Depende_de:** BookRepository, PublicationOpener, AssetRetriever, Context, Publication, Locator, PdfParagraphHealer
 - **Usado_por:** ReaderViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 260 líneas)
-- **Hallazgos:** Ninguno. Elimina riesgo de ANR y OOM en libros masivos en dispositivos gama media/baja.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 310 líneas)
+- **Hallazgos:** Integra generación de índice de capítulos virtual en memoria para novelas PDF que carecen de tabla de contenidos original. Elimina riesgo de ANR y OOM en libros masivos en dispositivos gama media/baja.
 
 #### `domain/reader/ManageReaderAnnotationsUseCase.kt`
 - **Propósito:** Gestión integral de anotaciones de lectura: subrayados (highlights) con colores/notas, marcadores manuales y automáticos con snippet, matching de página/progreso (`isPageBookmarked`, `toggleBookmark`), transformación a objetos `Decoration` de Readium y exportación de notas/citas a Markdown y texto plano.
@@ -515,12 +515,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno.
 
 #### `domain/reader/ReaderIntelligenceAndExportCoordinator.kt`
-- **Propósito:** Coordinador de funciones avanzadas del lector: búsqueda en-libro streaming sin bloqueo (`FastEpubSearchEngine`), análisis semántico y reporte contextual Rayos-X (`BookXRayEngine`), y orquestación de exportación de audio .M4A individual o por lotes (`ChapterAudioExporter`).
+- **Propósito:** Coordinador de funciones avanzadas del lector: búsqueda en-libro streaming sin bloqueo (`FastEpubSearchEngine`) para EPUB y PDF, análisis semántico y reporte contextual Rayos-X (`BookXRayEngine`), y orquestación de exportación de audio .M4A individual o por lotes (`ChapterAudioExporter`) para capítulos EPUB y rangos de páginas PDF.
 - **Clases:** `ReaderIntelligenceAndExportCoordinator` (@Singleton / @Inject constructor)
 - **Depende_de:** FastEpubSearchEngine, BookXRayEngine, ChapterAudioExporter, BookEntity, ReflowItem, Publication
 - **Usado_por:** ReaderViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 237 líneas)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 298 líneas)
+- **Hallazgos:** Integra `exportPdfChapters` con extracción limpia por páginas y títulos de capítulos virtuales para exportar novelas PDF completas a audiolibro con metadatos.
 
 #### `domain/reader/ReaderChapterNavigationCoordinator.kt`
 - **Propósito:** Coordinador de navegación, caché LRU y precarga asíncrona de capítulos del lector. Desacopla la navegación manual (`goToNextChapter`, `goToPreviousChapter`), el avance automático de TTS (`advanceTtsToNextChapter`), la caché en memoria de documentos procesados (`chapterLruCache`) y la resolución de recursos/spines (`findMatchingResourceIndex`) y páginas PDF por TOC.
@@ -728,6 +728,22 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 74 líneas)
 - **Hallazgos:** Ninguno. Set de 23 preposiciones/monosílabos en español para evitar orfandad tipográfica.
 
+#### `core/pdf/PdfParagraphHealer.kt`
+- **Propósito:** Sanador heurístico de renglones cortados (line unwrapping) y detector de capítulos en novelas PDF. Unifica líneas fragmentadas respetando puntuación de diálogo (guiones largos, comillas), puntos suspensivos y sangrías, y detecta títulos de capítulos sintéticos para documentos que carecen de TOC.
+- **Clases:** `PdfParagraphHealer` (object), `DetectedChapter` (data class)
+- **Depende_de:** Regex, Readium Link, Readium Url
+- **Usado_por:** LoadBookFastUseCase, PdfCleanExtractorAndConverter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 142 líneas)
+- **Hallazgos:** Permite lectura continua sin cortes abruptos y autogeneración de índice navegable para web novels empaquetadas en PDF.
+
+#### `core/pdf/PdfCleanExtractorAndConverter.kt`
+- **Propósito:** Convertidor de novelas PDF a EPUB 3 con filtro anti-publicidad de 3 capas y conservación de ilustraciones artísticas. Capa 1: Deduplicación SHA-256 de imágenes (bloquea logos/banners repetidos >= 2 veces en el libro, salvo portada). Capa 2: Filtro de proporción y micro-iconos (<140px o aspect ratio achatado). Capa 3: Sanitización de encabezados/pies de página recurrentes (>=3 páginas) y regex de spam/redes (Discord, Patreon, Telegram). Ensambla EPUB estructurado usando LocalEpubBuilder.
+- **Clases:** `PdfCleanExtractorAndConverter` (object), `PdfConversionProgress` (data class)
+- **Depende_de:** PDFBox-Android (PDDocument, PDImageXObject, PDFTextStripper), LocalEpubBuilder, MessageDigest, Dispatchers.IO
+- **Usado_por:** LibraryViewModel, PdfReflowManager
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 411 líneas)
+- **Hallazgos:** Procesa libros masivos (350+ capítulos) en streaming conservando portada e ilustraciones legítimas en `OEBPS/images/` y generando XHTML limpio.
+
 #### `core/managers/pdf/analysis/TextAnalyzer.kt`
 - **Propósito:** Motor de análisis y segmentación estructural de páginas PDF. Clasifica elementos semánticos (encabezados, párrafos, números de página, imágenes) basándose en coordenadas espaciales RectF y métricas tipográficas.
 - **Clases:** `TextAnalyzer`, `SemanticElement`, `Header`, `Paragraph`, `PageNumber`, `Ignored`, `LineInfo`, `PageImage`, `PageItem`
@@ -914,10 +930,10 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 #### `core/managers/PdfReflowManager.kt`
 - **Propósito:** Gestor de extracción semántica y reflujo dinámico de documentos PDF. Transforma páginas PDF fijas en bloques continuos `ReflowItem` (párrafos, títulos, listas, imágenes), deduplica encabezados y pies de página mediante `NoiseClassifier` y genera `NarrationUnit` para TTS sincronizado.
 - **Clases:** `PdfReflowManager` (@Singleton), `PdfPageExtractionState`
-- **Depende_de:** TtsManager, NoiseClassifier, TextAnalyzer, SpanishTextFormatter, Readium, Dispatchers.Default
+- **Depende_de:** TtsManager, NoiseClassifier, TextAnalyzer, SpanishTextFormatter, Readium, PdfCleanExtractorAndConverter, Dispatchers.Default
 - **Usado_por:** ReaderViewModel, ReaderReflowOverlay
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 773 líneas)
-- **Hallazgos:** La extracción de bloques semánticos procesa en ventanas alrededor de la página actual para conservar memoria en dispositivos con bajo límite de heap.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 795 líneas)
+- **Hallazgos:** Integra filtro anti-spam en tiempo real (`isSpamTextLine`) para bloques visuales y unidades de narración TTS, además de filtrado por ratio de aspecto y descarte de micro-iconos en imágenes extraídas. La extracción de bloques semánticos procesa en ventanas alrededor de la página actual para conservar memoria en dispositivos con bajo límite de heap.
 
 #### `core/managers/BackupManager.kt`
 - **Propósito:** Gestor de respaldo completo (JSON con kotlinx.serialization, merge inteligente por hash).
@@ -987,12 +1003,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 ### 5.4 Búsqueda, X-Ray, Share, Backup, Licencia
 
 #### `core/search/FastEpubSearchEngine.kt`
-- **Propósito:** Motor de búsqueda en-libro streaming y no bloqueante para publicaciones EPUB. Emite resultados en tiempo real mediante Kotlin Flow, filtra texto HTML sin instanciar DOM completo, soporta cancelación cooperativa por corrutinas y mantiene una caché LRU de capítulos limpios.
+- **Propósito:** Motor de búsqueda en-libro streaming y no bloqueante para publicaciones EPUB y PDF. Emite resultados en tiempo real mediante Kotlin Flow, filtra texto HTML sin instanciar DOM completo, soporta extracción página a página para PDF, cancelación cooperativa por corrutinas y mantiene una caché LRU de capítulos limpios.
 - **Clases:** `FastEpubSearchEngine` (object), `FastInBookSearchHit`, `FastSearchProgress`
 - **Depende_de:** Readium Publication, Link, LruCache, Dispatchers.IO, Jsoup
 - **Usado_por:** ReaderIntelligenceAndExportCoordinator, LectorApplication (onTrimMemory)
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 273 líneas)
-- **Hallazgos:** La caché LRU almacena texto limpio por href (~4-8 MB max) y se limpia ordenadamente ante advertencias de memoria del sistema.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 332 líneas)
+- **Hallazgos:** La caché LRU almacena texto limpio por href (~4-8 MB max) y se limpia ordenadamente ante advertencias de memoria del sistema. Habilitada búsqueda streaming para documentos PDF con extracción de snippets y títulos de página.
 
 #### `core/xray/BookXRayEngine.kt`
 - **Propósito:** Motor de Rayos-X offline para libros. Analiza el contenido textual del capítulo actual, extrayendo y categorizando entidades clave (Personajes, Lugares, Objetos, Conceptos) según heurísticas de capitalización, co-ocurrencia y filtrado de stopwords en español.
@@ -1037,12 +1053,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno crítico.
 
 #### `core/web2epub/LocalEpubBuilder.kt`
-- **Propósito:** Constructor local de EPUB 3 (ZIP con mimetype, container.xml, content.opf, toc.ncx, capítulos XHTML).
+- **Propósito:** Constructor local de EPUB 3 (ZIP con mimetype, container.xml, content.opf, toc.ncx, capítulos XHTML). Soporta carátula oficial (`cover.jpg`) e incrustación de ilustraciones de historia en `OEBPS/images/` con centrado CSS responsivo.
 - **Clases:** `LocalEpubBuilder`, `ScrapedChapterMeta`
 - **Depende_de:** java.util.zip, UUID
-- **Usado_por:** WebToEpubImporterDialog, CalibreStyleEpubTranslator
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 227 líneas)
-- **Hallazgos:** Ninguno.
+- **Usado_por:** WebToEpubImporterDialog, CalibreStyleEpubTranslator, PdfCleanExtractorAndConverter
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 281 líneas)
+- **Hallazgos:** Permite empaquetar portadas e ilustraciones reales conservando jerarquía semántica.
 
 #### `core/web2epub/novel/SiteProfile.kt`
 - **Propósito:** Perfil de sitio web para importación (selectores CSS, delays, etc.).
@@ -1372,12 +1388,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Mojibake residual en comentarios descriptivos (C11). Muestra estados vacíos intuitivos cuando no hay libros indexados.
 
 #### `ui/library/LibraryViewModel.kt`
-- **Propósito:** ViewModel de biblioteca, watchers de rutas, enriquecimiento de portadas, escaneo, filtros.
-- **Clases:** `LibraryViewModel` (@HiltViewModel)
-- **Depende_de:** BookRepository, UserPreferencesRepository, BookScannerService, SherpaModelManager, ProLicenseManager, CalibreStyleEpubTranslator
+- **Propósito:** ViewModel de biblioteca (filtrado reactivo de libros, búsqueda con debounce, colecciones, traducción masiva estilo Calibre, exportación a audiolibro M4A, conversión completa de novelas PDF a EPUB con auto-importación).
+- **Clases:** `LibraryViewModel` (@HiltViewModel), `LibraryUiState`
+- **Depende_de:** BookRepository, UserPreferencesRepository, BookScannerService, SherpaModelManager, ProLicenseManager, CalibreStyleEpubTranslator, ChapterAudioExporter, PdfCleanExtractorAndConverter
 - **Usado_por:** LibraryScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (líneas 1-321)
-- **Hallazgos:** **A9:** `takePersistableUriPermission` sin verificación de resultado.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 557 líneas)
+- **Hallazgos:** Proporciona `convertPdfToCleanEpub` orquestado en segundo plano con emisión de progreso `PdfConversionProgress`, cancelación e importación automática a Room.
 
 #### `ui/library/LibraryHeader.kt`
 - **Propósito:** Componente Compose para la cabecera superior de la biblioteca: título "Woods Reader", badge de versión de la aplicación, selector de modo de ordenamiento (recientes, título, progreso), y barra de búsqueda colapsable con animación.
@@ -1412,12 +1428,20 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno. Bloquea interacción fuera del diálogo (dismissOnBackPress = false, dismissOnClickOutside = false).
 
 #### `ui/library/BookOptionsBottomSheet.kt`
-- **Propósito:** Bottom sheet de opciones de libro (metadatos, estado de lectura, colección, traducción masiva EPUB, eliminación).
+- **Propósito:** Bottom sheet de opciones de libro (metadatos, estado de lectura, colección, traducción masiva EPUB, exportación M4A para EPUB/PDF, conversión completa PDF a EPUB sin publicidad, eliminación).
 - **Clases:** `BookOptionsBottomSheet` (@Composable), `MetadataRow` (@Composable)
 - **Depende_de:** Compose, Coil3, BookEntity, CollectionEntity, ReadingStatus, File, Locale
 - **Usado_por:** LibraryScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 381 líneas)
-- **Hallazgos:** Ninguno. Incluye botón de traducción masiva para EPUB. Maneja estados de lectura con auto-detección (NOT_STARTED con progreso > 0 → IN_PROGRESS).
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 470 líneas)
+- **Hallazgos:** Incluye acción destacada Emerald Liquid Glass "⚡ Convertir PDF a EPUB Completo (Sin Publicidad)" para formato PDF y botón de exportación M4A tanto para EPUB como PDF.
+
+#### `ui/library/PdfConversionProgressDialog.kt`
+- **Propósito:** Diálogo modal flotante (Emerald Liquid Glass) para la conversión limpia de novelas PDF a EPUB. Presenta barra de progreso, porcentaje en tiempo real, tarjetas de estadísticas en vivo (capítulos creados, ilustraciones guardadas, banners/spam bloqueados), mensaje de fase y dock minimizable inferior a 60 FPS.
+- **Clases:** `PdfConversionProgressDialog` (@Composable), `StatCard` (@Composable)
+- **Depende_de:** Compose Material3, PdfConversionProgress, HiddenForest
+- **Usado_por:** LibraryScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 321 líneas)
+- **Hallazgos:** Totalmente responsivo; soporta cancelación segura en segundo plano e importación automática del EPUB resultante a la biblioteca.
 
 #### `ui/library/AudioExportProgressDialog.kt`
 - **Propósito:** Diálogo de progreso en tiempo real para la exportación de audiolibros M4A. Muestra porcentaje de codificación, tiempo restante y botón de cancelación.
@@ -1895,12 +1919,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **M16:** `SherpaModelManager(context.applicationContext)` se instancia manualmente en L48 mediante `remember(context)`, eludiendo la inyección de dependencias de Hilt.
 
 #### `ui/reader/ReaderReflowOverlay.kt`
-- **Propósito:** Vista Libro para PDFs (reflujo de texto, navegación, imágenes, zoom).
+- **Propósito:** Vista Libro para PDFs (reflujo de texto, navegación, imágenes, zoom, teleprompter WPM a 60 FPS, resaltado activo Emerald Liquid Glass `Color(0xFF10B981)`).
 - **Clases:** `ReaderReflowOverlay`, `HeaderItem`, `ParagraphItem`, `ReflowImageItem`, `ZoomableImageDialog`
 - **Depende_de:** Compose, Readium, Coil3, ReaderReflowManager
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 735 líneas)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 765 líneas)
+- **Hallazgos:** Integra desplazamiento suave continuo (`scrollBy`) sincronizado con `autoScrollWpm` y animación de contenedor líquido esmeralda en el párrafo narrado.
 
 #### `ui/reader/ReaderEgoGraphBottomSheet.kt`
 - **Propósito:** Bottom sheet con mini-grafo (ego graph: entidad + vecinos directos).
@@ -2230,6 +2254,11 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 | `NovelImporterTest.kt` | NovelImporter | ✅ REVISADO | Tests del pipeline de importación por lotes |
 | `NovelIndexLoaderTest.kt` | NovelIndexLoader | ✅ REVISADO | Tests de extracción de índice y lista de capítulos |
 | `ContentExtractorTest.kt` | ContentExtractor | ✅ REVISADO | Tests de extracción y sanitización de capítulos HTML con SiteProfile |
+| `PdfParagraphHealerTest.kt` | `app/src/test/.../core/pdf/PdfParagraphHealerTest.kt` | Tests de line-unwrapping, diálogo y detección de capítulos en novelas PDF | ✅ REVISADO |
+| `LocalEpubBuilderIllustrationsTest.kt` | `app/src/test/.../core/web2epub/LocalEpubBuilderIllustrationsTest.kt` | Tests de incrustación de portada oficial e ilustraciones de historia en EPUB | ✅ REVISADO |
+| `PdfIntelligenceAndExportTest.kt` | `app/src/test/.../domain/reader/PdfIntelligenceAndExportTest.kt` | Tests de búsqueda streaming y exportación por lotes M4A para PDF | ✅ REVISADO |
+| `PdfCleanExtractorAndConverterTest.kt` | `app/src/test/.../core/pdf/PdfCleanExtractorAndConverterTest.kt` | Tests de deduplicación SHA-256, filtrado de spam y construcción limpia de EPUB | ✅ REVISADO |
+| `LibraryPdfConversionTest.kt` | `app/src/test/.../ui/library/LibraryPdfConversionTest.kt` | Tests de conversión PDF a EPUB en LibraryViewModel, cancelación y reseteo de progreso | ✅ REVISADO |
 
 ### Tests Instrumentados (`app/src/androidTest/`)
 
