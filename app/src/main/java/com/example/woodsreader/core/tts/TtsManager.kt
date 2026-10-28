@@ -218,6 +218,8 @@ class TtsManager @Inject constructor(
 
     @Volatile
     private var cachedUseSherpaTts: Boolean = false
+    @Volatile
+    private var isPreferencesLoaded: Boolean = false
     private val utteranceCounter = java.util.concurrent.atomic.AtomicLong(0)
     @Volatile
     private var activeUtteranceContinuation: Pair<String, kotlinx.coroutines.CancellableContinuation<Unit>>? = null
@@ -240,12 +242,24 @@ class TtsManager @Inject constructor(
 
         private fun completeUtterance(utteranceId: String?, cancelled: Boolean) {
             val pair = activeUtteranceContinuation ?: return
-            if (utteranceId != null && utteranceId == pair.first) {
+            if (utteranceId == pair.first || utteranceId == null) {
                 activeUtteranceContinuation = null
                 if (pair.second.isActive) {
                     if (cancelled) pair.second.cancel() else pair.second.resume(Unit)
                 }
             }
+        }
+    }
+
+    private suspend fun ensurePreferencesLoaded() {
+        if (!isPreferencesLoaded) {
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(300L) {
+                    val prefs = userPreferencesRepository.userPreferencesFlow.first()
+                    cachedUseSherpaTts = prefs.useSherpaTts
+                    isPreferencesLoaded = true
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -274,6 +288,7 @@ class TtsManager @Inject constructor(
         ttsScope.launch {
             userPreferencesRepository.userPreferencesFlow.collect { prefs ->
                 cachedUseSherpaTts = prefs.useSherpaTts
+                isPreferencesLoaded = true
                 if (!prefs.useSherpaTts && loadedVoiceId != null) {
                     clearPreSynthesisCache()
                     resetSherpa()
@@ -344,6 +359,7 @@ class TtsManager @Inject constructor(
     }
 
     suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null): Boolean {
+        ensurePreferencesLoaded()
         userRequestedStop = false
         _isPlaying.value = true
         if (!isNarratingSequence) {
@@ -482,7 +498,15 @@ class TtsManager @Inject constructor(
                     val params = android.os.Bundle().apply {
                         putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
                     }
-                    tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, params, id)
+                    val speakResult = tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, params, id)
+                    if (speakResult != TextToSpeech.SUCCESS) {
+                        Timber.w("tts.speak fallo con codigo $speakResult para utterance $id")
+                        if (activeUtteranceContinuation?.first == id) {
+                            activeUtteranceContinuation = null
+                        }
+                        if (cont.isActive) cont.resume(Unit)
+                        return@suspendCancellableCoroutine
+                    }
 
                     cont.invokeOnCancellation {
                         if (activeUtteranceContinuation?.first == id) {
@@ -807,6 +831,10 @@ class TtsManager @Inject constructor(
                 }
             }
         }
+        activeUtteranceContinuation?.let { (_, cont) ->
+            activeUtteranceContinuation = null
+            if (cont.isActive) cont.cancel()
+        }
         tts?.stop()
         abandonAudioFocus()
     }
@@ -841,6 +869,10 @@ class TtsManager @Inject constructor(
             }
         }
         isSpeakingCancelled = true
+        activeUtteranceContinuation?.let { (_, cont) ->
+            activeUtteranceContinuation = null
+            if (cont.isActive) cont.cancel()
+        }
         tts?.stop()
         abandonAudioFocus()
     }
@@ -858,6 +890,10 @@ class TtsManager @Inject constructor(
         clearPreSynthesisCache()
         releaseAudioLocks()
         isSpeakingCancelled = true
+        activeUtteranceContinuation?.let { (_, cont) ->
+            activeUtteranceContinuation = null
+            if (cont.isActive) cont.cancel()
+        }
         tts?.stop()
         tts?.shutdown()
         tts = null
@@ -1363,6 +1399,7 @@ class TtsManager @Inject constructor(
         onChapterFinished: (suspend () -> Unit)? = null
     ) {
         if (units.isEmpty() || startIndex !in units.indices) return
+        ensurePreferencesLoaded()
 
         userRequestedStop = false
         isNarratingSequence = true
