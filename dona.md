@@ -1662,12 +1662,23 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsMacroWindow.kt`
-- **Propósito:** Ventana flotante macro para el control de audio avanzado del lector. Incluye ecualizador gráfico DSP, selector de motor TTS en tiempo real, calibrador de velocidad WPM para teleprompter, selector de ambientes de bosque y temporizador de apagado.
-- **Clases:** `ReaderTtsMacroWindow` (@Composable), `ReaderMacroEngineMode` (enum)
-- **Depende_de:** Compose, Material3, HazeState, TtsManager, ProLicenseManager, WoodsKeepAliveManager
-- **Usado_por:** ReaderScreen
-- **Estado:** 🟡 REVISIÓN PARCIAL (líneas 1-1.013 de 2.425; diálogo Compose de alta complejidad)
-- **Hallazgos:** Interfaz rica con múltiples selectores y controles deslizantes de precisión.
+- **Propósito:** Ventana flotante macro y panel avanzado de orquestación de audio para el lector. Incluye selector de motor TTS en tiempo real (Estudio IA Offline Sherpa ONNX vs Sistema Nativo), curvas de velocidad/WPM, ambient soundscapes, temporizadores de sueño inteligentes, ecualizador DSP, catálogo de voces y disparador de exportación offline de audiolibros .M4A.
+- **Clases / Composables:**
+  - `ReaderTtsMacroWindow` (público, L84-2365): Diálogo modal principal de pantalla completa con pestañas de velocidad, temporizadores, estilos de resaltado, sonido ambiental y `ModalBottomSheet` avanzado (L1195-2363) con 3 sub-pestañas:
+    1. *Pestaña 0 (🎙️ Voz e Idioma, L1269-1826):* Selector de motor (`ReaderMacroEngineMode.SHERPA_OFFLINE` vs `SYSTEM`), switch de auto-detección de idioma del libro, filtro horizontal de idiomas (`SupportedTtsLanguage`), listado y descarga de voces Sherpa ONNX (`SherpaVoiceOption`) con barra de progreso (`SherpaDownloadState`), asignación de voz para "Narrador" y "Diálogos", borrado de modelos en disco, y selector de voces nativas del sistema.
+    2. *Pestaña 1 (🎛️ Acústica y Ambiente, L1827-2106):* Selector de perfil DSP master (`StudioAcousticsProfile.STUDIO_WARM`, `NIGHT_INTIMATE`, `CRISP_HD`), switches para prosodia expresiva y novela dramatizada, slider de tono de voz (`PremiumSlider`, 0.5f..2.0f), switch de glosario fonético para novelas web (`builtInLexiconEnabled`), lista de reglas fonéticas personalizadas con borrado y botón para añadir palabra.
+    3. *Pestaña 2 (📦 Exportar .M4A, L2107-2346):* Disparador de exportación por lotes (1 capítulo, 10 capítulos [Pro], libro completo [Pro]), banner de advertencia si no hay voz offline descargada, y máquina de estados visual para `AudioExportState` (Idle, Exporting con ticker de oraciones, Completed con enlace a `Music/WoodsReader` y tamaño KB, y Error con reintento).
+  - `AddPhoneticRuleDialog` (público, L2367-2425): `AlertDialog` para registrar mapeos fonéticos personalizados (texto original vs sustitución fonética).
+- **Contrato con el ViewModel:**
+  - *StateFlows observados:* `audioExportState` (`AudioExportState`), `useSherpaTts` (`Boolean`), `selectedSherpaVoice` (`SherpaVoiceOption?`), `sherpaDownloadState` (`SherpaDownloadState`), `isProUnlocked` (`Boolean`), `ttsHighlightStyle` (`TtsHighlightStyle`), `ttsAutoScroll` (`Boolean`), `currentSpeed` (`Float`), `currentPitch` (`Float`), `currentLanguage` (`String?`), `currentVoiceName` (`String?`), `availableVoices` (`List<String>`).
+  - *Métodos invocados:* `onExportAudioChapters(count: Int)`, `onCancelAudioExport()`, `onResetAudioExportState()`, `onSelectSherpaVoice(voice)`, `onDeleteSherpaVoice(voice)`, `onUseSherpaTtsChange(Boolean)`, `onTtsHighlightStyleChange(TtsHighlightStyle)`, `onTtsAutoScrollChange(Boolean)`, `onPitchChange(Float)`, `onLanguageChange(String?)`, `onVoiceChange(String)`.
+- **Navegación y Efectos:** Despliega `ModalBottomSheet` para configuración de estudio y `WoodsProUnlockDialog` si un usuario estándar intenta exportaciones batch. Invoca `onOpenRules()` para el diálogo completo de pronunciación. Al cerrarse (dismiss/back), preserva el estado en SharedPreferences `"woods_studio_voice_hd"` (`acoustics_profile`, `expressive_prosody_enabled`, `dramatized_dialogue_enabled`, `secondary_dialogue_voice_id`).
+- **Depende_de:** Compose UI, Material 3, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsProUnlockDialog, PremiumSlider, SherpaVoiceOption, SupportedTtsLanguage, StudioAcousticsProfile, AudioExportState, TtsHighlightStyle.
+- **Usado_por:** `ReaderScreen.kt`.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.425 líneas)
+- **Hallazgos:**
+  - **M16:** `SherpaModelManager(context.applicationContext)` se instancia manualmente en L1215 mediante `remember(context)`, eludiendo la inyección de dependencias de Hilt.
+  - **M17:** Uso de SharedPreferences sincrónicas (`"woods_studio_voice_hd"`) con `.edit().apply()` en callbacks de Compose en lugar de persistir reactivamente en DataStore.
 
 #### `ui/reader/ReaderReflowOverlay.kt`
 - **Propósito:** Vista Libro para PDFs (reflujo de texto, navegación, imágenes, zoom).
