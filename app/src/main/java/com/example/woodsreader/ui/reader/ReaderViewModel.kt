@@ -10,6 +10,8 @@ import com.example.woodsreader.domain.reader.LoadBookFastUseCase
 import com.example.woodsreader.domain.reader.LoadBookResult
 import com.example.woodsreader.domain.reader.ManageReaderAnnotationsUseCase
 import com.example.woodsreader.domain.reader.ReaderIntelligenceAndExportCoordinator
+import com.example.woodsreader.domain.reader.ReaderChapterNavigationCoordinator
+import com.example.woodsreader.domain.reader.ParsedChapterData
 import android.content.Context
 import java.util.Locale
 
@@ -154,7 +156,8 @@ class ReaderViewModel @Inject constructor(
     val quoteVideoClipExporter: QuoteVideoClipExporter,
     private val saveReadingProgressUseCase: SaveReadingProgressUseCase,
     private val calculateReadingStatsUseCase: CalculateReadingStatsUseCase,
-    private val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase
+    private val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase,
+    private val chapterNavigationCoordinator: ReaderChapterNavigationCoordinator
 ) : ViewModel() {
 
     companion object {
@@ -170,43 +173,18 @@ class ReaderViewModel @Inject constructor(
         /** Velocidad de lectura predeterminada en palabras por minuto (WPM) para estimaciones de progreso en TTS y fallback. */
         private const val DEFAULT_READING_WPM = 200
 
-        private val PDF_PAGE_PARAM_REGEX = Regex("""(?i)[#?&]page=(\d+)""")
-        private val PDF_PAGE_PATH_REGEX = Regex("""(?i)/page[_-]?(\d+)""")
-        private val PDF_PAGE_HASH_REGEX = Regex("""#(\d+)$""")
-        private val PDF_PAGE_NUMERIC_REGEX = Regex("""^/?(\d+)$""")
+        fun extractPdfPagesFromToc(toc: List<Link>): List<Int> =
+            ReaderChapterNavigationCoordinator.extractPdfPagesFromToc(toc)
 
-        fun extractPdfPagesFromToc(toc: List<Link>): List<Int> {
-            val pages = mutableListOf<Int>()
-            fun traverse(links: List<Link>) {
-                for (link in links) {
-                    val href = link.href.toString()
-                    val page = PDF_PAGE_PARAM_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: PDF_PAGE_PATH_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: PDF_PAGE_HASH_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: PDF_PAGE_NUMERIC_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    if (page != null && page > 0) {
-                        pages.add(page)
-                    }
-                    if (link.children.isNotEmpty()) {
-                        traverse(link.children)
-                    }
-                }
-            }
-            traverse(toc)
-            return pages.distinct().sorted()
-        }
+        fun resolveNextPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? =
+            ReaderChapterNavigationCoordinator.resolveNextPdfPageFromToc(toc, currentPage)
 
-        fun resolveNextPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? {
-            return extractPdfPagesFromToc(toc).firstOrNull { it > currentPage }
-        }
-
-        fun resolvePreviousPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? {
-            return extractPdfPagesFromToc(toc).lastOrNull { it < currentPage }
-        }
+        fun resolvePreviousPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? =
+            ReaderChapterNavigationCoordinator.resolvePreviousPdfPageFromToc(toc, currentPage)
     }
 
-    val chapterLruCache = LruCache<Int, ParsedChapterData>(MAX_CACHED_CHAPTERS)
-    private var prefetchJob: Job? = null
+    val chapterLruCache: LruCache<Int, ParsedChapterData>
+        get() = chapterNavigationCoordinator.chapterLruCache
 
     val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()
     var publication: Publication? = null
@@ -1334,314 +1312,100 @@ class ReaderViewModel @Inject constructor(
         return null
     }
 
-    enum class ChapterDirection { NEXT, PREVIOUS }
-
-    private fun navigatePdfChapter(navigator: Navigator?, direction: ChapterDirection): Boolean {
-        val pub = publication ?: return false
-        val toc = pub.tableOfContents
-        if (toc.isEmpty()) return false
-
-        val currentPage = if (isReflowMode.value) {
-            lastKnownReflowPage.takeIf { it > 0 } 
-                ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
-                ?: 1
-        } else {
-            val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
-            lastKnownReflowPage = visualPage
-            visualPage.takeIf { it > 0 } ?: 1
-        }
-        val targetPage = when (direction) {
-            ChapterDirection.NEXT -> resolveNextPdfPageFromToc(toc, currentPage)
-            ChapterDirection.PREVIOUS -> resolvePreviousPdfPageFromToc(toc, currentPage)
-        }
-
-        if (targetPage != null) {
-            if (isReflowMode.value) {
-                jumpToReflowPage(targetPage)
-                if (ttsState.value == TtsState.PLAYING) {
-                    getLocatorForPdfPage(targetPage)?.let(::playTts)
-                }
-            } else {
-                val nav = (navigator ?: this.navigator) as? VisualNavigator
-                val readingOrderLink = pub.readingOrder.firstOrNull()
-                val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
-                    ?.copy(locations = Locator.Locations(position = targetPage))
-                if (targetLoc != null) {
-                    nav?.go(targetLoc, animated = false)
-                    if (ttsState.value == TtsState.PLAYING) {
-                        playTts(targetLoc)
-                    } else {
-                        _lastTtsLocator.value = targetLoc
-                    }
-                }
-            }
-            return true
-        }
-        return false
-    }
-
-    fun goToNextChapter(navigator: Navigator?) {
+    fun goToNextChapter(navigator: Navigator? = null) {
         val pub = publication ?: return
-
-        if (isPdfBook || isReflowMode.value) {
-            navigatePdfChapter(navigator, ChapterDirection.NEXT)
-            return
-        }
-
-        val nav = (navigator ?: this.navigator) as? VisualNavigator ?: return
-
-        val href = nav.currentLocator.value.href.toString()
-        val order = pub.readingOrder
-        val currentIdx = findMatchingResourceIndex(href, order).takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
-
-        if (currentIdx != -1 && currentIdx < order.size - 1) {
-            val nextIdx = currentIdx + 1
-            val nextLink = order[nextIdx]
-            val nextLocator = pub.locatorFromLink(nextLink)?.copy(
-                locations = Locator.Locations(progression = 0.0)
-            )
-            // Si el siguiente capítulo ya está en la caché LRU, transferirlo instantáneamente (< 50 ms)
-            chapterLruCache.get(nextIdx)?.let { cached ->
-                epubFormatManager.putCachedDocument(nextLink.href.toString(), cached.document)
-            }
-            if (nextLocator != null) {
-                nav.go(nextLocator, animated = false)
-                if (ttsState.value == TtsState.PLAYING) {
-                    playTts(nextLocator)
-                } else {
-                    _lastTtsLocator.value = nextLocator
-                }
+        chapterNavigationCoordinator.goToNextChapter(
+            scope = viewModelScope,
+            bookId = bookId,
+            publication = pub,
+            navigator = navigator ?: this.navigator,
+            isPdfBook = isPdfBook,
+            isReflowMode = isReflowMode.value,
+            currentPdfPage = if (isReflowMode.value) {
+                lastKnownReflowPage.takeIf { it > 0 } 
+                    ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
+                    ?: 1
             } else {
-                nav.go(nextLink, animated = false)
-            }
-            prefetchSurroundingChapters(nextIdx)
-        } else {
-            // Fallback a navegación nativa de Readium si no se resolvió el índice
-            nav.goForwardCompat(animated = true)
-        }
+                val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
+                lastKnownReflowPage = visualPage
+                visualPage.takeIf { it > 0 } ?: 1
+            },
+            ttsIsPlaying = ttsState.value == TtsState.PLAYING,
+            resourceIndexCache = resourceIndexCache,
+            onJumpToReflowPage = ::jumpToReflowPage,
+            onPlayPdfPageTts = { targetPage -> getLocatorForPdfPage(targetPage)?.let(::playTts) },
+            onPlayTts = ::playTts,
+            onSetLastTtsLocator = { loc -> _lastTtsLocator.value = loc }
+        )
     }
 
-    private fun findMatchingResourceIndex(rawHref: String, order: List<org.readium.r2.shared.publication.Link>): Int {
-        if (rawHref.isBlank() || order.isEmpty()) return -1
-
-        // Estrategia 0: Búsqueda O(1) ultrarrápida en resourceIndexCache
-        resourceIndexCache?.get(rawHref)?.let { return it }
-        val beforeHash = rawHref.substringBefore('#')
-        resourceIndexCache?.get(beforeHash)?.let { return it }
-        val filename = rawHref.substringAfterLast('/')
-        resourceIndexCache?.get(filename)?.let { return it }
-        resourceIndexCache?.get(filename.substringBefore('#'))?.let { return it }
-
-        fun normalize(str: String): String {
-            val decoded = try {
-                java.net.URLDecoder.decode(str, "UTF-8")
-            } catch (_: Exception) {
-                str
-            }
-            return decoded
-                .substringBefore('#')
-                .substringBefore('?')
-                .replace('\\', '/')
-                .trimStart('/')
-                .lowercase(Locale.ROOT)
-        }
-
-        val target = normalize(rawHref)
-        resourceIndexCache?.get(target)?.let { return it }
-
-        // Estrategia fallback sólo si no coincidió en la caché
-        for (i in order.indices) {
-            val item = normalize(order[i].href.toString())
-            if (item == target || item.endsWith("/$target") || target.endsWith("/$item") || item.substringAfterLast('/') == target.substringAfterLast('/')) {
-                return i
-            }
-        }
-        return -1
+    fun findMatchingResourceIndex(rawHref: String, order: List<Link>): Int {
+        return chapterNavigationCoordinator.findMatchingResourceIndex(rawHref, order, resourceIndexCache)
     }
 
-    fun goToPreviousChapter(navigator: Navigator?) {
+    fun goToPreviousChapter(navigator: Navigator? = null) {
         val pub = publication ?: return
-
-        if (isPdfBook || isReflowMode.value) {
-            navigatePdfChapter(navigator, ChapterDirection.PREVIOUS)
-            return
-        }
-
-        val nav = (navigator ?: this.navigator) as? VisualNavigator ?: return
-
-        val href = nav.currentLocator.value.href.toString()
-        val order = pub.readingOrder
-        val currentIdx = findMatchingResourceIndex(href, order).takeIf { it != -1 } ?: resourceIndexCache?.get(href) ?: -1
-
-        if (currentIdx > 0) {
-            val prevIdx = currentIdx - 1
-            val prevLink = order[prevIdx]
-            val prevLocator = pub.locatorFromLink(prevLink)?.copy(
-                locations = Locator.Locations(progression = 1.0)
-            )
-            // Si el capítulo anterior ya está en la caché LRU, transferirlo instantáneamente (< 50 ms)
-            chapterLruCache.get(prevIdx)?.let { cached ->
-                epubFormatManager.putCachedDocument(prevLink.href.toString(), cached.document)
-            }
-            if (prevLocator != null) {
-                nav.go(prevLocator, animated = false)
-                if (ttsState.value == TtsState.PLAYING) {
-                    playTts(prevLocator)
-                } else {
-                    _lastTtsLocator.value = prevLocator
-                }
+        val nav = navigator ?: this.navigator
+        chapterNavigationCoordinator.goToPreviousChapter(
+            scope = viewModelScope,
+            bookId = bookId,
+            publication = pub,
+            navigator = nav,
+            isPdfBook = isPdfBook,
+            isReflowMode = isReflowMode.value,
+            currentPdfPage = if (isReflowMode.value) {
+                lastKnownReflowPage.takeIf { it > 0 } 
+                    ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
+                    ?: 1
             } else {
-                nav.go(prevLink, animated = false)
-            }
-            prefetchSurroundingChapters(prevIdx)
-
-            viewModelScope.launch {
-                for (delayMs in listOf(80L, 200L, 450L, 800L, 1200L)) {
-                    kotlinx.coroutines.delay(delayMs)
-                    val pubView = nav.safePublicationView ?: return@launch
+                val visualPage = (nav as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
+                lastKnownReflowPage = visualPage
+                visualPage.takeIf { it > 0 } ?: 1
+            },
+            ttsIsPlaying = ttsState.value == TtsState.PLAYING,
+            resourceIndexCache = resourceIndexCache,
+            onJumpToReflowPage = ::jumpToReflowPage,
+            onPlayPdfPageTts = { targetPage -> getLocatorForPdfPage(targetPage)?.let(::playTts) },
+            onPlayTts = ::playTts,
+            onSetLastTtsLocator = { loc -> _lastTtsLocator.value = loc },
+            onDelayedScrollRefresh = {
+                (nav as? VisualNavigator)?.safePublicationView?.let { pubView ->
                     applyToAllWebViews(pubView) { wv ->
                         wv.scrollToBottom()
                     }
                 }
             }
-        } else {
-            // Fallback a navegación nativa de Readium cuando estamos al inicio del libro o índice 0
-            val moved = nav.goBackwardCompat(animated = true)
-            if (!moved) {
-                viewModelScope.launch {
-                    val pubView = nav.safePublicationView ?: return@launch
-                    applyToAllWebViews(pubView) { wv ->
-                        wv.scrollTo(0, 0)
-                    }
-                }
-            }
-        }
+        )
     }
 
-    /**
-     * Pre-carga asíncrona en baja prioridad (Dispatchers.Default) de los capítulos
-     * adyacentes en la caché LRU (actual, los 2 siguientes y el anterior) para que
-     * el pase de página o el avance automático de TTS sea instantáneo (< 50 ms).
-     */
-    private fun prefetchSurroundingChapters(currentIndex: Int) {
-        val pub = publication ?: return
-        if (isPdfBook) return
-        val order = pub.readingOrder
-        if (order.isEmpty()) return
-
-        prefetchJob?.cancel()
-        prefetchJob = viewModelScope.launch(Dispatchers.Default) {
-            // Posponer la pre-carga 5 segundos para asegurar que el usuario esté leyendo establemente
-            kotlinx.coroutines.delay(5000L)
-
-            // 1. Siguiente capítulo (prioridad máxima)
-            val nextIdx = currentIndex + 1
-            if (nextIdx < order.size && chapterLruCache.get(nextIdx) == null) {
-                val nextLink = order[nextIdx]
-                val nextHref = nextLink.href.toString()
-                val doc = withContext(Dispatchers.IO) {
-                    epubFormatManager.processResource(nextHref, bookId)
-                }
-                if (doc != null) {
-                    val title = nextLink.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${nextIdx + 1}"
-                    chapterLruCache.put(nextIdx, ParsedChapterData(nextIdx, nextHref, title, doc))
-                    Log.d(TAG, "Prefetched next chapter ($nextIdx/${order.size}): $nextHref")
-                }
-            }
-
-            // 2. Capítulo anterior
-            val prevIdx = currentIndex - 1
-            if (prevIdx >= 0 && chapterLruCache.get(prevIdx) == null) {
-                val prevLink = order[prevIdx]
-                val prevHref = prevLink.href.toString()
-                val doc = withContext(Dispatchers.IO) {
-                    epubFormatManager.processResource(prevHref, bookId)
-                }
-                if (doc != null) {
-                    val title = prevLink.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${prevIdx + 1}"
-                    chapterLruCache.put(prevIdx, ParsedChapterData(prevIdx, prevHref, title, doc))
-                    Log.d(TAG, "Prefetched prev chapter ($prevIdx/${order.size}): $prevHref")
-                }
-            }
-
-            // 3. Siguiente del siguiente (para saltos rápidos continuos)
-            val nextNextIdx = currentIndex + 2
-            if (nextNextIdx < order.size && chapterLruCache.get(nextNextIdx) == null) {
-                val nextNextLink = order[nextNextIdx]
-                val nextNextHref = nextNextLink.href.toString()
-                val doc = withContext(Dispatchers.IO) {
-                    epubFormatManager.processResource(nextNextHref, bookId)
-                }
-                if (doc != null) {
-                    val title = nextNextLink.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${nextNextIdx + 1}"
-                    chapterLruCache.put(nextNextIdx, ParsedChapterData(nextNextIdx, nextNextHref, title, doc))
-                }
-            }
-        }
+    fun prefetchSurroundingChapters(currentIndex: Int) {
+        chapterNavigationCoordinator.prefetchSurroundingChapters(
+            scope = viewModelScope,
+            bookId = bookId,
+            publication = publication,
+            isPdfBook = isPdfBook,
+            currentIndex = currentIndex
+        )
     }
 
-    private var lastChapterAdvanceTime = 0L
-
-    /**
-     * Paso automático de capítulo al terminar la narración TTS.
-     * Avanza al siguiente capítulo sin que el usuario tenga que interactuar con la pantalla.
-     */
     fun advanceTtsToNextChapter() {
-        val now = System.currentTimeMillis()
-        if (now - lastChapterAdvanceTime < 1200L) {
-            Log.d(TAG, "advanceTtsToNextChapter: Ignorado disparo duplicado dentro de 1.2s")
-            return
-        }
-        lastChapterAdvanceTime = now
-
         val pub = publication ?: return
-        if (isPdfBook || isReflowMode.value) {
-            goToNextChapter(navigator)
-            return
-        }
-
-        val order = pub.readingOrder
-        val totalChapters = order.size
-        val currentLoc = epubFormatManager.currentTtsLocator.value
-            ?: (navigator as? VisualNavigator)?.currentLocator?.value
-            ?: _lastTtsLocator.value
-            ?: _currentTtsLocator.value
-        val currentHref = currentLoc?.href?.toString() ?: ""
-        val currentIdx = if (currentHref.isNotBlank()) {
-            val idx = resourceIndexCache?.get(currentHref) ?: findMatchingResourceIndex(currentHref, order)
-            if (idx != -1) idx else {
-                val targetRes = currentHref.substringAfterLast('/').substringBefore('#')
-                order.indexOfFirst {
-                    it.href.toString() == currentHref ||
-                    it.href.toString().substringAfterLast('/') == targetRes
-                }
-            }
-        } else -1
-
-        if (currentIdx != -1 && currentIdx + 1 < totalChapters) {
-            val nextIdx = currentIdx + 1
-            val nextLink = order[nextIdx]
-            val nextLocator = pub.locatorFromLink(nextLink)?.copy(
-                locations = Locator.Locations(progression = 0.0)
-            )
-
-            // Transferir el documento ya procesado desde chapterLruCache a epubFormatManager para cambio instantáneo (< 50 ms)
-            chapterLruCache.get(nextIdx)?.let { cached ->
-                epubFormatManager.putCachedDocument(nextLink.href.toString(), cached.document)
-            }
-
-            if (nextLocator != null) {
-                (navigator as? VisualNavigator)?.go(nextLocator, animated = false)
-                epubFormatManager.playTts(context, nextLocator, navigator, viewModelScope, pub)
-            } else {
-                epubFormatManager.skipTtsChapterForward(context, publication, navigator)
-            }
-            // Pre-cargar en segundo plano el siguiente capítulo
-            prefetchSurroundingChapters(nextIdx)
-        } else {
-            // Último capítulo alcanzado o fallback
-            epubFormatManager.skipTtsChapterForward(context, publication, navigator)
-        }
+        val currentHref = epubFormatManager.currentTtsLocator.value?.href?.toString()
+            ?: (navigator as? VisualNavigator)?.currentLocator?.value?.href?.toString()
+            ?: _lastTtsLocator.value?.href?.toString()
+            ?: _currentTtsLocator.value?.href?.toString()
+            ?: ""
+        chapterNavigationCoordinator.advanceTtsToNextChapter(
+            scope = viewModelScope,
+            bookId = bookId,
+            publication = pub,
+            navigator = navigator,
+            isPdfBook = isPdfBook,
+            isReflowMode = isReflowMode.value,
+            currentTtsHref = currentHref,
+            resourceIndexCache = resourceIndexCache,
+            onNavigatePdfNext = { goToNextChapter(navigator) }
+        )
     }
 
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ TTS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
@@ -2410,9 +2174,7 @@ class ReaderViewModel @Inject constructor(
         navigator = null
         positionsByResource = emptyList()
         resourceIndexCache = null
-        prefetchJob?.cancel()
-        prefetchJob = null
-        chapterLruCache.evictAll()
+        chapterNavigationCoordinator.clear()
         super.onCleared()
     }
 
