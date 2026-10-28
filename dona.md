@@ -17,7 +17,7 @@
 - **Resumen de Auditoría de Hallazgos (Sección 14):**
   - ✅ **Verificado / Resuelto:** 11 hallazgos (C1, C2, C3, C5, C9, C12, C13, A1, A12, M4, SEC-1).
   - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 2 hallazgos (C6, C7).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 9 hallazgos (C4, C8, C10, C11, A9, A10, M2, M13, M15).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 19 hallazgos (C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24).
   - ⚪ **No verificado:** 0.
 
 ---
@@ -1434,7 +1434,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** BookRepository, BookMetadataExtractor, SavedStateHandle
 - **Usado_por:** BookDetailScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 309 líneas)
-- **Hallazgos:** **C12:** `checkNotNull(savedStateHandle["bookId"])` crashea si falta el argumento.
+- **Hallazgos:** **C12 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene vacío expone `BookDetailUiState(error = "...")` en vez de crashear.
 
 #### `ui/settings/SettingsScreen.kt`
 - **Propósito:** Pantalla general de configuración y control global de Woods Reader. Gestiona la suscripción y licencias PRO (`ProLicenseManager`), escaneo/enriquecimiento de la biblioteca local, configuración avanzada del motor de narración TTS (selección entre Sherpa ONNX VITS y TTS del sistema, catálogo multilingüe de 12 voces offline, auto-detección de idioma por capítulo, glosario fonético Xuanhuan/LitRPG y reglas personalizadas), preferencias de lectura y notificaciones, blindaje de ejecución en segundo plano con pantalla apagada (`WoodsKeepAliveManager`), exportación e importación de copias de seguridad portátiles (`WoodsBackup Vault`), métricas de almacenamiento (Room DB, caché Coil, modelos Sherpa) con limpieza selectiva, y ficha técnica del sistema con copiado al portapapeles.
@@ -1556,10 +1556,10 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.472 líneas)
 - **Hallazgos:**
   - **C3 [RESUELTO]:** Descompresión completada mediante 5 casos de uso y coordinadores de dominio. Reducción de más de 430 líneas de lógica acoplada.
-  - **C8/C10/C17 [RESUELTO]:** Eliminados todos los comentarios con caracteres corruptos (mojibake).
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
-  - **C2:** `checkNotNull(savedStateHandle.get<String>("bookId"))` crashea si falta `bookId` (pendiente blindaje con lectura defensiva).
-  - **M3:** CFI como JSON plano frágil.
+  - **C2 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Emite `ReaderUiState.Error` seguro si falta el parámetro.
+  - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) persistentes en comentarios de líneas 355, 502 y 755. Pendiente corrección cosmética.
+  - **M3 [PENDIENTE]:** Locator CFI persistido como JSON plano propenso a desincronización si cambian esquemas de Readium.
 
 #### `ui/reader/ReaderContract.kt`
 - **Propósito:** Definición de contratos y modelos de navegación para la interfaz del lector: pestañas del panel lateral (TOC, Marcadores, Subrayados, Notas, Configuración) y modelos inmutables de resaltado de texto para la narración de TTS.
@@ -1827,7 +1827,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** GraphRepository, BookRepository, SavedStateHandle, ForceLayout, WorkManager, GraphExtractionWorker, GraphPositionsCache, GraphJsonHelper, Readium Locator/Url/MediaType
 - **Usado_por:** GraphScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 250+ líneas)
-- **Hallazgos:** `checkNotNull(savedStateHandle["bookId"])` crashea si falta `bookId` (C13, heredado de fase anterior). Uso correcto de combines anidados de 2 (regla 6 de GRAPH_PLAN.md). Loop de física en viewModelScope/Dispatchers.Default con `tick` para forzar redibujo.
+- **Hallazgos:** **C13 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Aborta de forma segura sin crashear. Uso correcto de combines anidados de 2 (regla 6 de GRAPH_PLAN.md). Loop de física en viewModelScope/Dispatchers.Default con `tick` para forzar redibujo.
 
 #### `ui/graph/GraphCanvas.kt`
 - **Propósito:** Canvas de grafo con zoom/pan/tap, selección por distancia, texto medido solo si zoom > 0.7.
@@ -1859,7 +1859,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** Compose, GraphRepository, SavedStateHandle, Hilt
 - **Usado_por:** NavGraph
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 726 líneas)
-- **Hallazgos:** `checkNotNull(savedStateHandle["bookId"])` crashea si falta `bookId` (misma regla C13).
+- **Hallazgos:** **C13 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Retorno seguro con colecciones vacías si falta el ID.
 
 ---
 
@@ -2267,6 +2267,16 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 | **M13** | Baja | `DatabaseModule.kt:85` | Inconsistencia de estilo: `provideGraphDao` utiliza FQCN en vez de import limpio | `DatabaseModule.kt` | 🔴 **Pendiente** | Inspección de imports. Cero impacto técnico. | Limpieza de import pendiente en refactor cosmético. |
 | **M15** | Media | `InlineLookupManager.kt:45` | Scope global `appScope` no dispone de método de cancelación ante salida de lectura | `InlineLookupManager` → Diccionario flotante | 🔴 **Pendiente** | Realizar múltiples consultas de diccionario continuas al cerrar el lector. | Migrar a coroutine scope vinculado al ciclo de vida del lector (`coroutineScope` local). |
 | **SEC-1** | Alta | `KeyMaker.kt:18` | Clave privada ECDSA embebida en código fuente (`PRIVATE_KEY_BASE64`) | Módulo `:keymaker` | ✅ **Verificado** | Inspección de `:keymaker`. | El módulo `:keymaker` es una herramienta interna de escritorio para el desarrollador, excluida del build del APK `:app`. |
+| **M3** | Media | `ReaderViewModel.kt:502` | CFI de Readium persistido como JSON plano propenso a desincronización | `ReaderViewModel` → `SaveReadingProgressUseCase` → Room | 🔴 **Pendiente** | Inspeccionar serialización de Locator CFI. | Modelar contrato tipado para Locator en lugar de serialización de texto plano. |
+| **M16** | Media | `ReaderTtsMacroWindow.kt:1215` | Instanciación manual de `SherpaModelManager(context.applicationContext)` vía `remember` eludiendo DI | `ReaderTtsMacroWindow` → `SherpaModelManager` | 🔴 **Pendiente** | Inspeccionar L1215: crea nueva instancia en lugar de inyectar `@Singleton`. | Deuda técnica de DI: migrar a inyección vía EntryPoint o proveer a través de ViewModel. |
+| **M17** | Baja | `ReaderTtsMacroWindow.kt:1230` | Uso de SharedPreferences sincrónicas (`"woods_studio_voice_hd"`) con `.edit().apply()` en callbacks Compose | `ReaderTtsMacroWindow` → SharedPreferences | 🔴 **Pendiente** | Inspeccionar L1230: persiste acústica de voz sincrónicamente. | Deuda técnica de persistencia: migrar a DataStore reactivo (`UserPreferencesRepository`). |
+| **M18** | Media | `ReaderScreen.kt:1158-1163` | Inyección de JavaScript directo (`s.modify('move', 'backward', 'sentence')`) en WebViews sin timeout ni callback de error | `ReaderScreen` → Readium WebViews | 🔴 **Pendiente** | Inspeccionar L1158: `evaluateJavascript` ejecutado sin timeout protector ni callback de error. | Envolver la ejecución en script seguro con `catch` y callback de estado. |
+| **M19** | Baja | `ReaderScreen.kt:1207-1215` | Captura de excepciones vacía (`catch (_: Exception) {}`) en Intent implícito `ACTION_VIEW` al abrir navegador | `ReaderScreen` → Intent `ACTION_VIEW` | 🔴 **Pendiente** | Inspeccionar L1207: si no hay navegador externo instalado, oculta silenciosamente el fallo. | Registrar log de advertencia o mostrar `Toast` de feedback al usuario. |
+| **M20** | Baja | `ReaderUIComponents.kt:838` | Captura de excepciones vacía (`catch (_: Exception) {}`) en fallback de navegador web para traducción | `ReaderUIComponents` (`HighlightColorMenu`) → Intent `ACTION_VIEW` | 🔴 **Pendiente** | Inspeccionar L838: omite manejo si falla el lanzamiento del navegador. | Capturar `ActivityNotFoundException` y avisar con Snackbar/Toast. |
+| **M21** | Media | `ReaderUIComponents.kt:1241-1245` | `QuoteVideoClipEntryPoint` usa `EntryPointAccessors.fromApplication` en `remember` de Compose | `ReaderUIComponents` (`QuoteShareDialog`) → `QuoteVideoClipExporter` | 🔴 **Pendiente** | Inspeccionar L1241: acoplamiento de Dagger EntryPoint en la capa de UI. | Inyectar `QuoteVideoClipExporter` en el ViewModel correspondiente y exponer flujo de exportación. |
+| **M22** | Media | `ReaderUIComponents.kt:1530-1536` | Generación de Bitmap (1080x1350 px, 5.8 MB) síncrona en el hilo principal de UI al pulsar "Imagen" | `ReaderUIComponents` → Canvas Android → Hilo Main | 🔴 **Pendiente** | Inspeccionar L1530: `renderThemedQuoteBitmap` corre en hilo UI antes de insertar en MediaStore. | Mover la generación y compresión del Bitmap a `Dispatchers.Default` o `Dispatchers.IO`. |
+| **M23** | Baja | `SettingsScreen.kt:1171-1184` | Ficha técnica contiene cadenas de versión hardcodeadas ("v1.0.0-ALPHA", "Build 2026.10") | `SettingsScreen` → Ficha Técnica | 🔴 **Pendiente** | Inspeccionar L1175: valores estáticos en texto multilínea. | Sustituir cadenas fijas por interpolación de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`. |
+| **M24** | Media | `SettingsScreen.kt:940, 1356` | Exposición directa de instancias de dominio (`viewModel.woodsKeepAliveManager`, `viewModel.proLicenseManager`) a vistas Compose | `SettingsScreen` → Gestores de Dominio | 🔴 **Pendiente** | Inspeccionar L940 y L1356: la UI invoca métodos de los gestores directamente. | Delegar las acciones a través de métodos públicos del `SettingsViewModel`. |
 
 ### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en TECNO-LH7n)
 
