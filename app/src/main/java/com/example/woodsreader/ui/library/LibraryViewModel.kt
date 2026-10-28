@@ -4,16 +4,27 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
+import com.example.woodsreader.core.license.ProLicenseManager
+import com.example.woodsreader.core.translation.calibre.CalibreStyleEpubTranslator
+import com.example.woodsreader.core.translation.calibre.inplace.EpubPackageParser
+import com.example.woodsreader.core.tts.ChapterAudioExporter
+import com.example.woodsreader.core.tts.ChapterTextChunk
+import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.database.CollectionEntity
 import com.example.woodsreader.data.model.ReadingStatus
 import com.example.woodsreader.data.repository.BookRepository
 import com.example.woodsreader.service.BookScannerService
+import com.example.woodsreader.service.CoverExtractor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
 import android.net.Uri
 import android.content.Intent
+import java.io.File
+import java.util.zip.ZipFile
+import org.jsoup.Jsoup
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,6 +48,11 @@ class LibraryViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val scannerService: BookScannerService,
     private val preferencesRepository: UserPreferencesRepository,
+    val proLicenseManager: ProLicenseManager,
+    val calibreStyleEpubTranslator: CalibreStyleEpubTranslator,
+    val chapterAudioExporter: ChapterAudioExporter,
+    val sherpaModelManager: SherpaModelManager,
+    private val coverExtractor: CoverExtractor,
     @ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
@@ -257,6 +273,197 @@ class LibraryViewModel @Inject constructor(
 
     fun cancelScan() {
         scannerService.cancelScan()
+    }
+
+    fun importBookFile(file: File, onComplete: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val success = scannerService.importSingleFile(file)
+            withContext(Dispatchers.Main) {
+                onComplete?.invoke(success)
+            }
+        }
+    }
+
+    private var translationJob: kotlinx.coroutines.Job? = null
+
+    fun translateEpubBook(
+        book: BookEntity,
+        sourceLang: String = "en",
+        targetLang: String = "es",
+        onComplete: ((Result<File>) -> Unit)? = null
+    ) {
+        if (translationJob?.isActive == true) return
+        translationJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val rawPath = book.filePath
+                val cleanPath = when {
+                    rawPath.startsWith("file://") -> android.net.Uri.parse(rawPath).path ?: rawPath.removePrefix("file://")
+                    rawPath.startsWith("file:") -> rawPath.removePrefix("file:")
+                    else -> rawPath
+                }
+                val sourceFile = File(cleanPath)
+                val resolvedSource = if (sourceLang == "auto") "en" else sourceLang
+                val result = calibreStyleEpubTranslator.translateEntireEpub(
+                    sourceEpubFile = sourceFile,
+                    sourceLanguageCode = resolvedSource,
+                    targetLanguageCode = targetLang
+                )
+                result.onSuccess { translatedFile ->
+                    scannerService.importSingleFile(translatedFile)
+                }
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(result)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancelado por el usuario: avisar a la UI (cerrar diálogo) y propagar la cancelación
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    onComplete?.invoke(Result.failure(e))
+                }
+                throw e
+            }
+        }
+    }
+
+    fun cancelEpubTranslation() {
+        translationJob?.cancel()
+    }
+
+    val audioExportState = chapterAudioExporter.exportState
+
+    fun isSherpaModelReady(): Boolean = sherpaModelManager.isModelReady()
+
+    fun getInstalledVoices(): List<com.example.woodsreader.core.tts.SherpaVoiceOption> =
+        sherpaModelManager.getInstalledModels()
+
+    val selectedVoice: StateFlow<com.example.woodsreader.core.tts.SherpaVoiceOption> =
+        sherpaModelManager.selectedVoice
+
+    fun exportBookToAudio(
+        book: BookEntity,
+        maxChapters: Int,
+        speed: Float = 1.0f,
+        voiceOption: com.example.woodsreader.core.tts.SherpaVoiceOption? = null,
+        includeSyncedLyrics: Boolean = true,
+        onComplete: ((Result<String>) -> Unit)? = null
+    ) {
+        val job = viewModelScope.launch(Dispatchers.IO) {
+            var zipFile: ZipFile? = null
+            try {
+                val rawPath = book.filePath
+                val cleanPath = when {
+                    rawPath.startsWith("file://") -> android.net.Uri.parse(rawPath).path ?: rawPath.removePrefix("file://")
+                    rawPath.startsWith("file:") -> rawPath.removePrefix("file:")
+                    else -> rawPath
+                }
+                val sourceFile = File(cleanPath)
+                if (!sourceFile.exists()) {
+                    val err = IllegalStateException("No se encontró el archivo del libro: $cleanPath")
+                    withContext(Dispatchers.Main) { onComplete?.invoke(Result.failure(err)) }
+                    return@launch
+                }
+
+                zipFile = ZipFile(sourceFile)
+                val epubPackage = EpubPackageParser.parse(zipFile)
+                val readingOrder = epubPackage.readingOrderZipPaths
+                if (readingOrder.isEmpty()) {
+                    val err = IllegalStateException("El libro no contiene capítulos legibles")
+                    withContext(Dispatchers.Main) { onComplete?.invoke(Result.failure(err)) }
+                    return@launch
+                }
+
+                // Filtrar solo entradas que contengan texto legible (descartando portadas o páginas vacías)
+                val currentZip = zipFile
+                val contentEntries = readingOrder.filter { zipPath ->
+                    val entry = findZipEntry(currentZip, zipPath) ?: return@filter false
+                    val text = runCatching {
+                        currentZip.getInputStream(entry).use { inStream ->
+                            Jsoup.parse(inStream, "UTF-8", "").body()?.text().orEmpty()
+                        }
+                    }.getOrDefault("")
+                    text.trim().length > 40
+                }.ifEmpty { readingOrder }
+
+                val countToExport = minOf(maxChapters, contentEntries.size)
+                val label = when {
+                    countToExport == 1 -> "Capitulo_1"
+                    countToExport >= contentEntries.size -> "Libro_Completo"
+                    else -> "Caps_1_a_$countToExport"
+                }
+
+                val coverFile = book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+                    ?: coverExtractor.getExistingCoverPath(book.fileHash)?.let { File(it) }
+                    ?: File(context.filesDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
+                    ?: File(context.cacheDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
+                    ?: runCatching {
+                        coverExtractor.extractCover(
+                            source = sourceFile,
+                            format = book.format,
+                            fileHash = book.fileHash,
+                            title = book.title,
+                            author = book.author
+                        )?.let { File(it) }
+                    }.getOrNull()
+
+                val result = chapterAudioExporter.exportChaptersToM4a(
+                    bookTitle = book.title,
+                    exportLabel = label,
+                    totalChaptersCount = countToExport,
+                    chapterProvider = { offset ->
+                        val zipEntryPath = contentEntries.getOrNull(offset) ?: return@exportChaptersToM4a null
+                        val entry = findZipEntry(currentZip, zipEntryPath) ?: return@exportChaptersToM4a null
+                        val doc = currentZip.getInputStream(entry).use { inStream ->
+                            Jsoup.parse(inStream, "UTF-8", "")
+                        }
+                        val title = doc.selectFirst("h1, h2, h3, title")?.text()?.takeIf { it.isNotBlank() } ?: "Capítulo ${offset + 1}"
+                        val elements = doc.select("p, h1, h2, h3, h4, h5, h6")
+                        val paragraphs = if (elements.isNotEmpty()) {
+                            elements.map { it.text().trim() }.filter { it.isNotBlank() }
+                        } else {
+                            doc.body().text().split("\n").map { it.trim() }.filter { it.isNotBlank() }
+                        }
+                        ChapterTextChunk(title, paragraphs)
+                    },
+                    speed = speed,
+                    voiceOption = voiceOption,
+                    includeSyncedLyrics = includeSyncedLyrics,
+                    coverImageFile = coverFile,
+                    bookAuthor = book.author
+                )
+
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(result)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    onComplete?.invoke(Result.failure(e))
+                }
+                throw e
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(Result.failure(e))
+                }
+            } finally {
+                try {
+                    zipFile?.close()
+                } catch (_: Exception) {}
+            }
+        }
+        chapterAudioExporter.setActiveJob(job)
+    }
+
+    fun cancelAudioExport() {
+        chapterAudioExporter.cancelExport()
+    }
+
+    fun resetAudioExportState() {
+        chapterAudioExporter.resetState()
+    }
+
+    private fun findZipEntry(zip: ZipFile, path: String): java.util.zip.ZipEntry? {
+        val cleanPath = path.replace('\\', '/')
+        return zip.getEntry(cleanPath)
+            ?: zip.entries().asSequence().firstOrNull { it.name.equals(cleanPath, ignoreCase = true) }
+            ?: zip.entries().asSequence().firstOrNull { it.name.endsWith(cleanPath.substringAfterLast('/'), ignoreCase = true) }
     }
 
     fun onFolderSelected(uri: Uri) {

@@ -1,0 +1,42 @@
+# OpenCode - Configuración Local del Proyecto Woods Reader
+# Hereda de ~/.opencode/config.yaml
+
+project:
+  name: woods-reader
+  type: android-kt-compose
+  root: "C:\\Users\\Orbit\\Downloads\\woods reader"
+
+mcp:
+  servers:
+    filesystem:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\Orbit\\Downloads\\woods reader"]
+      description: "Filesystem MCP scoped a Woods Reader"
+    github:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+
+skills:
+  enabled:
+    - plan-driven-dev
+    - tdd-assisted
+    - systematic-debugging
+    - low-token
+    - atomic-workflow
+    - code-review-auditor
+    - performance-optimizer
+    - architecture-clean-review
+    - tts-accessibility-auditor
+    - build-apk-optimizer
+    - test-coverage-enforcer
+
+# Reglas del proyecto (refleja .cursorrules)
+guardrails:
+  no_new_dependencies: true
+  no_main_thread_blocking: true
+  atomic_edit_max_files: 3
+  mandatory_test_command: ".\\gradlew.bat :app:testDebugUnitTest"
+  commit_per_step: true
+  supported_formats: ["EPUB", "PDF"]

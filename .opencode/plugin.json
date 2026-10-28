@@ -1,0 +1,34 @@
+{
+  "name": "woods-reader-plugin",
+  "version": "1.0.0",
+  "description": "Plugin local de OpenCode para Woods Reader. Empaqueta Skills y configuración MCP.",
+  "mcp_servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\Orbit\\Downloads\\woods reader"],
+      "auto_start": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "auto_start": false
+    }
+  },
+  "skills": [
+    "plan-driven-dev",
+    "tdd-assisted",
+    "systematic-debugging",
+    "low-token",
+    "atomic-workflow",
+    "code-review-auditor",
+    "performance-optimizer",
+    "architecture-clean-review",
+    "tts-accessibility-auditor",
+    "build-apk-optimizer",
+    "test-coverage-enforcer"
+  ],
+  "guardrails_file": "../.cursorrules"
+}

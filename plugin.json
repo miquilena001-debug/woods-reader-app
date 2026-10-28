@@ -1,0 +1,137 @@
+{
+  "name": "woods-reader-plugin",
+  "version": "1.0.0",
+  "description": "Plugin de OpenCode para Woods Reader: Android EPUB/PDF Reader con Kotlin, Jetpack Compose, Readium 3.x y TTS offline. Incluye Skills de desarrollo y configuración de servidores MCP.",
+  "author": "OpenCode",
+  "license": "MIT",
+
+  "project": {
+    "type": "android-kt-compose",
+    "root": ".",
+    "entry_point": "app/build.gradle.kts",
+    "test_command": ".\\gradlew.bat :app:testDebugUnitTest",
+    "build_command": ".\\gradlew.bat :app:assembleDebug"
+  },
+
+  "mcp_servers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\Orbit\\Downloads\\woods reader"],
+      "description": "Lectura/escritura controlada del proyecto Woods Reader",
+      "auto_start": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "description": "Issues, PRs y búsquedas en repositorios GitHub",
+      "auto_start": false
+    }
+  },
+
+  "skills": [
+    {
+      "id": "plan-driven-dev",
+      "name": "Plan-Driven Development",
+      "description": "Escritura previa de planes detallados en Markdown antes de tocar código.",
+      "path": ".opencode/skills/plan-driven-dev/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "tdd-assisted",
+      "name": "TDD Asistido por IA",
+      "description": "Pruebas unitarias primero, código mínimo después para pasarlas.",
+      "path": ".opencode/skills/tdd-assisted/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "systematic-debugging",
+      "name": "Depuración Sistemática",
+      "description": "Hipótesis basada en logs, aislamiento del componente, cambio atómico.",
+      "path": ".opencode/skills/systematic-debugging/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "low-token",
+      "name": "Ultra-Bajo Consumo de Tokens",
+      "description": "Lectura quirúrgica, edición por diff, instrucciones globales persistentes.",
+      "path": ".opencode/skills/low-token/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "atomic-workflow",
+      "name": "Flujo de Trabajo Atómico",
+      "description": "Ciclo: Análisis → Validación → Ejecución atómica → Revisión rápida.",
+      "path": ".opencode/skills/atomic-workflow/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "code-review-auditor",
+      "name": "Code Review & Auditor de Calidad",
+      "description": "Auditoría de calidad, seguridad, guardrails y deuda técnica antes de producir.",
+      "path": ".opencode/skills/code-review-auditor/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "performance-optimizer",
+      "name": "Performance Optimizer",
+      "description": "Optimiza memoria, batería, APK, renderizado Compose y fluidez de lectura.",
+      "path": ".opencode/skills/performance-optimizer/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "architecture-clean-review",
+      "name": "Clean Architecture Review",
+      "description": "Revisa separación de capas, dependencias y Hilt/DI correcto.",
+      "path": ".opencode/skills/architecture-clean-review/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "tts-accessibility-auditor",
+      "name": "TTS & Accessibility Auditor",
+      "description": "Auditoría de motor TTS, accesibilidad, sincronización highlight y prosodia español.",
+      "path": ".opencode/skills/tts-accessibility-auditor/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "build-apk-optimizer",
+      "name": "Build & APK Optimizer",
+      "description": "Optimiza Gradle, reduce tamaño APK (<235 MB), R8/ProGuard y firma.",
+      "path": ".opencode/skills/build-apk-optimizer/SKILL.md",
+      "progressive_disclosure": true
+    },
+    {
+      "id": "test-coverage-enforcer",
+      "name": "Test Coverage Enforcer",
+      "description": "Garantiza pruebas unitarias, cobertura mínima y criterios de aceptación BDD.",
+      "path": ".opencode/skills/test-coverage-enforcer/SKILL.md",
+      "progressive_disclosure": true
+    }
+  ],
+
+  "guardrails": {
+    "no_new_dependencies": true,
+    "no_main_thread_blocking": true,
+    "atomic_edit_max_files": 3,
+    "mandatory_test_command": ".\\gradlew.bat :app:testDebugUnitTest",
+    "commit_per_step": true,
+    "supported_formats": ["EPUB", "PDF"],
+    "forbidden_formats": ["CBR", "CBZ", "MOBI", "FB2"]
+  },
+
+  "stack": {
+    "language": "Kotlin",
+    "ui": "Jetpack Compose + Material 3",
+    "di": "Hilt",
+    "database": "Room v11",
+    "parsing": "Readium 3.x (EPUB), PDFBox (PDF)",
+    "audio": "Media3 / ExoPlayer, Sherpa ONNX (TTS offline)",
+    "image": "Coil3",
+    "network": "OkHttp"
+  },
+
+  "package": "com.example.woodsreader",
+  "modules": ["app", "keymaker"]
+}

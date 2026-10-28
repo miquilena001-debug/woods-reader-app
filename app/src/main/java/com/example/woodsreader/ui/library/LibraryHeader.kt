@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -34,7 +35,8 @@ fun LibraryHeader(
     readingCount: Int, 
     finishedCount: Int, 
     onScanClick: () -> Unit,
-    onAddFolderClick: () -> Unit
+    onAddFolderClick: () -> Unit,
+    onWebToEpubClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -128,6 +130,32 @@ fun LibraryHeader(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Icon(Icons.Default.FolderOpen, contentDescription = "Añadir Carpeta", tint = HiddenForest.TextSecondary, modifier = Modifier.size(18.dp))
+        }
+
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(HiddenForest.SurfaceVariant)
+                .border(1.dp, HiddenForest.Accent.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                .clickable { onWebToEpubClick() }
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Public,
+                    contentDescription = "Web a EPUB",
+                    tint = HiddenForest.Accent,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Web a EPUB",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    color = HiddenForest.Accent
+                )
+            }
         }
     }
 }

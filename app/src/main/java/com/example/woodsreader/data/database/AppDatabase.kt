@@ -1,8 +1,14 @@
 package com.example.woodsreader.data.database
 
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.example.woodsreader.data.graph.GraphAlias
+import com.example.woodsreader.data.graph.GraphEntity
+import com.example.woodsreader.data.graph.GraphMention
+import com.example.woodsreader.data.graph.GraphRelation
+import com.example.woodsreader.data.graph.GraphTypeConverters
 
 /**
  * Base de datos Room principal del proyecto.
@@ -21,12 +27,19 @@ import androidx.room.TypeConverters
         ReadingSessionEntity::class,
         CollectionEntity::class,
         ReadingStatsEntity::class,
-        TtsRuleEntity::class
+        TtsRuleEntity::class,
+        GraphEntity::class,
+        GraphAlias::class,
+        GraphRelation::class,
+        GraphMention::class
     ],
-    version = 10,
+    version = 11,
+    autoMigrations = [
+        AutoMigration(from = 10, to = 11)
+    ],
     exportSchema = true
 )
-@TypeConverters(AppTypeConverters::class)
+@TypeConverters(AppTypeConverters::class, GraphTypeConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     
     companion object {
@@ -47,4 +60,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun collectionDao(): CollectionDao
     abstract fun readingStatsDao(): ReadingStatsDao
     abstract fun ttsRuleDao(): TtsRuleDao
+    abstract fun graphDao(): com.example.woodsreader.data.graph.GraphDao
 }

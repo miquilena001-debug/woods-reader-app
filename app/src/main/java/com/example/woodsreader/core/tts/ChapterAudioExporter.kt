@@ -38,9 +38,19 @@ sealed interface AudioExportState {
         val totalSentences: Int,
         val label: String
     ) : AudioExportState
-    data class Completed(val fileName: String, val sizeKb: Long) : AudioExportState
+    data class Completed(
+        val fileName: String,
+        val sizeKb: Long,
+        val hasLyrics: Boolean = false
+    ) : AudioExportState
     data class Error(val message: String) : AudioExportState
 }
+
+data class SyncedSubtitleCue(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String
+)
 
 data class ChapterTextChunk(
     val chapterTitle: String,
@@ -75,14 +85,49 @@ class ChapterAudioExporter @Inject constructor(
         _exportState.value = AudioExportState.Idle
     }
 
+    /**
+     * Limpia proactivamente archivos huérfanos o residuales (.lrc, .srt, .jpg, .txt)
+     * de exportaciones anteriores para mantener la carpeta Music/WoodsReader limpia
+     * conteniendo únicamente archivos de audio autónomos .m4a.
+     */
+    private fun cleanupLegacyExternalFiles() {
+        runCatching {
+            val musicDir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                "WoodsReader"
+            )
+            if (musicDir.exists() && musicDir.isDirectory) {
+                val legacyExtensions = listOf(".lrc", ".srt", ".jpg", ".jpeg", ".png", ".txt")
+                musicDir.listFiles()?.forEach { file ->
+                    val nameLower = file.name.lowercase()
+                    if (legacyExtensions.any { ext -> nameLower.endsWith(ext) }) {
+                        file.delete()
+                        Timber.d("Archivo residual eliminado: ${file.name}")
+                    }
+                }
+            }
+        }.onFailure { Timber.w(it, "Error en limpieza preventiva de archivos residuales") }
+    }
+
     suspend fun exportChaptersToM4a(
         bookTitle: String,
         exportLabel: String,
         totalChaptersCount: Int,
         chapterProvider: suspend (index: Int) -> ChapterTextChunk?,
-        speed: Float = 1.0f
+        speed: Float = 1.0f,
+        voiceOption: SherpaVoiceOption? = null,
+        includeSyncedLyrics: Boolean = true,
+        coverImageFile: File? = null,
+        bookAuthor: String = ""
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
+            // Limpiar cualquier archivo huérfano .lrc/.srt/.jpg/.txt antes de iniciar
+            cleanupLegacyExternalFiles()
+
+            if (voiceOption != null) {
+                ttsManager.switchSherpaVoice(voiceOption)
+            }
+
             if (!sherpaModelManager.isModelReady()) {
                 throw IllegalStateException("Primero descarga un modelo de voz IA en la sección de modelos Sherpa")
             }
@@ -99,7 +144,7 @@ class ChapterAudioExporter @Inject constructor(
 
             try {
                 woodsKeepAliveManager.acquireKeepAliveWakeLock()
-                encodeStreamToM4a(
+                val syncedCues = encodeStreamToM4a(
                     outputFile = tempM4aFile,
                     sampleRate = sampleRate,
                     totalChapters = totalChaptersCount,
@@ -111,6 +156,25 @@ class ChapterAudioExporter @Inject constructor(
                     throw IllegalStateException("La exportación no produjo un archivo de audio válido")
                 }
 
+                val effectiveAuthor = bookAuthor.trim().ifBlank { "Woods Reader IA" }
+                val lrcContent = if (includeSyncedLyrics && syncedCues.isNotEmpty()) {
+                    generateLrc(syncedCues, bookTitle, effectiveAuthor)
+                } else {
+                    ""
+                }
+
+                // Incrustar en binario todo dentro del contenedor .M4A (Título, Autor, Álbum, Letras LRC y Portada)
+                runCatching {
+                    M4aMetadataEmbedder.embedAllIntoM4a(
+                        m4aFile = tempM4aFile,
+                        title = "$bookTitle - $exportLabel",
+                        author = effectiveAuthor,
+                        bookTitle = bookTitle,
+                        synchronizedLyricsLrc = lrcContent,
+                        coverFile = coverImageFile
+                    )
+                }.onFailure { Timber.w(it, "No se pudo incrustar metadatos dentro del archivo .M4A") }
+
                 val safeBook = bookTitle.replace(Regex("""[^\p{L}\p{N}_\- ]"""), "").trim().take(28).ifBlank { "Libro" }
                 val safeLabel = exportLabel.replace(Regex("""[^\p{L}\p{N}_\- ]"""), "").trim().take(28).ifBlank { "Audio" }
                 val fileName = "${safeBook}_${safeLabel}.m4a".replace(Regex("""\s+"""), "_")
@@ -121,7 +185,8 @@ class ChapterAudioExporter @Inject constructor(
                     put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
                     put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
                     put(MediaStore.Audio.Media.TITLE, "$bookTitle - $exportLabel")
-                    put(MediaStore.Audio.Media.ARTIST, "Woods Reader IA")
+                    put(MediaStore.Audio.Media.ARTIST, effectiveAuthor)
+                    put(MediaStore.Audio.Media.ALBUM, bookTitle)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/WoodsReader")
                     }
@@ -144,7 +209,10 @@ class ChapterAudioExporter @Inject constructor(
                     coroutineContext.ensureActive()
 
                     published = true
-                    _exportState.value = AudioExportState.Completed(fileName, fileSizeKb)
+
+                    // ÚNICO archivo generado: .m4a que contiene audio, portada y letras sincronizadas
+                    val hasLyrics = lrcContent.isNotBlank()
+                    _exportState.value = AudioExportState.Completed(fileName, fileSizeKb, hasLyrics = hasLyrics)
                     fileName
                 } finally {
                     if (!published) {
@@ -160,7 +228,7 @@ class ChapterAudioExporter @Inject constructor(
             } finally {
                 woodsKeepAliveManager.releaseKeepAliveWakeLock()
                 if (tempM4aFile.exists() && !tempM4aFile.delete()) {
-                    throw java.io.IOException("No se pudo eliminar el archivo temporal de exportación")
+                    Timber.w("No se pudo eliminar el archivo temporal de exportación")
                 }
             }
         }.onFailure { err ->
@@ -178,7 +246,8 @@ class ChapterAudioExporter @Inject constructor(
         totalChapters: Int,
         chapterProvider: suspend (index: Int) -> ChapterTextChunk?,
         speed: Float
-    ) {
+    ): List<SyncedSubtitleCue> {
+        val syncedCues = mutableListOf<SyncedSubtitleCue>()
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_BIT_RATE, 48_000) // 48 kbps AAC: voz nítida y ~20 MB por hora
@@ -290,9 +359,12 @@ class ChapterAudioExporter @Inject constructor(
                         label = chunk.chapterTitle
                     )
 
+                    val sentenceStartMs = (totalSamplesSubmitted * 1000L) / sampleRate
                     val audio = ttsManager.synthesizeExpressiveStudioAudio(sentence, speed)
                     if (audio != null && audio.first.isNotEmpty()) {
                         feedSamples(audio.first)
+                        val sentenceEndMs = (totalSamplesSubmitted * 1000L) / sampleRate
+                        syncedCues.add(SyncedSubtitleCue(sentenceStartMs, sentenceEndMs, sentence))
                     }
                 }
                 feedSamples(silenceBetweenChapters)
@@ -302,6 +374,7 @@ class ChapterAudioExporter @Inject constructor(
                 throw IllegalStateException("No se generó audio para exportar")
             }
             drainEncoder(endOfStream = true)
+            return syncedCues
         } finally {
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
@@ -310,5 +383,22 @@ class ChapterAudioExporter @Inject constructor(
             }
             runCatching { muxer?.release() }
         }
+    }
+
+    private fun generateLrc(cues: List<SyncedSubtitleCue>, title: String, artist: String): String {
+        val sb = StringBuilder()
+        sb.append("[ti:").append(title).append("]\n")
+        sb.append("[ar:").append(artist).append("]\n")
+        sb.append("[al:").append(title).append("]\n")
+        sb.append("[by:Woods Reader]\n")
+        for (cue in cues) {
+            val totalSec = cue.startMs / 1000
+            val min = totalSec / 60
+            val sec = totalSec % 60
+            val hundredths = (cue.startMs % 1000) / 10
+            val timeTag = String.format(java.util.Locale.US, "[%02d:%02d.%02d]", min, sec, hundredths)
+            sb.append(timeTag).append(" ").append(cue.text).append("\n")
+        }
+        return sb.toString()
     }
 }

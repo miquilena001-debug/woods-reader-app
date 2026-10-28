@@ -45,6 +45,8 @@ fun ReaderTopBar(
     onHighlight: () -> Unit,
     onTtsToggle: () -> Unit,
     onXRayClick: (() -> Unit)? = null,
+    onGraphClick: (() -> Unit)? = null,
+    onAddToGraph: (() -> Unit)? = null,
     onMenuClick: () -> Unit
 ) {
     Surface(
@@ -156,11 +158,19 @@ fun ReaderTopBar(
 
                 if (hasSelection) {
                     ReaderIconButton(
-                    icon = Icons.Default.Brush,
-                    contentDescription = stringResource(R.string.reader_highlight),
-                    onClick = onHighlight,
-                    tint = HiddenForest.Amber
+                        icon = Icons.Default.Brush,
+                        contentDescription = stringResource(R.string.reader_highlight),
+                        onClick = onHighlight,
+                        tint = HiddenForest.Amber
                     )
+                    if (onAddToGraph != null) {
+                        ReaderIconButton(
+                            icon = Icons.Default.AddCircleOutline,
+                            contentDescription = "Añadir a grafo",
+                            onClick = onAddToGraph,
+                            tint = HiddenForest.Accent
+                        )
+                    }
                 }
                 
                 val isTtsActive = ttsState == TtsState.PLAYING || ttsState == TtsState.PAUSED
@@ -184,6 +194,20 @@ fun ReaderTopBar(
                         Icon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = "Woods X-Ray",
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                if (onGraphClick != null) {
+                    IconButton(
+                        onClick = onGraphClick,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Hub,
+                            contentDescription = "Grafo",
                             tint = HiddenForest.Accent,
                             modifier = Modifier.size(20.dp)
                         )

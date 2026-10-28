@@ -1,0 +1,32 @@
+{
+  "id": "novelfire",
+  "domains": ["novelfire.net", "novelfire.com", "novelfire.org", "readnovel.site", "novelphoenix.com"],
+  "contentSelectors": ["#content", ".content", "#chapter-content", ".reading-content"],
+  "chapterListSelector": "ul.chapter-list, #chpagedlist, .chapter-list",
+  "chapterLinkSelector": "a[href*='/chapter-']",
+  "titleSelector": ".titles .chapter-title, h1 .chapter-title, .chapter-title, h1",
+  "novelTitleSelector": ".booktitle, .novel-title, h1",
+  "coverSelector": ".cover img, .novel-cover img, .book-img img, meta[property='og:image']",
+  "authorSelector": "a[href*='/author/'], [itemprop='author'], .author a",
+  "descriptionSelector": ".summary .content, .summary, .description, .novel-desc, #info .desc",
+  "nextLinkSelector": "a[href*='/chapter-']",
+  "removeSelectors": [
+    ".words",
+    ".titles button",
+    ".titles .icon-cog-outline",
+    ".chapternav",
+    ".skiptranslate",
+    ".ads",
+    ".ad-container",
+    "div.box-header",
+    "div.chapter-header"
+  ],
+  "removeTextContains": [
+    "[ ... words ]",
+    "Novel Fire",
+    "novelfire.net"
+  ],
+  "minDelayMs": 1500,
+  "maxDelayMs": 3500,
+  "reverseToc": false
+}

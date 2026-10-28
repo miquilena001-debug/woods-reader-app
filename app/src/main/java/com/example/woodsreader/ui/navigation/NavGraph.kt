@@ -14,6 +14,9 @@ import com.example.woodsreader.ui.stats.ReadingStatsScreen
 import com.example.woodsreader.ui.settings.SettingsScreen
 import com.example.woodsreader.ui.onboarding.OnboardingScreen
 import com.example.woodsreader.ui.bookdetail.BookDetailScreen
+import com.example.woodsreader.ui.graph.GraphScreen
+import com.example.woodsreader.ui.graph.CandidatesScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 // ── Destinos de navegación ──────────────────────────────────────
 sealed class Screen(val route: String) {
@@ -23,6 +26,12 @@ sealed class Screen(val route: String) {
     }
     object BookDetail : Screen("book_detail/{bookId}") {
         fun createRoute(bookId: String) = "book_detail/$bookId"
+    }
+    object Graph : Screen("graph/{bookId}?chapterIndex={chapterIndex}") {
+        fun createRoute(bookId: String, chapterIndex: Int = -1) = "graph/$bookId?chapterIndex=$chapterIndex"
+    }
+    object Candidates : Screen("graph/{bookId}/candidates") {
+        fun createRoute(bookId: String) = "graph/$bookId/candidates"
     }
     object Search   : Screen("search")
     object Stats    : Screen("stats")
@@ -98,11 +107,55 @@ fun LectorNavHost(
                 }
             )
         }
-        composable(Screen.Reader.route) {
+        composable(Screen.Reader.route) { backStackEntry ->
             ReaderScreen(
                 onNavigateUp = { navController.popBackStack() },
+                onNavigateToGraph = { bookId, chapterIndex ->
+                    navController.navigate(Screen.Graph.createRoute(bookId, chapterIndex))
+                },
+                targetLocatorJson = backStackEntry.savedStateHandle.getStateFlow<String?>("target_locator_json", null).collectAsStateWithLifecycle().value,
+                onClearTargetLocator = { backStackEntry.savedStateHandle.remove<String>("target_locator_json") },
                 sharedTransitionScope = this@SharedTransitionLayout,
                 animatedVisibilityScope = this@composable
+            )
+        }
+        composable(
+            route = Screen.Graph.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("bookId") {
+                    type = androidx.navigation.NavType.StringType
+                },
+                androidx.navigation.navArgument("chapterIndex") {
+                    type = androidx.navigation.NavType.IntType
+                    defaultValue = -1
+                }
+            )
+        ) { backStackEntry ->
+            val bookId = backStackEntry.arguments?.getString("bookId") ?: ""
+            GraphScreen(
+                onNavigateUp = { navController.popBackStack() },
+                onNavigateToCandidates = {
+                    navController.navigate(Screen.Candidates.createRoute(bookId))
+                },
+                onJumpToLocator = { locator ->
+                    navController.previousBackStackEntry?.savedStateHandle?.set(
+                        "target_locator_json",
+                        locator.toJSON().toString()
+                    )
+                    navController.popBackStack()
+                }
+            )
+        }
+        composable(
+            route = Screen.Candidates.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("bookId") {
+                    type = androidx.navigation.NavType.StringType
+                }
+            )
+        ) {
+            CandidatesScreen(
+                onNavigateUp = { navController.popBackStack() }
             )
         }
         composable(Screen.Search.route) {

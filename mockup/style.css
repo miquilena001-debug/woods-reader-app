@@ -1,0 +1,564 @@
+/* Woods Reader Design Tokens & Global Styles */
+@font-face {
+  font-family: 'Literata';
+  src: url('assets/fonts/literata_variable.ttf') format('truetype');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Literata';
+  src: url('assets/fonts/literata_italic_variable.ttf') format('truetype');
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  /* Default: Hidden Forest Theme (Color.kt:L12-L38, Theme.kt:L78-L96) */
+  --bg-color: #080B08;
+  --surface-color: #111811;
+  --surface-variant: #1B261B;
+  --surface-subtle: #0E140E;
+  --primary-color: #4CAF72;
+  --primary-variant: #3B965E;
+  --secondary-color: #81C784;
+  --tertiary-color: #A5D6A7;
+  --text-primary: #D4E8D4;
+  --text-secondary: #7E9E7E;
+  --text-tertiary: #485E48;
+  --border-color: #1E2C1E;
+  --border-subtle: #141F14;
+  --card-bg: #111811;
+
+  /* Semantics */
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --color-error: #EF5350;
+  --color-info: #42A5F5;
+
+  /* Highlights Dark */
+  --hl-yellow: #B2A900;
+  --hl-green: #2E7D32;
+  --hl-blue: #1565C0;
+  --hl-pink: #AD1457;
+  --hl-purple: #6A1B9A;
+
+  /* Typography (Type.kt) */
+  --font-serif: 'Literata', Georgia, serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Consolas, monospace;
+
+  /* Shapes (Theme.kt:L145-L190) */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Glassmorphism Haze */
+  --glass-bg: rgba(17, 24, 17, 0.85);
+  --glass-deep-bg: rgba(8, 11, 8, 0.90);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 16px;
+}
+
+/* Theme: Day (Color.kt:L42-L65) */
+[data-theme="DAY"] {
+  --bg-color: #F7F9F6;
+  --surface-color: #FFFFFF;
+  --surface-variant: #EAEFE9;
+  --surface-subtle: #F0F4EF;
+  --primary-color: #2E7D47;
+  --primary-variant: #236338;
+  --secondary-color: #489960;
+  --tertiary-color: #68B47E;
+  --text-primary: #1C261D;
+  --text-secondary: #526854;
+  --text-tertiary: #8FA491;
+  --border-color: #D8E2D7;
+  --border-subtle: #E5EDE4;
+  --card-bg: #FFFFFF;
+  --glass-bg: rgba(255, 255, 255, 0.88);
+  --glass-deep-bg: rgba(247, 249, 246, 0.92);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --hl-yellow: #FFF176;
+  --hl-green: #A5D6A7;
+  --hl-blue: #90CAF9;
+  --hl-pink: #F48FB1;
+  --hl-purple: #CE93D8;
+}
+
+/* Theme: Sepia (Color.kt:L68-L92) */
+[data-theme="SEPIA"] {
+  --bg-color: #F4ECD8;
+  --surface-color: #EADDC4;
+  --surface-variant: #DDD0B5;
+  --surface-subtle: #E2D5BA;
+  --primary-color: #7A5230;
+  --primary-variant: #613F22;
+  --secondary-color: #9B6B43;
+  --tertiary-color: #B8865E;
+  --text-primary: #3A2818;
+  --text-secondary: #6B523B;
+  --text-tertiary: #9E846D;
+  --border-color: #CEBEA0;
+  --border-subtle: #DECFA9;
+  --card-bg: #EADDC4;
+  --glass-bg: rgba(234, 221, 196, 0.88);
+  --glass-deep-bg: rgba(244, 236, 216, 0.92);
+  --glass-border: rgba(122, 82, 48, 0.15);
+}
+
+/* Theme: AMOLED (Color.kt:L95-L120) */
+[data-theme="AMOLED"] {
+  --bg-color: #000000;
+  --surface-color: #080808;
+  --surface-variant: #121212;
+  --surface-subtle: #050505;
+  --primary-color: #3DD975;
+  --primary-variant: #2AB85E;
+  --secondary-color: #5EE68F;
+  --tertiary-color: #88F0AD;
+  --text-primary: #E8E8E8;
+  --text-secondary: #8A8A8A;
+  --text-tertiary: #4E4E4E;
+  --border-color: #1A1A1A;
+  --border-subtle: #101010;
+  --card-bg: #080808;
+  --glass-bg: rgba(8, 8, 8, 0.90);
+  --glass-deep-bg: rgba(0, 0, 0, 0.95);
+  --glass-border: rgba(255, 255, 255, 0.10);
+}
+
+/* Theme: Sunset (Color.kt:L123-L150) */
+[data-theme="SUNSET"] {
+  --bg-color: #120B10;
+  --surface-color: #1C121A;
+  --surface-variant: #281B26;
+  --surface-subtle: #160E15;
+  --primary-color: #E57342;
+  --primary-variant: #CA5A2B;
+  --secondary-color: #EE9366;
+  --tertiary-color: #F4B490;
+  --text-primary: #F2E4DE;
+  --text-secondary: #9E8078;
+  --text-tertiary: #604A44;
+  --border-color: #2E1E2B;
+  --border-subtle: #21151F;
+  --card-bg: #1C121A;
+  --glass-bg: rgba(28, 18, 26, 0.88);
+  --glass-deep-bg: rgba(18, 11, 16, 0.92);
+  --glass-border: rgba(229, 115, 66, 0.15);
+}
+
+/* Base Reset & Setup */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+body {
+  background-color: #030403;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  overflow-x: hidden;
+}
+
+/* Phone Frame Simulator */
+.phone-viewport {
+  width: 412px;
+  height: 892px;
+  background-color: var(--bg-color);
+  border-radius: 40px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 0 12px #1c221c, 0 0 0 14px #2b332b;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: background-color 0.3s ease;
+}
+
+/* Status Bar */
+.status-bar {
+  height: 38px;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  z-index: 50;
+  background-color: transparent;
+  pointer-events: none;
+}
+
+.status-bar .notch-pill {
+  width: 90px;
+  height: 20px;
+  background-color: #000;
+  border-radius: 10px;
+  margin: 0 auto;
+}
+
+.status-bar .icons {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.status-bar svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* App Screens Container */
+.screens-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  background-color: var(--bg-color);
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-screen.active {
+  display: flex;
+  opacity: 1;
+  transform: scale(1);
+  z-index: 10;
+}
+
+/* Scrollbar Styling */
+.app-screen::-webkit-scrollbar {
+  width: 4px;
+}
+.app-screen::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-screen::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+/* Navigation Bars */
+.woods-bottom-nav {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  height: 64px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: 32px;
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 8px;
+  z-index: 40;
+  transition: transform 0.3s ease;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  flex: 1;
+  transition: color 0.2s ease;
+}
+
+.nav-item.active {
+  color: var(--primary-color);
+}
+
+.nav-item svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+.nav-item-center {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--primary-color), var(--primary-variant));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bg-color);
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(76, 175, 114, 0.35);
+  transition: transform 0.2s ease;
+}
+
+.nav-item-center:active {
+  transform: scale(0.92);
+}
+
+.nav-item-center svg {
+  width: 26px;
+  height: 26px;
+  fill: currentColor;
+}
+
+/* Woods Badge & Progress */
+.woods-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.badge-epub {
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.badge-pdf {
+  background: rgba(229, 57, 53, 0.85);
+  color: #fff;
+}
+
+.woods-progress-track {
+  width: 100%;
+  height: 4px;
+  background-color: var(--surface-variant);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.woods-progress-fill {
+  height: 100%;
+  background-color: var(--primary-color);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* Floating Modals and Bottom Sheets */
+.bottom-sheet-scrim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 60;
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.bottom-sheet-scrim.visible {
+  display: block;
+  opacity: 1;
+}
+
+.bottom-sheet-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 85%;
+  background: var(--surface-color);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  border-top: 1px solid var(--border-color);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.1, 0.9, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 61;
+}
+
+.bottom-sheet-scrim.visible .bottom-sheet-content {
+  transform: translateY(0);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  margin: 10px auto 4px;
+  flex-shrink: 0;
+}
+
+.sheet-header {
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sheet-header h3 {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sheet-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Side Menu Overlay */
+.side-menu-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 290px;
+  background: var(--glass-deep-bg);
+  backdrop-filter: blur(25px);
+  border-left: 1px solid var(--glass-border);
+  border-top-left-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+  box-shadow: -15px 0 40px rgba(0, 0, 0, 0.6);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.1, 0.9, 0.2, 1);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+}
+
+.side-menu-drawer.open {
+  transform: translateX(0);
+}
+
+.side-menu-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.side-menu-header h4 {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.side-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.side-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.side-menu-item:hover, .side-menu-item:active {
+  background: var(--surface-variant);
+}
+
+.side-menu-item svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--text-secondary);
+}
+
+/* Material Switch */
+.m3-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.m3-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.m3-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--surface-variant);
+  border: 1px solid var(--border-color);
+  transition: .3s;
+  border-radius: 24px;
+}
+
+.m3-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-secondary);
+  transition: .3s;
+  border-radius: 50%;
+}
+
+.m3-switch input:checked + .m3-switch-slider {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.m3-switch input:checked + .m3-switch-slider:before {
+  transform: translateX(20px);
+  background-color: var(--bg-color);
+}

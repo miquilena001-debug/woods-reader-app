@@ -1,0 +1,65 @@
+# Woods Reader — Contexto IA
+
+## App
+Android lector EPUB/PDF + TTS offline (Sherpa ONNX es_ES-davefx-medium). Kotlin, Jetpack Compose, Material 3 (tema HiddenForest), Hilt, Room v11, Readium 3.x, Media3, Coil3, PDFBox.
+Package: com.example.woodsreader. Módulo aparte: keymaker.
+
+## Stack
+- UI: Compose + Material 3
+- Persistencia: Room (books, highlights, bookmarks, reading_sessions, collections, reading_stats, tts_rules, grafo: graph_entity/alias/relation/mention)
+- Parseo: Readium 3.x (EPUB), PDFBox (PDF)
+- Audio: Media3 / ExoPlayer
+- TTS: Sherpa ONNX offline (TtsManager) + Android TTS fallback
+- DI: Hilt (6 módulos en di/)
+
+## Paquetes clave
+di/ — Hilt módulos (Core, Database, Tts, Scanner, Library, DataStore)
+data/ — Room entidades/DAOs, DataStore, repositorios (BookRepository, GraphRepository), escáneres (MediaStoreBookScanner, DeepFileSystemScanner), grafo
+model/ — Enums dominio (BookFormat, ReadingStatus, HighlightColor, ReadingMode)
+core/tts/ — TtsManager, SherpaTtsEngine, SherpaTtsEngineProvider, SherpaModelManager, ChapterAudioExporter, AudiobookProsodyEngine, SpanishAudiobookNormalizer, MultilingualAudiobookNormalizer, StudioAudioDspProcessor, PronunciationLexiconManager, SmartSleepTimerManager, AmbientSoundscapeEngine/Player, ForestAmbienceEngine, EdgeNeuralTtsClient
+core/pipeline/ — ReadingPipeline, ReadingBlock, EpubContentExtractor, EpubHtmlSanitizer, EpubPackageSanitizer, PdfBookViewSynchronizer, NoiseClassifier, ImageAnnouncer, WordExclusionEngine, SpanishTextFormatter
+core/web2epub/ — WebToEpubImporterDialog, LocalEpubBuilder, novel/* (SiteProfile, SiteProfileLoader, PageFetcher, OkHttpPageFetcher, RequestPacer, RobotsAdvisor, ChallengeDetector, CharsetDetector)
+core/translation/calibre/ — CalibreStyleEpubTranslator, GoogleFreeNetworkTranslator, inplace/TextTranslator
+core/managers/ — ReadingProgressManager, ReadingSessionManager, SleepTimerManager, PdfReflowManager, BackupManager, HighlightExporter, QuoteCardGenerator, InlineLookupManager, WoodsSupporterManager, WoodsKeepAliveManager, TimeProvider, SystemTimeProvider
+core/system/ — WoodsKeepAliveManager
+core/search/ — FastEpubSearchEngine
+core/xray/ — BookXRayEngine
+core/share/ — QuoteVideoClipExporter
+core/backup/ — WoodsBackupManager
+core/license/ — ProLicenseManager
+service/ — ReaderTtsService, BookScannerService, BookScannerForegroundService, BookMetadataExtractor, CoverExtractor, TextRankSummarizer, TtsMediaNotificationProvider, RecursiveFileObserver
+work/ — LibrarySyncWorker, GraphExtractionWorker
+ui/theme/ — Theme, Color, Type (HiddenForest)
+ui/navigation/ — NavGraph (Screen sealed, LectorNavHost)
+ui/library/ — LibraryScreen, LibraryViewModel, LibraryHeader, LibraryComponents, ContinueReadingHero, CalibreTranslationProgressDialog, BookOptionsBottomSheet
+ui/reader/ — ReaderScreen, ReaderViewModel, ReaderContract, TtsState, EpubFormatManager, + 25 componentes UI/overlays (ReaderTopBar, ReaderBottomBar, ReaderTtsBar, ReaderAudioBottomSheet, ReaderNotesTab, ReaderSideMenu, etc.)
+ui/bookdetail/ — BookDetailScreen, BookDetailViewModel
+ui/settings/ — SettingsScreen, SettingsViewModel
+ui/onboarding/ — OnboardingScreen, OnboardingViewModel
+ui/search/ — SearchScreen
+ui/stats/ — ReadingStatsScreen, StatsViewModel
+ui/graph/ — GraphScreen, GraphViewModel, GraphCanvas, ForceLayout, EntitySheet, CandidatesScreen
+ui/common/ — WoodsProUnlockDialog
+ui/permissions/ — PermissionsScreen
+
+## DB Room (tablas principales)
+books(fileHash único, currentLocatorJson CFI), highlights, bookmarks, reading_sessions, collections, reading_stats, tts_rules, graph_entity, graph_alias, graph_relation, graph_mention
+
+## Reglas (inviolables)
+1. No agregar dependencias a build.gradle.kts / settings.gradle.kts
+2. No tocar @Entity/@Dao sin migración + regenerar esquema JSON (app/schemas/)
+3. No bloquear Main thread: I/O, bitmaps, texto, ONNX en Dispatchers.IO/Default; UI solo en Main
+4. Edición atómica: máx 2 archivos prod + 1 test por iteración
+5. Compilación obligatoria: .\gradlew.bat :app:testDebugUnitTest (exit 0) antes de dar paso como completado
+6. No borrar métodos de ReaderViewModel o TtsManager; sustitución quirúrgica
+7. Solo formatos EPUB y PDF (no CBR/CBZ/MOBI/FB2)
+8. Commit atómico por paso verificado
+
+## Flujo típico
+Abrir archivo: MainActivity.handleIncomingIntent → BookMetadataExtractor → BookRepository.upsertBook → Room books → NavGraph Screen.Reader
+Leer EPUB: ReaderViewModel → EpubFormatManager (Readium Publication) → ReadingPipeline → ReaderScreen
+TTS: TtsManager (Sherpa ONNX) → SherpaTtsEngine (Readium) → ReaderTtsService (foreground, MediaSession)
+Progreso: BookDao.updateProgress + ReadingSessionDao.insert
+
+## Índice de archivos
+Consultar FILE_INDEX.md para localizar cualquier archivo .kt sin escanear el repo.

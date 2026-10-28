@@ -25,4 +25,13 @@
     <string name="tts_action_play">Reproducir</string>
     <string name="tts_action_pause">Pausar</string>
     <string name="tts_action_next">Siguiente enunciado</string>
+
+    <!-- WebToEpub Novel Import -->
+    <string name="novel_import_title">Importando Novela Web</string>
+    <string name="novel_import_channel_name">Descarga de Novelas Web</string>
+    <string name="novel_import_preparing">Preparando importación…</string>
+    <string name="novel_import_fetching_index">Analizando índice de capítulos…</string>
+    <string name="novel_import_downloading_images">Descargando imágenes (%1$d/%2$d)…</string>
+    <string name="novel_import_assembling">Ensamblando archivo EPUB 3…</string>
+    <string name="novel_import_challenge_required">Verificación de seguridad requerida por el sitio</string>
 </resources>

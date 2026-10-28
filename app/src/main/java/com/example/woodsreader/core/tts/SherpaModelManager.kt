@@ -4,6 +4,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -273,8 +274,10 @@ class SherpaModelManager @Inject constructor(
         .followSslRedirects(true)
         .build()
 
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     init {
-        CoroutineScope(Dispatchers.IO).launch {
+        managerScope.launch {
             try {
                 val kokoroDir = File(baseDir, "kokoro-multi-lang-v1_0")
                 if (kokoroDir.exists()) {
@@ -431,7 +434,7 @@ class SherpaModelManager @Inject constructor(
                     lengthScale = 1.0f
                 ),
                 numThreads = 2,
-                debug = true
+                debug = com.example.woodsreader.BuildConfig.DEBUG
             )
         )
 

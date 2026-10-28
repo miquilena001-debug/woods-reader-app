@@ -25,7 +25,6 @@ interface BookDao {
     @Delete
     suspend fun delete(book: BookEntity)
 
-    @Transaction
     @Query("""
         SELECT * FROM books
         ORDER BY
@@ -41,11 +40,9 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     fun getByIdFlow(id: String): Flow<BookEntity?>
 
-    @Transaction
     @Query("SELECT * FROM books WHERE readingStatus = :status ORDER BY lastOpenedAt DESC NULLS LAST")
     fun getByStatus(status: String): androidx.paging.PagingSource<Int, BookEntity>
 
-    @Transaction
     @Query("SELECT * FROM books WHERE collectionId = :collectionId ORDER BY lastOpenedAt DESC NULLS LAST")
     fun getBooksByCollection(collectionId: String): androidx.paging.PagingSource<Int, BookEntity>
 
@@ -158,7 +155,6 @@ interface BookDao {
     )
 
     // Búsqueda FTS4 - mucho más rápido que LIKE para 1000+ libros
-    @Transaction
     @Query("""
         SELECT books.* FROM books
         INNER JOIN books_fts ON books.rowid = books_fts.rowid

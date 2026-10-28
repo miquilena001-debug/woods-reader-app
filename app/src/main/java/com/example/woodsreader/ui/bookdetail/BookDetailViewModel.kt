@@ -56,7 +56,7 @@ class BookDetailViewModel @Inject constructor(
     private val metadataExtractor: BookMetadataExtractor
 ) : ViewModel() {
 
-    val bookId: String = checkNotNull(savedStateHandle["bookId"])
+    val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()
 
     private val _uiState = MutableStateFlow(BookDetailUiState())
     val uiState: StateFlow<BookDetailUiState> = _uiState.asStateFlow()

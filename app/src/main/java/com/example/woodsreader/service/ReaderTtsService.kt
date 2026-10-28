@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
+import android.view.KeyEvent
 import androidx.annotation.OptIn as AndroidOptIn
 import androidx.core.graphics.scale
 import androidx.media3.common.MediaItem
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import org.readium.navigator.media.common.MediaNavigator
 import org.readium.navigator.media.tts.TtsNavigator
 import org.readium.navigator.media.tts.TtsNavigatorFactory
 import org.readium.navigator.media.tts.android.AndroidTtsEngine
@@ -48,21 +50,13 @@ import kotlinx.coroutines.Job
 /**
  * Servicio TTS integrado con Media3 MediaSessionService.
  *
- * ¿¿¿Por quééé funciona con los Soundcore Space A40?
- * ─ Los auriculares Bluetooth envían comandos AVRCP (play/pause, skip next/prev)
- *   al sistema Android, que los convierte en eventos de MediaSession.
- * ─ ReaderTtsService expone una MediaSession con el Player real de Readium.
- * ─ El Callback intercepta los eventos y los enruta a los métodos TTS correctos.
- *
- * ¿¿¿Por quééé funciona en la pantalla de bloqueo y notificaciones?
- * ─ exported="true" + intent-filter en el Manifest → Android descubre el servicio.
- * ─ Media3 genera automáticamente la notificación de medios persistente.
- * ─ setCustomLayout() define los botones visibles en la notificación.
- *
- * NOTAS DE ARQUITECTURA:
- * - TtsNavigatorFactory constructor es internal en Readium 3.0.3.
- *   Se usa la free function TtsNavigatorFactory(application, publication) del mismo paquete.
- * - @AndroidOptIn (androidx.annotation.OptIn) es el mecanismo correcto para Media3 1.4.x.
+ * ¿Por qué funciona con auriculares Bluetooth (ej. Mchose X9, Soundcore Space A40)?
+ * ─ Los auriculares envían comandos AVRCP (play/pause, skip next/prev)
+ *   al sistema Android, que los convierte en eventos de MediaSession y KeyEvent.
+ * ─ ReaderTtsService expone una MediaSession con TtsProgressForwardingPlayer.
+ * ─ El Callback intercepta onMediaButtonEvent, onPlayerCommandRequest y onCustomCommand
+ *   para garantizar control total en llamadas Bluetooth y pantalla de bloqueo.
+ * ─ Cero conflictos de AudioFocus: Readium gestiona el foco de audio directamente.
  */
 @OptIn(ExperimentalReadiumApi::class)
 @AndroidEntryPoint
@@ -70,6 +64,9 @@ class ReaderTtsService : MediaSessionService() {
 
     @Inject
     lateinit var ttsManager: com.example.woodsreader.core.tts.TtsManager
+
+    @Inject
+    lateinit var ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer
 
     @Inject
     lateinit var userPreferencesRepository: com.example.woodsreader.data.datastore.UserPreferencesRepository
@@ -81,9 +78,6 @@ class ReaderTtsService : MediaSessionService() {
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-
-
 
     // Usamos el tipo genérico completo compatible con SherpaTtsEngineProvider
     private val _ttsNavigator = MutableStateFlow<TtsNavigator<AndroidTtsSettings, AndroidTtsPreferences, AndroidTtsEngine.Error, AndroidTtsEngine.Voice>?>(null)
@@ -116,15 +110,6 @@ class ReaderTtsService : MediaSessionService() {
     }
 
     // ── MediaSession.Callback ─────────────────────────────────────────────────
-    /**
-     * Recibe comandos de:
-     * - Auriculares Bluetooth (AVRCP NEXT / PREV / PLAY / PAUSE)  ← Soundcore Space A40
-     * - Pantalla de bloqueo (botones de medios del sistema)
-     * - Notificación de sistema
-     *
-     * En Media3 1.4.x los comandos de skip se interceptan via onCustomCommand;
-     * los CommandButton con SessionCommand son la vía recomendada para prev/next.
-     */
     @AndroidOptIn(UnstableApi::class)
     private inner class TtsSessionCallback : MediaSession.Callback {
 
@@ -148,10 +133,78 @@ class ReaderTtsService : MediaSessionService() {
                 .build()
         }
 
+        override fun onMediaButtonEvent(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            intent: Intent
+        ): Boolean {
+            val keyEvent: KeyEvent? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+            }
+            if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
+                when (keyEvent.keyCode) {
+                    KeyEvent.KEYCODE_MEDIA_NEXT,
+                    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
+                    KeyEvent.KEYCODE_MEDIA_STEP_FORWARD -> {
+                        goNext()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                    KeyEvent.KEYCODE_MEDIA_REWIND,
+                    KeyEvent.KEYCODE_MEDIA_STEP_BACKWARD -> {
+                        goPrevious()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                    KeyEvent.KEYCODE_HEADSETHOOK -> {
+                        togglePlayPause()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        play()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_MEDIA_PAUSE,
+                    KeyEvent.KEYCODE_MEDIA_STOP -> {
+                        pause()
+                        return true
+                    }
+                }
+            }
+            return super.onMediaButtonEvent(session, controllerInfo, intent)
+        }
+
+        @Deprecated("Overriding deprecated Media3 callback for backward compatibility")
+        @Suppress("DEPRECATION")
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            playerCommand: Int
+        ): Int {
+            when (playerCommand) {
+                Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> {
+                    goNext()
+                    return SessionResult.RESULT_SUCCESS
+                }
+                Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
+                    goPrevious()
+                    return SessionResult.RESULT_SUCCESS
+                }
+                Player.COMMAND_PLAY_PAUSE -> {
+                    togglePlayPause()
+                    return SessionResult.RESULT_SUCCESS
+                }
+            }
+            return super.onPlayerCommandRequest(session, controllerInfo, playerCommand)
+        }
+
         // Comandos personalizados: prev/next enviados por notificación o auriculares
         override fun onCustomCommand(
             session: MediaSession,
-            controller: MediaSession.ControllerInfo,
+            controllerInfo: MediaSession.ControllerInfo,
             customCommand: SessionCommand,
             args: Bundle
         ): ListenableFuture<SessionResult> {
@@ -172,17 +225,6 @@ class ReaderTtsService : MediaSessionService() {
     }
 
     // ── CommandButtons para la notificación ──────────────────────────────────
-    /**
-     * Define los 3 botones en la notificación de medios y pantalla de bloqueo:
-     *   [⏮ Anterior]  [⏯ Play/Pausa]  [⏭ Siguiente]
-     *
-     * Play/Pausa usa COMMAND_PLAY_PAUSE (nativo del Player de Readium).
-     * Anterior/Siguiente usan SessionCommand personalizados para llamar a
-     * skipToNextUtterance() / skipToPreviousUtterance() del TtsNavigator.
-     *
-     * ICON_SKIP_BACK / ICON_SKIP_FORWARD son constantes de CommandButton
-     * disponibles desde Media3 1.3.x.
-     */
     @AndroidOptIn(UnstableApi::class)
     private fun buildCommandButtons(): List<CommandButton> {
         return listOf(
@@ -193,9 +235,7 @@ class ReaderTtsService : MediaSessionService() {
                 .setSessionCommand(SessionCommand(CMD_SKIP_PREV, Bundle.EMPTY))
                 .build(),
 
-            // Botón: Play/Pausa — gestionado nativamente por el Player de Readium
-            // En Media3 1.4.x no hay ICON_PLAY_PAUSE; el sistema usa el estado del Player
-            // para alternar automáticamente entre los iconos de play y pausa.
+            // Botón: Play/Pausa — gestionado nativamente por el Player
             CommandButton.Builder()
                 .setDisplayName("Reproducir / Pausar")
                 .setIconResId(androidx.media3.session.R.drawable.media3_icon_play)
@@ -215,7 +255,6 @@ class ReaderTtsService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         // Registrar el proveedor ANTES de que Media3 emita cualquier notificación.
-        // Si se configura tarde hay un parpadeo donde aparece la notificación genérica.
         setMediaNotificationProvider(TtsMediaNotificationProvider(this))
 
         serviceScope.launch {
@@ -244,7 +283,6 @@ class ReaderTtsService : MediaSessionService() {
 
     override fun onBind(intent: Intent?): IBinder {
         // Media3 MediaSessionService needs its own binder for system/bluetooth connections.
-        // Our EpubFormatManager binds with a plain Intent (no action) and needs TtsBinder.
         val media3Binder = super.onBind(intent)
         return if (intent?.action == SERVICE_INTERFACE) media3Binder ?: binder else binder
     }
@@ -380,46 +418,39 @@ class ReaderTtsService : MediaSessionService() {
         }
     }
 
-    // ── Metadata (portada + título + capítulo + progreso en notificación) ─────
+    // ── Metadata (portada RGB_565 + título capítulo + autor/Woods HD en notificación) ─────
     private fun updateMediaMetadata(pub: Publication?, locator: Locator? = _currentLocator.value) {
         val targetPub = pub ?: this.publication ?: return
         metadataUpdateJob?.cancel()
         metadataUpdateJob = serviceScope.launch(Dispatchers.Default) {
-            val title = targetPub.metadata.title?.takeIf { it.isNotBlank() } ?: "Woods Reader"
-            val authorName = targetPub.metadata.authors.joinToString { it.name }.trim()
-            val chapterTitle = resolveChapterTitle(targetPub, locator)
-            val pct = computeProgression(targetPub, locator) * 100.0
-
-            val artistText = buildString {
-                if (authorName.isNotBlank()) {
-                    append(authorName)
-                    if (chapterTitle.isNotBlank()) append(" · $chapterTitle")
-                } else if (chapterTitle.isNotBlank()) {
-                    append(chapterTitle)
-                }
-                if (pct > 0.0) {
-                    val formattedPct = String.format(Locale.US, "%.1f%%", pct)
-                    if (isNotEmpty()) {
-                        append(" ($formattedPct)")
-                    } else {
-                        append(formattedPct)
-                    }
-                }
-            }.ifBlank { "Woods Reader" }
-
-            val subtitleText = if (chapterTitle.isNotBlank()) {
-                val formattedPct = String.format(Locale.US, "%.1f%%", pct)
-                if (pct > 0.0) "$chapterTitle · $formattedPct" else chapterTitle
-            } else {
-                authorName.ifBlank { "Woods Reader" }
-            }
+            val bookTitle = targetPub.metadata.title?.takeIf { it.isNotBlank() } ?: "Woods Reader"
+            val rawChapterTitle = resolveChapterTitle(targetPub, locator).trim()
+            val chapterTitle = rawChapterTitle.ifBlank { "Capítulo" }
+            val artistSubtitle = "$bookTitle · Woods Studio Voice HD"
 
             val coverBytes = cachedCoverBytes ?: run {
                 try {
                     targetPub.cover()?.let { bmp ->
-                        val scaled = bmp.scale(400, 600, true)
+                        val maxDim = 512
+                        val width = bmp.width
+                        val height = bmp.height
+                        val scaleFactor = (maxDim.toFloat() / maxOf(width, height)).coerceAtMost(1.0f)
+                        val targetW = (width * scaleFactor).toInt().coerceAtLeast(1)
+                        val targetH = (height * scaleFactor).toInt().coerceAtLeast(1)
+
+                        val rgb565Bmp = android.graphics.Bitmap.createBitmap(
+                            targetW,
+                            targetH,
+                            android.graphics.Bitmap.Config.RGB_565
+                        )
+                        val canvas = android.graphics.Canvas(rgb565Bmp)
+                        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+                        val srcRect = android.graphics.Rect(0, 0, width, height)
+                        val dstRect = android.graphics.Rect(0, 0, targetW, targetH)
+                        canvas.drawBitmap(bmp, srcRect, dstRect, paint)
+
                         val stream = java.io.ByteArrayOutputStream()
-                        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 75, stream)
+                        rgb565Bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, stream)
                         val bytes = stream.toByteArray()
                         cachedCoverBytes = bytes
                         bytes
@@ -429,11 +460,11 @@ class ReaderTtsService : MediaSessionService() {
 
             serviceScope.launch(Dispatchers.Main) {
                 val metadata = MediaMetadata.Builder()
-                    .setTitle(title)
-                    .setArtist(artistText)
-                    .setDisplayTitle(title)
-                    .setSubtitle(subtitleText)
-                    .setAlbumTitle(title)
+                    .setTitle(chapterTitle)
+                    .setDisplayTitle(chapterTitle)
+                    .setArtist(artistSubtitle)
+                    .setSubtitle(artistSubtitle)
+                    .setAlbumTitle(bookTitle)
                     .apply { coverBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
                     .build()
 
@@ -530,22 +561,27 @@ class ReaderTtsService : MediaSessionService() {
         val customPlayer = TtsProgressForwardingPlayer(basePlayer)
         forwardingPlayer = customPlayer
 
-        // customPlayer envuelve el Player de Readium con Media3 y gestiona metadatos y progreso real (0..1000)
+        // customPlayer envuelve el Player de Readium con Media3 y gestiona metadatos y progreso real
         mediaSession = MediaSession.Builder(this, customPlayer)
             .setSessionActivity(pendingIntent)
             .setCallback(TtsSessionCallback())
             .setCustomLayout(buildCommandButtons())
             .build()
 
-        // IMPORTANTE: agregar la sesión al servicio para que Media3 maneje
-        // automáticamente startForeground() y la notificación de medios.
+        // Agregar la sesión al servicio para que Media3 maneje startForeground() automáticamente
         mediaSession?.let { addSession(it) }
     }
 
     // ── Observer del navigator ────────────────────────────────────────────────
     private fun observeNavigator(navigator: TtsNavigator<*, *, *, *>?) {
         navigator ?: return
-        serviceScope.launch { navigator.playback.collectLatest { _playbackState.value = it } }
+        serviceScope.launch {
+            navigator.playback.collectLatest { playback ->
+                _playbackState.value = playback
+                val isSpeaking = (playback?.state is MediaNavigator.State.Ready && playback.playWhenReady)
+                ambientSoundscapePlayer.onTtsSpeakingChanged(isSpeaking)
+            }
+        }
         serviceScope.launch {
             navigator.location.collectLatest { loc ->
                 val utteranceLocator = loc.utteranceLocator
@@ -555,9 +591,24 @@ class ReaderTtsService : MediaSessionService() {
         }
     }
 
-    // ── Controles públicos (llamados desde ReaderViewModel / EpubFormatManager) ─
+    // ── Controles públicos (llamados desde ReaderViewModel / EpubFormatManager / Bluetooth) ─
+    fun isPlaying(): Boolean {
+        val state = _playbackState.value?.state
+        return (state is MediaNavigator.State.Ready && _playbackState.value?.playWhenReady == true) ||
+               (forwardingPlayer?.isPlaying == true)
+    }
+
+    fun togglePlayPause() {
+        if (isPlaying()) {
+            pause()
+        } else {
+            play()
+        }
+    }
+
     fun play() {
         ttsManager.resume()
+        ambientSoundscapePlayer.onTtsSpeakingChanged(true)
         val nav = _ttsNavigator.value
         if (nav != null) {
             nav.play()
@@ -571,6 +622,7 @@ class ReaderTtsService : MediaSessionService() {
         pendingPlayOnReady = false
         _ttsNavigator.value?.pause()
         ttsManager.pause()
+        ambientSoundscapePlayer.onTtsSpeakingChanged(false)
     }
 
     fun stop() {
@@ -579,6 +631,7 @@ class ReaderTtsService : MediaSessionService() {
         _playbackState.value = null
         _currentLocator.value = null
         ttsManager.stop()
+        ambientSoundscapePlayer.onTtsSpeakingChanged(false)
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {}
@@ -601,10 +654,61 @@ class ReaderTtsService : MediaSessionService() {
         updateMediaMetadata(publication, locator)
     }
 
-    fun goNext()     { _ttsNavigator.value?.skipToNextUtterance() }
-    fun goPrevious() { _ttsNavigator.value?.skipToPreviousUtterance() }
+    fun goNext() {
+        val nav = _ttsNavigator.value
+        if (nav != null) {
+            if (nav.hasNextUtterance()) {
+                nav.skipToNextUtterance()
+            } else {
+                val pub = publication
+                val currentLoc = _currentLocator.value
+                if (pub != null && currentLoc != null && pub.readingOrder.isNotEmpty()) {
+                    val currentHref = currentLoc.href.toString()
+                    val currentIndex = pub.readingOrder.indexOfFirst {
+                        it.href.toString() == currentHref ||
+                        it.href.toString().substringAfterLast('/') == currentHref.substringAfterLast('/')
+                    }
+                    if (currentIndex in 0 until pub.readingOrder.lastIndex) {
+                        val nextLink = pub.readingOrder[currentIndex + 1]
+                        nav.go(nextLink, false)
+                    } else {
+                        nav.skipToNextUtterance()
+                    }
+                } else {
+                    nav.skipToNextUtterance()
+                }
+            }
+        }
+    }
 
-    // ── Player envolvente con soporte de progreso y metadatos ─────────────────
+    fun goPrevious() {
+        val nav = _ttsNavigator.value
+        if (nav != null) {
+            if (nav.hasPreviousUtterance()) {
+                nav.skipToPreviousUtterance()
+            } else {
+                val pub = publication
+                val currentLoc = _currentLocator.value
+                if (pub != null && currentLoc != null && pub.readingOrder.isNotEmpty()) {
+                    val currentHref = currentLoc.href.toString()
+                    val currentIndex = pub.readingOrder.indexOfFirst {
+                        it.href.toString() == currentHref ||
+                        it.href.toString().substringAfterLast('/') == currentHref.substringAfterLast('/')
+                    }
+                    if (currentIndex > 0) {
+                        val prevLink = pub.readingOrder[currentIndex - 1]
+                        nav.go(prevLink, false)
+                    } else {
+                        nav.skipToPreviousUtterance()
+                    }
+                } else {
+                    nav.skipToPreviousUtterance()
+                }
+            }
+        }
+    }
+
+    // ── Player envolvente con soporte de comandos Bluetooth, progreso y metadatos ──
     @AndroidOptIn(UnstableApi::class)
     private inner class TtsProgressForwardingPlayer(
         player: Player
@@ -678,16 +782,50 @@ class ReaderTtsService : MediaSessionService() {
             return super.getAvailableCommands().buildUpon()
                 .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
                 .add(Player.COMMAND_GET_METADATA)
+                .add(Player.COMMAND_PLAY_PAUSE)
+                .add(Player.COMMAND_SEEK_TO_NEXT)
+                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
                 .build()
         }
 
         override fun isCommandAvailable(command: Int): Boolean {
             if (command == Player.COMMAND_GET_CURRENT_MEDIA_ITEM ||
-                command == Player.COMMAND_GET_METADATA
+                command == Player.COMMAND_GET_METADATA ||
+                command == Player.COMMAND_PLAY_PAUSE ||
+                command == Player.COMMAND_SEEK_TO_NEXT ||
+                command == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
+                command == Player.COMMAND_SEEK_TO_PREVIOUS ||
+                command == Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
             ) {
                 return true
             }
             return super.isCommandAvailable(command)
+        }
+
+        override fun play() {
+            this@ReaderTtsService.play()
+        }
+
+        override fun pause() {
+            this@ReaderTtsService.pause()
+        }
+
+        override fun seekToNext() {
+            this@ReaderTtsService.goNext()
+        }
+
+        override fun seekToNextMediaItem() {
+            this@ReaderTtsService.goNext()
+        }
+
+        override fun seekToPrevious() {
+            this@ReaderTtsService.goPrevious()
+        }
+
+        override fun seekToPreviousMediaItem() {
+            this@ReaderTtsService.goPrevious()
         }
 
         override fun seekTo(positionMs: Long) {

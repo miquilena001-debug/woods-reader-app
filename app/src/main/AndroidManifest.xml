@@ -109,8 +109,15 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </service>
+
+        <!-- WorkManager Foreground Service para extracción de grafo en background (Android 14+) -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <!-- Deshabilitar el inicializador por defecto de WorkManager ya que usamos Hilt / on-demand Initialization -->
         <provider

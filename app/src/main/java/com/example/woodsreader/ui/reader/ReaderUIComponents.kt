@@ -54,6 +54,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableFloatStateOf
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import com.example.woodsreader.core.share.QuoteVideoClipExporter
+import kotlinx.coroutines.launch
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -1212,6 +1220,12 @@ private fun renderThemedQuoteBitmap(
     return bitmap
 }
 
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface QuoteVideoClipEntryPoint {
+    fun quoteVideoClipExporter(): QuoteVideoClipExporter
+}
+
 @Composable
 fun QuoteShareDialog(
     quoteText: String,
@@ -1221,6 +1235,19 @@ fun QuoteShareDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val videoClipExporter = remember {
+        runCatching {
+            EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                QuoteVideoClipEntryPoint::class.java
+            ).quoteVideoClipExporter()
+        }.getOrNull()
+    }
+
+    var isGeneratingVideo by remember { mutableStateOf(false) }
+    var videoProgress by remember { mutableFloatStateOf(0f) }
+
     var selectedTheme by remember { mutableStateOf(QuoteCardTheme.BOSQUE_ESMERALDA) }
     val cleanQuote = quoteText.trim()
 
@@ -1408,6 +1435,91 @@ fun QuoteShareDialog(
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))
+
+                Button(
+                    onClick = {
+                        if (isGeneratingVideo) return@Button
+                        val exporter = videoClipExporter ?: run {
+                            Toast.makeText(context, "Exportador de video no disponible", Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        isGeneratingVideo = true
+                        scope.launch {
+                            val progressJob = launch {
+                                exporter.progress.collect { p ->
+                                    videoProgress = p
+                                }
+                            }
+                            try {
+                                val result = exporter.exportQuoteVideoMp4(
+                                    quoteText = cleanQuote,
+                                    bookTitle = bookTitle.ifBlank { "Libro sin título" },
+                                    chapterTitle = chapterTitle,
+                                    speechSpeed = 1.0f
+                                )
+                                progressJob.cancel()
+                                result.onSuccess { videoFile ->
+                                    val videoUri = androidx.core.content.FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        videoFile
+                                    )
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "video/mp4"
+                                        putExtra(Intent.EXTRA_STREAM, videoUri)
+                                        putExtra(
+                                            Intent.EXTRA_TEXT,
+                                            "«${cleanQuote.take(180)}» — $bookTitle\nNarrado con Woods Reader 🌿"
+                                        )
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(
+                                        Intent.createChooser(shareIntent, "Compartir Video-Cita con Voz IA").apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    )
+                                    onDismiss()
+                                }.onFailure { error ->
+                                    Toast.makeText(
+                                        context,
+                                        error.message ?: "Error al generar video-cita",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            } finally {
+                                progressJob.cancel()
+                                isGeneratingVideo = false
+                            }
+                        }
+                    },
+                    enabled = !isGeneratingVideo,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HiddenForest.Accent,
+                        contentColor = Color(0xFF08140C)
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isGeneratingVideo) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color(0xFF08140C),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Generando Video ${(videoProgress * 100).toInt()}%…",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                    } else {
+                        Text(
+                            text = "🎬 Compartir Video-Cita Con Voz IA (.MP4)",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

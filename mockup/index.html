@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Woods Reader - Maquetado HTML Interactivo</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="screens.css">
+</head>
+<body>
+
+  <!-- Mobile Viewport Frame (Pixel 8 / Standard Android Screen 412x892) -->
+  <div class="phone-viewport" id="app-viewport">
+    
+    <!-- Top System Status Bar -->
+    <div class="status-bar">
+      <span>10:27</span>
+      <div class="notch-pill"></div>
+      <div class="icons">
+        <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 18.25C5.9 19.34 7.84 20 10 20c4.97 0 9-4.03 9-9 0-4.97-4.03-9-9-9zm0 15c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M15.67 4H14V2h-4v2H8.33C7.6 4 7 4.6 7 5.33v15.33C7 21.4 7.6 22 8.33 22h7.33c.74 0 1.34-.6 1.34-1.33V5.33C17 4.6 16.4 4 15.67 4z"/></svg>
+      </div>
+    </div>
+
+    <!-- Active Screens Container -->
+    <div class="screens-container">
+
+      <!-- 1. Screen: Library (Default) -->
+      <div class="app-screen active" id="screen-library">
+        <div class="library-screen">
+          <div class="library-header">
+            <div class="library-title-group">
+              <h1>Woods Reader</h1>
+              <p>6 libros en tu bosque</p>
+            </div>
+            <div class="header-actions">
+              <button class="icon-btn" onclick="navigateTo('screen-search')">
+                <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              </button>
+              <button class="icon-btn" onclick="this.style.transform = 'rotate(360deg)'; this.style.transition = 'transform 0.6s';">
+                <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+              </button>
+              <button class="icon-btn" onclick="navigateTo('screen-settings')">
+                <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Hero Reading Slot -->
+          <div id="hero-slot"></div>
+
+          <!-- Collection Filter Chips -->
+          <div class="collections-row">
+            <div class="filter-chip active">Todos</div>
+            <div class="filter-chip">Leyendo</div>
+            <div class="filter-chip">Terminados</div>
+            <div class="filter-chip">Favoritos</div>
+            <div class="filter-chip">Ciencia Ficción</div>
+          </div>
+
+          <!-- 2-Column Books Grid -->
+          <div class="books-grid" id="books-grid"></div>
+        </div>
+      </div>
+
+      <!-- 2. Screen: Detail -->
+      <div class="app-screen" id="screen-detail"></div>
+
+      <!-- 3. Screen: Reader -->
+      <div class="app-screen" id="screen-reader"></div>
+
+      <!-- 4. Screen: Stats -->
+      <div class="app-screen" id="screen-stats"></div>
+
+      <!-- 5. Screen: Settings -->
+      <div class="app-screen" id="screen-settings">
+        <div class="settings-screen">
+          <div class="detail-top-bar" style="padding: 12px 0;">
+            <button class="icon-btn" onclick="navigateTo('screen-library')">
+              <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            </button>
+            <h2 style="font-family: var(--font-serif); font-size: 18px;">Ajustes</h2>
+            <div style="width: 40px;"></div>
+          </div>
+
+          <div class="settings-section-title">Apariencia y Tema</div>
+          <div class="settings-card">
+            <div class="theme-selector-row">
+              <div class="theme-pill-card active" onclick="setTheme('HIDDEN_FOREST')">
+                <div class="theme-pill-swatch" style="background: #080B08; color: #4CAF72; border: 1px solid #1E2C1E;">HF</div>
+                <span>Bosque</span>
+              </div>
+              <div class="theme-pill-card" onclick="setTheme('DAY')">
+                <div class="theme-pill-swatch" style="background: #F7F9F6; color: #2E7D47; border: 1px solid #D8E2D7;">Day</div>
+                <span>Día</span>
+              </div>
+              <div class="theme-pill-card" onclick="setTheme('SEPIA')">
+                <div class="theme-pill-swatch" style="background: #F4ECD8; color: #7A5230; border: 1px solid #CEBEA0;">Sep</div>
+                <span>Sepia</span>
+              </div>
+              <div class="theme-pill-card" onclick="setTheme('AMOLED')">
+                <div class="theme-pill-swatch" style="background: #000; color: #3DD975; border: 1px solid #1A1A1A;">OLED</div>
+                <span>AMOLED</span>
+              </div>
+              <div class="theme-pill-card" onclick="setTheme('SUNSET')">
+                <div class="theme-pill-swatch" style="background: #120B10; color: #E57342; border: 1px solid #2E1E2B;">Sun</div>
+                <span>Sunset</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section-title">Experiencia de Lectura</div>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div class="setting-text">
+                <h4>Efecto de paso de página 3D</h4>
+                <p>Simulación realista de curvatura física de papel</p>
+              </div>
+              <label class="m3-switch">
+                <input type="checkbox" checked>
+                <span class="m3-switch-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-text">
+                <h4>Botones de volumen</h4>
+                <p>Pasar página con teclas físicas de volumen</p>
+              </div>
+              <label class="m3-switch">
+                <input type="checkbox" checked>
+                <span class="m3-switch-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-text">
+                <h4>Mantener pantalla encendida</h4>
+                <p>Evita que el dispositivo se apague al leer</p>
+              </div>
+              <label class="m3-switch">
+                <input type="checkbox" checked>
+                <span class="m3-switch-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section-title">Síntesis de Voz (TTS)</div>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div class="setting-text">
+                <h4>Motor de voz</h4>
+                <p>Microsoft Edge Neural (Alta fidelidad)</p>
+              </div>
+              <span style="font-size: 12px; color: var(--primary-color);">Cambiar</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-text">
+                <h4>Voces locales Sherpa ONNX</h4>
+                <p>3 modelos neuronales descargados offline</p>
+              </div>
+              <span style="font-size: 12px; color: var(--text-secondary);">45 MB</span>
+            </div>
+          </div>
+
+          <div style="text-align: center; padding: 24px 0; color: var(--text-tertiary); font-size: 11px;">
+            Woods Reader v2.4.0 • Jetpack Compose + M3
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. Screen: Graph -->
+      <div class="app-screen" id="screen-graph">
+        <div class="graph-screen">
+          <div class="reader-top-bar">
+            <button class="icon-btn" onclick="navigateTo('screen-reader')">
+              <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            </button>
+            <div class="reader-title-info">
+              <div class="rt-title">Grafo de Conocimiento</div>
+              <div class="rt-chap">8 Entidades • Patrick Rothfuss</div>
+            </div>
+            <button class="icon-btn" onclick="renderGraph()">
+              <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+            </button>
+          </div>
+
+          <!-- Category Legend Overlay -->
+          <div class="graph-overlay-chips">
+            <div class="graph-legend-chip"><span class="dot-char"></span> Personajes</div>
+            <div class="graph-legend-chip"><span class="dot-loc"></span> Lugares</div>
+            <div class="graph-legend-chip"><span class="dot-item"></span> Objetos</div>
+            <div class="graph-legend-chip"><span class="dot-fact"></span> Facciones</div>
+            <div class="graph-legend-chip"><span class="dot-conc"></span> Conceptos</div>
+          </div>
+
+          <canvas id="graph-canvas" class="graph-canvas"></canvas>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Woods Bottom Navigation Bar (Floating Pill) -->
+    <div class="woods-bottom-nav" id="main-nav">
+      <div class="nav-item active" data-nav="library" onclick="navigateTo('screen-library')">
+        <svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/></svg>
+        <span>Biblioteca</span>
+      </div>
+      
+      <div class="nav-item-center" onclick="openReader(1)">
+        <svg viewBox="0 0 24 24"><path d="M19 1l-5 5v11l5-4.5V1zM1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5V6c-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6zm22 13.5V6c-.6-.45-1.25-.75-2-1v13.5c.75.25 1.4.55 2 1z"/></svg>
+      </div>
+
+      <div class="nav-item" data-nav="stats" onclick="navigateTo('screen-stats')">
+        <svg viewBox="0 0 24 24"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14.2h-2.8zm5.6 8H19v6.2h-2.8z"/></svg>
+        <span>Estadísticas</span>
+      </div>
+    </div>
+
+    <!-- Side Menu Drawer Overlay -->
+    <div class="side-menu-drawer" id="side-menu">
+      <div class="side-menu-header">
+        <h4>Opciones</h4>
+        <button class="icon-btn" onclick="closeSideMenu()">✕</button>
+      </div>
+      <div class="side-menu-list">
+        <div class="side-menu-item" onclick="closeSideMenu(); navigateTo('screen-graph');">
+          <svg viewBox="0 0 24 24"><path d="M10 3a3 3 0 0 0-3 3c0 .35.06.68.17 1H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h3.17c-.11.32-.17.65-.17 1a3 3 0 0 0 3 3 3 3 0 0 0 3-3c0-.35-.06-.68-.17-1H16a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-3.17c.11-.32.17-.65.17-1a3 3 0 0 0-3-3zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+          <span>Red de relaciones (Grafo)</span>
+        </div>
+        <div class="side-menu-item" onclick="closeSideMenu(); openNotesSheet();">
+          <svg viewBox="0 0 24 24"><path d="M3 10h11v2H3v-2zm0-2h11V6H3v2zm0 8h7v-2H3v2zm15.01-3.13l.71-.71a.996.996 0 0 1 1.41 0l.71.71c.39.39.39 1.02 0 1.41l-.71.71-2.12-2.12zm-.71.71l-5.3 5.3V21h2.12l5.3-5.3-2.12-2.12z"/></svg>
+          <span>Subrayados y notas</span>
+        </div>
+        <div class="side-menu-item" onclick="closeSideMenu(); openTypographySheet();">
+          <svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+          <span>Ajustes tipográficos</span>
+        </div>
+        <div class="side-menu-item" onclick="closeSideMenu(); navigateTo('screen-settings');">
+          <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          <span>Ajustes generales</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Sheet Modal Dynamic Host -->
+    <div class="bottom-sheet-scrim" id="sheet-scrim">
+      <div class="bottom-sheet-content">
+        <div class="sheet-handle"></div>
+        <div class="sheet-body" id="sheet-body-content"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

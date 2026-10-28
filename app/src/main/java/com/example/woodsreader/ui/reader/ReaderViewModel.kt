@@ -94,6 +94,7 @@ import com.example.woodsreader.core.xray.BookXRayEngine
 import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.core.license.ProLicenseManager
 
+import com.example.woodsreader.core.share.QuoteVideoClipExporter
 import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import com.example.woodsreader.service.CoverExtractor
 import org.readium.r2.shared.publication.Link
@@ -148,7 +149,8 @@ class ReaderViewModel @Inject constructor(
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val proLicenseManager: ProLicenseManager,
     val ambientSoundscapePlayer: AmbientSoundscapePlayer,
-    val woodsKeepAliveManager: WoodsKeepAliveManager
+    val woodsKeepAliveManager: WoodsKeepAliveManager,
+    val quoteVideoClipExporter: QuoteVideoClipExporter
 ) : ViewModel() {
 
     companion object {
@@ -162,7 +164,7 @@ class ReaderViewModel @Inject constructor(
     val chapterLruCache = LruCache<Int, ParsedChapterData>(MAX_CACHED_CHAPTERS)
     private var prefetchJob: Job? = null
 
-    val bookId: String = checkNotNull(savedStateHandle.get<String>("bookId"))
+    val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()
     var publication: Publication? = null
 
     private var navigatorLocatorJob: Job? = null
@@ -437,6 +439,9 @@ class ReaderViewModel @Inject constructor(
         val book = (_uiState.value as? ReaderUiState.Success)?.book ?: return
         val pub = publication ?: return
         val startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
+        val coverFile = book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+            ?: File(context.filesDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
+            ?: File(context.cacheDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
 
         val job = viewModelScope.launch {
             if (isReflowMode.value || isPdfBook) {
@@ -452,7 +457,9 @@ class ReaderViewModel @Inject constructor(
                     exportLabel = startChapTitle,
                     totalChaptersCount = 1,
                     chapterProvider = { com.example.woodsreader.core.tts.ChapterTextChunk(startChapTitle, items) },
-                    speed = currentSpeed.value
+                    speed = currentSpeed.value,
+                    coverImageFile = coverFile,
+                    bookAuthor = book.author
                 )
             } else {
                 val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString()
@@ -487,7 +494,9 @@ class ReaderViewModel @Inject constructor(
                         val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
                         com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
                     },
-                    speed = currentSpeed.value
+                    speed = currentSpeed.value,
+                    coverImageFile = coverFile,
+                    bookAuthor = book.author
                 )
             }
         }

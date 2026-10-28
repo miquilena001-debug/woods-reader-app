@@ -49,6 +49,7 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.example.woodsreader.core.web2epub.WebToEpubImporterDialog
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.database.CollectionEntity
 import com.example.woodsreader.data.model.ReadingStatus
@@ -81,10 +82,28 @@ fun LibraryScreen(
     val activeCollectionFilter by viewModel.collectionFilter.collectAsStateWithLifecycle()
 
     var showCreateCollectionDialog by remember { mutableStateOf(false) }
+    var showWebToEpubDialog by remember { mutableStateOf(false) }
     var collectionToDelete by remember { mutableStateOf<CollectionEntity?>(null) }
     var newCollectionName by remember { mutableStateOf("") }
     var bookForOptions by remember { mutableStateOf<BookEntity?>(null) }
     var bookToDeleteConfirm by remember { mutableStateOf<BookEntity?>(null) }
+    var bookToTranslate by remember { mutableStateOf<BookEntity?>(null) }
+    // Idiomas seleccionados para la traducción del libro actual
+    var pendingTranslateSource by remember { mutableStateOf("auto") }
+    var pendingTranslateTarget by remember { mutableStateOf("es") }
+    // Muestra el LanguagePickerDialog antes de iniciar la traducción
+    var showLanguagePicker by remember { mutableStateOf(false) }
+    var bookPendingLanguagePick by remember { mutableStateOf<BookEntity?>(null) }
+
+    // Exportación de audiolibro a M4A (Apple Liquid Glass)
+    var showAudioExportDialog by remember { mutableStateOf(false) }
+    var bookPendingAudioExport by remember { mutableStateOf<BookEntity?>(null) }
+    var bookActiveAudioExport by remember { mutableStateOf<BookEntity?>(null) }
+    val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
+    val currentVoice by viewModel.selectedVoice.collectAsStateWithLifecycle()
+
+    val isTranslatingBook by viewModel.calibreStyleEpubTranslator.isTranslatingBook.collectAsStateWithLifecycle()
+    val translationProgress by viewModel.calibreStyleEpubTranslator.progressState.collectAsStateWithLifecycle()
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -99,6 +118,7 @@ fun LibraryScreen(
 
     // Detectar si la biblioteca estÃƒÂ¡ cargando su primera pÃƒÂ¡gina
     val isInitialLoading = books.loadState.refresh is LoadState.Loading && books.itemCount == 0
+    val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
     val configuration = LocalConfiguration.current
     val screenWidthDp = configuration.screenWidthDp
@@ -147,7 +167,8 @@ fun LibraryScreen(
                             viewModel.startScan()
                         }
                     },
-                    onAddFolderClick = { folderPickerLauncher.launch(null) }
+                    onAddFolderClick = { folderPickerLauncher.launch(null) },
+                    onWebToEpubClick = { showWebToEpubDialog = true }
                 )
             }
 
@@ -450,6 +471,71 @@ fun LibraryScreen(
                 onDeleteClick = {
                     bookToDeleteConfirm = bookForOptions
                     bookForOptions = null
+                },
+                onTranslateClick = { selectedBook ->
+                    bookPendingLanguagePick = selectedBook
+                    bookForOptions = null
+                    showLanguagePicker = true
+                },
+                onAudioExportClick = { selectedBook ->
+                    bookPendingAudioExport = selectedBook
+                    bookForOptions = null
+                    showAudioExportDialog = true
+                }
+            )
+        }
+
+        // ── Selector de idioma (previo a la traducción) ──────────────────────
+        if (showLanguagePicker && bookPendingLanguagePick != null) {
+            LanguagePickerDialog(
+                initialSourceLang = pendingTranslateSource,
+                initialTargetLang = pendingTranslateTarget,
+                onConfirm = { src, tgt ->
+                    pendingTranslateSource = src
+                    pendingTranslateTarget = tgt
+                    bookToTranslate = bookPendingLanguagePick
+                    bookPendingLanguagePick = null
+                    showLanguagePicker = false
+                },
+                onDismiss = {
+                    showLanguagePicker = false
+                    bookPendingLanguagePick = null
+                }
+            )
+        }
+
+        if (bookToTranslate != null) {
+            val book = bookToTranslate!!
+            LaunchedEffect(book.id) {
+                viewModel.translateEpubBook(
+                    book = book,
+                    sourceLang = pendingTranslateSource,
+                    targetLang = pendingTranslateTarget
+                ) { result ->
+                    result.onFailure { err ->
+                        android.widget.Toast.makeText(
+                            context,
+                            "Error al traducir: ${err.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    result.onSuccess {
+                        android.widget.Toast.makeText(
+                            context,
+                            "¡Libro traducido agregado a la biblioteca!",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                    bookToTranslate = null
+                }
+            }
+
+            CalibreTranslationProgressDialog(
+                bookTitle = book.title,
+                progress = translationProgress,
+                onCancel = {
+                    viewModel.cancelEpubTranslation()
+                    bookToTranslate = null
                 }
             )
         }
@@ -489,6 +575,82 @@ fun LibraryScreen(
                     ) {
                         Text("Cancelar")
                     }
+                }
+            )
+        }
+
+        if (showWebToEpubDialog) {
+            WebToEpubImporterDialog(
+                proLicenseManager = viewModel.proLicenseManager,
+                calibreTranslator = viewModel.calibreStyleEpubTranslator,
+                onDismiss = { showWebToEpubDialog = false },
+                onEpubGenerated = { epubFile ->
+                    viewModel.importBookFile(epubFile)
+                }
+            )
+        }
+
+        // ── Diálogo de configuración de Exportación a Audio (Apple Liquid Glass) ──
+        if (showAudioExportDialog && bookPendingAudioExport != null) {
+            val installedVoices = remember(showAudioExportDialog) { viewModel.getInstalledVoices() }
+            BookAudioExportDialog(
+                book = bookPendingAudioExport!!,
+                availableVoices = installedVoices,
+                initialVoice = currentVoice,
+                onConfirm = { maxChapters, speed, voice, includeLyrics ->
+                    val targetBook = bookPendingAudioExport!!
+                    showAudioExportDialog = false
+                    bookPendingAudioExport = null
+                    bookActiveAudioExport = targetBook
+                    viewModel.exportBookToAudio(
+                        book = targetBook,
+                        maxChapters = maxChapters,
+                        speed = speed,
+                        voiceOption = voice,
+                        includeSyncedLyrics = includeLyrics
+                    ) { result ->
+                        result.onSuccess {
+                            val msg = if (includeLyrics) {
+                                "¡Audiolibro con letra sincronizada (.LRC/.SRT) exportado en Música/WoodsReader!"
+                            } else {
+                                "¡Audiolibro exportado en Música/WoodsReader!"
+                            }
+                            android.widget.Toast.makeText(
+                                context,
+                                msg,
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        result.onFailure { err ->
+                            if (err !is kotlinx.coroutines.CancellationException) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Error al exportar audio: ${err.message}",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                },
+                onDismiss = {
+                    showAudioExportDialog = false
+                    bookPendingAudioExport = null
+                }
+            )
+        }
+
+        // ── Diálogo y Dock flotante de progreso de Exportación a Audio (Apple Liquid Glass) ──
+        if (bookActiveAudioExport != null) {
+            AudioExportProgressDialog(
+                bookTitle = bookActiveAudioExport!!.title,
+                exportState = audioExportState,
+                onCancel = {
+                    viewModel.cancelAudioExport()
+                    bookActiveAudioExport = null
+                },
+                onDismiss = {
+                    viewModel.resetAudioExportState()
+                    bookActiveAudioExport = null
                 }
             )
         }

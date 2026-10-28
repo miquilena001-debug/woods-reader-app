@@ -1,0 +1,10 @@
+{
+  "id": "novelusb",
+  "domains": ["novelusb.com", "novelusb.net"],
+  "chapterListSelector": "#list-chapter",
+  "contentSelectors": ["#chr-content"],
+  "novelTitleSelector": "h3.title",
+  "titleSelector": "h2",
+  "coverSelector": "div.book img",
+  "descriptionSelector": ".desc-text"
+}

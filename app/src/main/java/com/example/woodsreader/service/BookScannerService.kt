@@ -545,6 +545,8 @@ class BookScannerService @Inject constructor(
     // QUICK SCAN â€” Internal
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+    suspend fun importSingleFile(file: File): Boolean = quickProcessFile(file)
+
     private suspend fun quickProcessFile(file: File): Boolean =
         quickProcessBook(
             uri          = Uri.fromFile(file),

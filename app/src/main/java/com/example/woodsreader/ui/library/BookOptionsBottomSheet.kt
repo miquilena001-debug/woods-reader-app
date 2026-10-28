@@ -9,7 +9,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,7 +44,9 @@ fun BookOptionsBottomSheet(
     onDismiss: () -> Unit,
     onStatusChange: (ReadingStatus) -> Unit,
     onCollectionChange: (String?) -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    onTranslateClick: ((BookEntity) -> Unit)? = null,
+    onAudioExportClick: ((BookEntity) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
@@ -288,7 +293,80 @@ fun BookOptionsBottomSheet(
 
             HorizontalDivider(color = HiddenForest.Outline, thickness = 1.dp)
 
-            // Sección 4: Acción de eliminación
+            // Sección 4: Traducción Masiva (Estilo Calibre)
+            if (book.filePath.endsWith(".epub", ignoreCase = true) || book.format.name.equals("EPUB", ignoreCase = true)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(HiddenForest.Accent.copy(alpha = 0.12f))
+                        .border(1.dp, HiddenForest.Accent.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            onTranslateClick?.invoke(book)
+                            onDismiss()
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Translate,
+                            contentDescription = "Traducir EPUB",
+                            tint = HiddenForest.Accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "📥 Traducir EPUB Completo (Estilo Calibre)",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = HiddenForest.Accent
+                        )
+                    }
+                }
+
+                // Sección 4.5: Convertir a Audiolibro (.M4A)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFF0C2A20),
+                                    Color(0xFF144D3D)
+                                )
+                            )
+                        )
+                        .border(1.25.dp, Color(0xFF34D399).copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            onAudioExportClick?.invoke(book)
+                            onDismiss()
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Audiotrack,
+                            contentDescription = "Convertir a Audiolibro",
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "🎧 Convertir a Audiolibro (.M4A)",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFFECFDF5)
+                        )
+                    }
+                }
+            }
+
+            // Sección 5: Acción de eliminación
             Box(
                 modifier = Modifier
                     .fillMaxWidth()

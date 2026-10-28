@@ -216,6 +216,34 @@ class TtsManager @Inject constructor(
     @Volatile
     private var currentBookId: String? = null
 
+    @Volatile
+    private var cachedUseSherpaTts: Boolean = false
+    @Volatile
+    private var activeUtteranceContinuation: Pair<String, kotlinx.coroutines.CancellableContinuation<Unit>>? = null
+
+    private val utteranceProgressListener = object : UtteranceProgressListener() {
+        override fun onStart(utteranceId: String?) {}
+        override fun onDone(utteranceId: String?) {
+            completeUtterance(utteranceId, cancelled = false)
+        }
+        override fun onError(utteranceId: String?) {
+            completeUtterance(utteranceId, cancelled = false)
+        }
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            completeUtterance(utteranceId, cancelled = isSpeakingCancelled)
+        }
+
+        private fun completeUtterance(utteranceId: String?, cancelled: Boolean) {
+            val pair = activeUtteranceContinuation ?: return
+            if (utteranceId == null || utteranceId == pair.first) {
+                activeUtteranceContinuation = null
+                if (pair.second.isActive) {
+                    if (cancelled) pair.second.cancel() else pair.second.resume(Unit)
+                }
+            }
+        }
+    }
+
     init {
         studioPrefs.registerOnSharedPreferenceChangeListener(studioPrefsListener)
 
@@ -240,6 +268,7 @@ class TtsManager @Inject constructor(
         }
         ttsScope.launch {
             userPreferencesRepository.userPreferencesFlow.collect { prefs ->
+                cachedUseSherpaTts = prefs.useSherpaTts
                 if (!prefs.useSherpaTts && loadedVoiceId != null) {
                     clearPreSynthesisCache()
                     resetSherpa()
@@ -295,6 +324,7 @@ class TtsManager @Inject constructor(
                 isReady = status == TextToSpeech.SUCCESS
                 if (isReady) {
                     tts?.setLanguage(locale)
+                    tts?.setOnUtteranceProgressListener(utteranceProgressListener)
                     if (voiceName != null) setVoice(voiceName)
                 }
                 cont.resume(isReady)
@@ -315,11 +345,7 @@ class TtsManager @Inject constructor(
             acquireAudioLocks()
         }
         try {
-            val useSherpa = try {
-                userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
-            } catch (_: Exception) {
-                false
-            } || (isSherpaReady() && !isReady)
+            val useSherpa = cachedUseSherpaTts || (isSherpaReady() && !isReady)
 
             if (useSherpa && initSherpaIfNeeded()) {
                 isSpeakingCancelled = false
@@ -446,24 +472,7 @@ class TtsManager @Inject constructor(
                 val id = "utterance_${System.currentTimeMillis()}"
 
                 suspendCancellableCoroutine<Unit> { cont ->
-                    tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                        override fun onStart(utteranceId: String?) {}
-                        override fun onDone(utteranceId: String?) {
-                            if ((utteranceId == null || utteranceId == id) && cont.isActive) cont.resume(Unit)
-                        }
-                        override fun onError(utteranceId: String?) {
-                            if ((utteranceId == null || utteranceId == id) && cont.isActive) cont.resume(Unit)
-                        }
-                        override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                            if ((utteranceId == null || utteranceId == id) && cont.isActive) {
-                                if (isSpeakingCancelled) {
-                                    cont.cancel()
-                                } else {
-                                    cont.resume(Unit)
-                                }
-                            }
-                        }
-                    })
+                    activeUtteranceContinuation = id to cont
 
                     val params = android.os.Bundle().apply {
                         putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
@@ -471,6 +480,9 @@ class TtsManager @Inject constructor(
                     tts?.speak(item.text, TextToSpeech.QUEUE_FLUSH, params, id)
 
                     cont.invokeOnCancellation {
+                        if (activeUtteranceContinuation?.first == id) {
+                            activeUtteranceContinuation = null
+                        }
                         stop()
                     }
                 }
@@ -996,8 +1008,8 @@ class TtsManager @Inject constructor(
         return if (clauses.isEmpty()) listOf(trimmed) else clauses.filter { it.isNotBlank() }
     }
 
-    private fun playPcmSamplesBlocking(samples: FloatArray, sampleRate: Int): Boolean {
-        if (samples.isEmpty() || sampleRate <= 0) return false
+    private suspend fun playPcmSamplesBlocking(samples: FloatArray, sampleRate: Int): Boolean = withContext(Dispatchers.IO) {
+        if (samples.isEmpty() || sampleRate <= 0) return@withContext false
         val track = getOrCreateSherpaTrack(sampleRate)
 
         // Sincronizar PlaybackParams (velocidad hardware y tono) de forma segura en tiempo real
@@ -1033,7 +1045,7 @@ class TtsManager @Inject constructor(
         }
         // Al terminar una oración normal (!userRequestedStop) NO se llama a track.stop() ni track.release(),
         // permitiendo que el hardware de audio drene suavemente los últimos ~150 ms sin cortar el final
-        return offset > 0
+        offset > 0
     }
 
     fun setRate(rate: Float) { 

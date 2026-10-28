@@ -74,4 +74,7 @@ object DatabaseModule {
 
     @Provides
     fun provideTtsRuleDao(db: AppDatabase): TtsRuleDao = db.ttsRuleDao()
+
+    @Provides
+    fun provideGraphDao(db: AppDatabase): com.example.woodsreader.data.graph.GraphDao = db.graphDao()
 }

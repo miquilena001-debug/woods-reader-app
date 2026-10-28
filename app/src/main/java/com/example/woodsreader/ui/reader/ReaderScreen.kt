@@ -19,6 +19,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.border
 import androidx.compose.ui.text.style.TextOverflow
+import com.example.woodsreader.data.graph.EntityType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -159,6 +160,9 @@ private fun resolveTocTargetPage(link: Link, locator: Locator?): Int? {
 @Composable
 fun ReaderScreen(
     onNavigateUp: () -> Unit,
+    onNavigateToGraph: ((String, Int) -> Unit)? = null,
+    targetLocatorJson: String? = null,
+    onClearTargetLocator: () -> Unit = {},
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
     viewModel: ReaderViewModel = hiltViewModel()
@@ -223,6 +227,17 @@ fun ReaderScreen(
     
     val navigatorState = remember { mutableStateOf<Navigator?>(null) }
     val navigator by navigatorState
+
+    // FASE 7: Salto al texto al regresar desde el Grafo
+    LaunchedEffect(targetLocatorJson, navigator) {
+        val json = targetLocatorJson ?: return@LaunchedEffect
+        val nav = navigator ?: return@LaunchedEffect
+        val loc = runCatching { Locator.fromJSON(org.json.JSONObject(json)) }.getOrNull()
+        if (loc != null) {
+            onClearTargetLocator()
+            viewModel.goToLocator(nav, loc)
+        }
+    }
     val currentLocator by remember(navigator) {
         navigator?.currentLocator ?: flowOf(null)
     }.collectAsStateWithLifecycle(initialValue = null)
@@ -284,6 +299,12 @@ fun ReaderScreen(
     var quoteToShare by remember { mutableStateOf<String?>(null) }
     var pullProgress by remember { mutableFloatStateOf(0f) }
     var footnoteContent by remember { mutableStateOf<String?>(null) }
+    var showEgoGraphSheet by remember { mutableStateOf(false) }
+    var showAddToGraphDialog by remember { mutableStateOf(false) }
+    var initialEgoEntityName by remember { mutableStateOf<String?>(null) }
+    var entityNameToAdd by remember { mutableStateOf("") }
+    var entitySelectionLocator by remember { mutableStateOf<Locator?>(null) }
+    val egoGraphViewModel: ReaderEgoGraphViewModel = hiltViewModel()
 
     val inlineLookupManager = remember { InlineLookupManager() }
     var lookupState by remember { mutableStateOf<LookupResult>(LookupResult.Idle) }
@@ -356,6 +377,8 @@ fun ReaderScreen(
         object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                 menu.clear()
+                menu.add(Menu.NONE, MENU_ITEM_ADD_TO_GRAPH_ID, Menu.NONE, "Añadir a grafo")
+                menu.add(Menu.NONE, MENU_ITEM_VIEW_GRAPH_ID, Menu.NONE, "Ver en grafo")
                 activeActionMode = mode
                 isLongPressSelecting = true
                 (navigatorState.value as? VisualNavigator)?.safePublicationView
@@ -421,6 +444,33 @@ fun ReaderScreen(
                                 selectedTextForQuery = text
                                 showTranslateSheet = true
                                 viewModel.hideControls()
+                            }
+                            mode.finish()
+                            activeActionMode = null
+                        }
+                        return true
+                    }
+                    MENU_ITEM_ADD_TO_GRAPH_ID -> {
+                        scope.launch {
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
+                            val text = sel?.locator?.text?.highlight ?: ""
+                            if (text.isNotBlank()) {
+                                entityNameToAdd = text.trim()
+                                entitySelectionLocator = sel?.locator
+                                showAddToGraphDialog = true
+                            }
+                            mode.finish()
+                            activeActionMode = null
+                        }
+                        return true
+                    }
+                    MENU_ITEM_VIEW_GRAPH_ID -> {
+                        scope.launch {
+                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
+                            val text = sel?.locator?.text?.highlight ?: ""
+                            if (text.isNotBlank()) {
+                                initialEgoEntityName = text.trim()
+                                showEgoGraphSheet = true
                             }
                             mode.finish()
                             activeActionMode = null
@@ -1077,6 +1127,16 @@ fun ReaderScreen(
                         text = name,
                         note = customNote
                     )
+                    if (successState != null) {
+                        egoGraphViewModel.addEntityFromSelection(
+                            bookId = successState.book.id,
+                            name = name,
+                            type = EntityType.PERSONAJE,
+                            description = customNote,
+                            currentChapter = viewModel.getCurrentChapterIndex(),
+                            locator = loc
+                        )
+                    }
                 }
                 clearActiveSelection()
             },
@@ -1201,6 +1261,20 @@ fun ReaderScreen(
                         xRayReport = viewModel.generateXRayReport()
                         showXRaySheet = true
                     },
+                    onGraphClick = {
+                        initialEgoEntityName = null
+                        showEgoGraphSheet = true
+                    },
+                    onAddToGraph = if (showHighlightMenu != null) {
+                        {
+                            val text = showHighlightMenu?.locator?.text?.highlight ?: ""
+                            if (text.isNotBlank()) {
+                                entityNameToAdd = text.trim()
+                                entitySelectionLocator = showHighlightMenu?.locator
+                                showAddToGraphDialog = true
+                            }
+                        }
+                    } else null,
                     onMenuClick = { showMasterMenu = true }
                 )
             }
@@ -1720,6 +1794,55 @@ fun ReaderScreen(
             )
         }
 
+        if (showEgoGraphSheet && successState != null) {
+            ReaderEgoGraphBottomSheet(
+                bookId = successState.book.id,
+                currentChapterIndex = viewModel.getCurrentChapterIndex(),
+                initialEntityName = initialEgoEntityName,
+                onDismiss = {
+                    showEgoGraphSheet = false
+                    initialEgoEntityName = null
+                },
+                onNavigateToFullGraph = {
+                    showEgoGraphSheet = false
+                    onNavigateToGraph?.invoke(successState.book.id, viewModel.getCurrentChapterIndex())
+                },
+                onJumpToLocator = { targetLocator ->
+                    showEgoGraphSheet = false
+                    val nav = navigatorState.value
+                    if (nav != null) {
+                        viewModel.goToLocator(nav, targetLocator)
+                    }
+                },
+                viewModel = egoGraphViewModel
+            )
+        }
+
+        if (showAddToGraphDialog && successState != null) {
+            AddEntityFromSelectionDialog(
+                initialName = entityNameToAdd,
+                onDismiss = {
+                    showAddToGraphDialog = false
+                    entitySelectionLocator = null
+                },
+                onConfirm = { name, type, description ->
+                    showAddToGraphDialog = false
+                    val loc = entitySelectionLocator
+                    entitySelectionLocator = null
+                    egoGraphViewModel.addEntityFromSelection(
+                        bookId = successState.book.id,
+                        name = name,
+                        type = type,
+                        description = description,
+                        currentChapter = viewModel.getCurrentChapterIndex(),
+                        locator = loc
+                    )
+                    clearActiveSelection()
+                    Toast.makeText(context, "Entidad '$name' añadida al grafo", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
     }
 }
 }
@@ -1789,6 +1912,8 @@ private const val MENU_ITEM_TTS_ID = 0x7F0A_BEEF
 private const val MENU_ITEM_HIGHLIGHT_ID = 0x7F0A_FEED
 private const val MENU_ITEM_DICTIONARY_ID = 0x7F0A_FEEC
 private const val MENU_ITEM_TRANSLATE_ID = 0x7F0A_FEEB
+private const val MENU_ITEM_ADD_TO_GRAPH_ID = 0x7F0A_FEEA
+private const val MENU_ITEM_VIEW_GRAPH_ID = 0x7F0A_FEE9
 
 /**
  * Muestra el contenido de una nota al pie en un BottomSheet sin perder la posiciÃƒÂ³n de lectura.
