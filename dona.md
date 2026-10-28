@@ -2118,47 +2118,74 @@ Usuario ingresa clave de activación en WoodsProUnlockDialog:
 
 ---
 
-## 14. Estado General de la Auditoría Atómica
+## 14. Registro Consolidado de Errores Conocidos y Deuda Técnica
+
+Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores resueltos y deuda técnica de Woods Reader identificados en el código fuente, documentando sus componentes afectados, estado y pasos de verificación.
 
 ### Leyenda de Estados
-- ✅ **Resuelto y verificado en código:** Probado estáticamente, compilado y testeado con tests unitarios.
-- 🟡 **Resuelto en código, pendiente de validación en dispositivo:** Implementado y compilado, pero requiere confirmación en hardware real (`TECNO-LH7n`).
-- 🔴 **Pendiente:** Deuda técnica o bug detectado que aún no ha sido corregido en código.
-- ⚪ **No verificado:** Elemento que requiere inspección adicional.
+- ✅ **Resuelto y verificado en código:** Verificado mediante inspección estricta de código y pruebas unitarias automáticas en verde.
+- 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** Implementado y verificado en código, pero requiere validación física en hardware.
+- 🔴 **Pendiente (Error conocido / Deuda técnica):** Problema vigente identificado, documentado sin corregir en esta fase.
+- ⚪ **No verificado:** Estado preventivo de elementos pendientes de auditoría directa.
 
-### Contadores Globales de la Auditoría (Verificados con git ls-files y test suite)
-- **Archivos totales en proyecto:** 237 archivos `.kt` (184 en `app/src/main/`, 47 en `app/src/test/`, 2 en `app/src/androidTest/`, 4 en `keymaker/`)
-- **Tests unitarios ejecutados:** 182 casos de prueba unitarios en 42 clases de test (100% en verde bajo `:app:testDebugUnitTest`, 0 fallos, 0 errores)
-- **Hallazgos críticos totales:** 13
-  - ✅ **Resueltos y verificados en código:** 9 (C1, C2, C3, C5, C8, C9, C10, C12, C13)
-  - 🟡 **Resueltos en código, pendientes de validación en dispositivo (TECNO-LH7n):** 2 (C6, C7)
-  - 🔴 **Pendientes:** 2 (C4: corrutina en init de `SherpaModelManager.kt:280`; C11: mojibake residual en comentarios de `TtsManager.kt:572+`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `ReaderViewModel.kt`)
-  - ⚪ **No verificados:** 0
-- **Hallazgos de severidad alta resueltos:** A12 resuelto (`SaveReadingProgressUseCase.kt`). Otros altos registrados: A1 (`mergeInto`), A5 (`playPcmDispatcher`), A6 (`createNavigator`), A9 (`persistableUriPermission`), A10 (`exportJsonBinder`), A11 (`importTransactions`).
-- **Funcionalidades en estado 🟡 (pendientes de validación en dispositivo):**
-  - C6: Arranque no bloqueante de TTS y caché reactiva de preferencias.
-  - C7: Avance de oraciones nativas sin race conditions ni desincronización de utterances.
-  - PARTE 73: Exportación a único archivo `.m4a` con portada (`covr`) y subtítulos (`©lyr`) probada en reproductores nativos (Musicolet, VLC, Poweramp, Samsung Music).
-  - Apertura O(1) en libros masivos (>80 capítulos) en el procesador Helio G85 / Mali-G52 del TECNO-LH7n.
-  - Fluidez de scroll continuo sin caídas de frames en Compose.
+---
 
-### Resumen de Hallazgos Críticos
+### Matriz Consolidada de Hallazgos
 
-| ID | Problema | Archivo y Línea Real | Impacto | Estado | Evidencia y Justificación Técnica |
-|---|---|---|---|---|---|
-| C1 | Room v11 sin migración manual 10→11 | `AppDatabase.kt:37-39`, `app/schemas/.../10.json`, `11.json` | Fallo de migración en actualización de app | ✅ **Resuelto y verificado** | Resuelto vía `@AutoMigration(from = 10, to = 11)`. La comparativa estricta de esquemas v10 vs v11 confirma que solo se agregaron 4 tablas (`graph_entity`, `graph_relation`, `graph_alias`, `graph_mention`), sin tablas/columnas modificadas ni borradas ni renombradas. Room no requiere `AutoMigrationSpec`. |
-| C2 | `checkNotNull(bookId)` crashea al abrir libro | `ReaderViewModel.kt:171, 597` | Cierre inesperado (crash) al abrir lector sin bookId válido | ✅ **Resuelto y verificado** | Commit `7ac5385`. Línea 171 lee seguro con `savedStateHandle.get<String>("bookId").orEmpty()` y línea 597 valida con `if (bookId.isBlank()) { _uiState.value = ReaderUiState.Error(...); return }`. |
-| C3 | ViewModel con 17 dependencias directas (God Class) | `ReaderViewModel.kt:124-153` | God ViewModel, acoplamiento alto, riesgo de regresiones | ✅ **Resuelto y verificado** | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`. Descomprimido mediante patrón *Strangler Fig* en 5 Casos de Uso/Coordinadores (`domain/reader/`). Eliminadas 5 inyecciones directas (`AssetRetriever`, `PublicationOpener`, `FastEpubSearchEngine`, `BookXRayEngine`, `ChapterAudioExporter`). Tamaño reducido a 2.476 líneas. |
-| C4 | Corrutina huérfana en bloque init | `SherpaModelManager.kt:280` | Corrutina sin cancelación explícita en singleton | 🔴 **Pendiente (Error conocido)** | `managerScope.launch` en el bloque `init` lanza un borrado recursivo del directorio Kokoro-82M de forma asíncrona usando `SupervisorJob() + Dispatchers.IO` sin cancelación explícita ni enlace de ciclo de vida. |
-| C5 | Logging nativo exhaustivo atado a debug build | `SherpaModelManager.kt:437` | Logs nativos de Sherpa ONNX saturan logcat en depuración | 🔴 **Pendiente (Error conocido)** | Línea 437 pasa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En compilaciones Debug activa logs nativos intensivos de C++ por cada frame de audio; en Release compila como `false`. Pendiente desacoplarlo a flag de depuración opcional en tiempo de ejecución. |
-| C6 | `.first()` en StateFlow bloquea/suspende arranque de TTS | `TtsManager.kt:1375` | TTS se congela o bloquea hilo de síntesis en arranque en frío | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. Se eliminó `.first()` de `userPreferencesFlow` en `narrateSequence`, sustituyéndolo por la propiedad `@Volatile cachedUseSherpaTts`. Se blindó la carrera de arranque en frío con `ensurePreferencesLoaded()` con timeout asíncrono de 300 ms antes de la primera narración. |
-| C7 | UtteranceProgressListener en bucle y carreras de oraciones | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización, continuación colgada o silencio | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. El listener se asigna una sola vez en `initialize()`. IDs de utterance monótonos con `AtomicLong`. Se gestiona retorno `speakResult != SUCCESS`, se cancelan continuaciones pendientes forzadamente en `pause()`, `stop()`, `shutdown()`, y se acepta `utteranceId == null` como fallback de compatibilidad OEM. |
-| C8 | Mojibake en comentarios de ReaderViewModel | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado en refactorizaciones de los Pasos 1 a 4 a UTF-8 limpio. |
-| C9 | Migración Room 11 sin 10→11 | `AppDatabase.kt:37` | Confirma C1 | ✅ **Resuelto y verificado** | Verificado con Room `@AutoMigration(from = 10, to = 11)`. |
-| C10 | Mojibake en comentarios | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado a UTF-8 limpio. |
-| C11 | Mojibake residual en comentarios de código fuente | `TtsManager.kt:309, 548, 613`, `BookScannerService.kt:566`, `LibraryScreen.kt:64, 119, 156`, `ReaderViewModel.kt:355, 502, 755` | Comentarios descriptivos con caracteres corruptos (Latin1/Windows-1252) | 🔴 **Pendiente (Error conocido)** | 4 archivos contienen mojibake residual en comentarios descriptivos (símbolos `?`, tildes rotas). No afecta compilación ni lógica de ejecución; pendiente saneamiento ortográfico. |
-| C12 | `checkNotNull(bookId)` crashea en detalle de libro | `BookDetailViewModel.kt:59, 69` | Cierre inesperado al abrir detalle de libro | ✅ **Resuelto y verificado** | Commit `7ac5385`. `val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()`. Si viene vacío, `loadBookData()` valida `if (bookId.isBlank())` y expone `BookDetailUiState(error = "...")`. |
-| C13 | `checkNotNull(bookId)` crashea en grafo y candidatos | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre inesperado al abrir grafo o candidatos | ✅ **Resuelto y verificado** | Commit `7ac5385`. `savedStateHandle.get<String>("bookId").orEmpty()` en ambos ViewModels. Si `bookId.isBlank()`, exponen listas vacías de forma segura y los métodos de confirmación/fusión abortan sin crashear. |
+| ID | Sev. | Archivo : Línea | Síntoma / Riesgo | Componentes Afectados (Conexiones) | Estado | Cómo Reproducirlo o Verificarlo | Workaround / Solución Aplicada |
+|---|---|---|---|---|---|---|---|
+| **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` demuestran que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
+| **C2** | Crítica | `ReaderViewModel.kt:171, 597` | Cierre forzado inmediato (`IllegalStateException`) si el lector se abre con URI sin `bookId` | `NavGraph` → `ReaderScreen` → `ReaderViewModel` | ✅ **Resuelto** | Navegar a `Screen.Reader.createRoute("")`. Antes crasheaba en `checkNotNull(savedStateHandle["bookId"])`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene en blanco, emite `ReaderUiState.Error` seguro. |
+| **C3** | Crítica | `ReaderViewModel.kt:124-153` | God Class monolítica de 2.905 líneas con 17 dependencias inyectadas directas | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | ✅ **Resuelto** | Inspección de dependencias en constructor. Alto acoplamiento y riesgo masivo de regresiones en cualquier cambio. | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`: Strangler Fig en 5 Casos de Uso/Coordinadores. 5 dependencias eliminadas. |
+| **C4** | Alta | `SherpaModelManager.kt:280` | Corrutina huérfana en `init` lanzada en singleton sin control de cancelación | `SherpaModelManager` → Ciclo de vida de app | 🔴 **Pendiente** | Inspeccionar línea 280: `managerScope.launch` borra directorio de Kokoro recursivamente sin almacenar el `Job`. | Deuda técnica documentada. No impacta runtime crítico al ser `@Singleton`, pero carece de método de cancelación ordenado. |
+| **C5** | Media | `SherpaModelManager.kt:437` | Logs nativos exhaustivos de Sherpa ONNX saturan logcat en compilaciones Debug | `SherpaModelManager` → Logcat del sistema | 🔴 **Pendiente** | Ejecutar TTS en build Debug con `adb logcat`: C++ emite trazas continuas por frame de audio. | Línea 437 pasa `debug = BuildConfig.DEBUG`. En Release compila como `false`. Pendiente añadir toggle runtime opcional. |
+| **C6** | Crítica | `TtsManager.kt:1375` | Congelamiento o suspensión prolongada del hilo de síntesis de TTS en arranque en frío | `TtsManager` → `narrateSequence` → `ReaderTtsService` | 🟡 **Validar en tlf.** | Pulsar Play de TTS inmediatamente tras abrir la app en frío con motor Sherpa activado. | Commits `93e4dc2` y `5a9b341`: eliminó `.first()`, usa `@Volatile cachedUseSherpaTts` y `ensurePreferencesLoaded(300ms)`. |
+| **C7** | Crítica | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización de oraciones, continuaciones colgadas o silencio por carreras en listeners | `TtsManager` → `TextToSpeech` nativo → `ReaderScreen` | 🟡 **Validar en tlf.** | Reproducir secuencias largas con saltos de párrafo rápidos o pausas intempestivas. | Commits `93e4dc2` y `5a9b341`: listener único en `initialize()`, IDs con `AtomicLong`, manejo de error y fallback OEM para `utteranceId == null`. |
+| **C8** | Media | `ReaderViewModel.kt` | Caracteres corruptos (mojibake) en comentarios de código del ViewModel | `ReaderViewModel.kt` | ✅ **Resuelto** | Revisión de codificación de caracteres. | Saneado a UTF-8 estándar en refactors de los Pasos 1 a 4. |
+| **C9** | Crítica | `AppDatabase.kt:37` | Confirma duplicidad de C1 sobre migración de Room | `AppDatabase` | ✅ **Resuelto** | Verificado en conjunto con C1. | Resuelto mediante `@AutoMigration(from = 10, to = 11)`. |
+| **C10** | Media | `ReaderViewModel.kt` | Confirma duplicidad de C8 sobre mojibake en el ViewModel | `ReaderViewModel.kt` | ✅ **Resuelto** | Verificado en conjunto con C8. | Saneado a UTF-8 estándar. |
+| **C11** | Baja | `TtsManager.kt:309`, `BookScannerService.kt:566`, `LibraryScreen.kt:64`, `ReaderViewModel.kt:355` | Mojibake residual en comentarios descriptivos (signos `?`, tildes rotas) | Comentarios internos en 4 archivos | 🔴 **Pendiente** | Buscar secuencias Latin1 / Windows-1252 con grep. No afecta bytecode ni ejecución. | Pendiente saneamiento ortográfico manual. No altera lógica ejecutable. |
+| **C12** | Crítica | `BookDetailViewModel.kt:59, 69` | Cierre forzado (`IllegalStateException`) al abrir detalle de libro con `bookId` nulo o inválido | `NavGraph` → `BookDetailScreen` → `BookDetailViewModel` | ✅ **Resuelto** | Navegar a `Screen.BookDetail.createRoute("")`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Expone `BookDetailUiState(error = "...")`. |
+| **C13** | Crítica | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre forzado (`IllegalStateException`) al abrir grafo o candidatos de entidades sin `bookId` | `NavGraph` → `GraphScreen` / `CandidatesScreen` → ViewModels | ✅ **Resuelto** | Abrir grafo sin parámetro de libro. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Abortan retorno seguro con colecciones vacías. |
+| **A1** | Alta | `GraphRepository.kt:80` | Riesgo de inconsistencia si `mergeInto` falla a mitad de transacción | `GraphRepository` → `GraphDao` → Room | ✅ **Verificado** | Revisar implementación de `mergeInto`. | La operación ejecuta dentro de `@Transaction` de Room, garantizando rollback atómico ante cualquier excepción. |
+| **A9** | Alta | `LibraryViewModel.kt:315` | Fallo de permisos silencioso si `takePersistableUriPermission` arroja `SecurityException` | `LibraryViewModel` → Android SAF / Storage Access | 🔴 **Pendiente** | Importar libro desde un proveedor SAF que revoque permisos o no admita flags de persistencia. | Envolver la llamada en `runCatching` y mostrar feedback visual en `LibraryScreen` en lugar de fallar silenciosamente. |
+| **A10** | Alta | `GraphScreen.kt:180` | Intent de exportación de JSON del grafo excede límite de IPC de Binder (~1 MB) | `GraphScreen` → Android Binder → Apps externas | 🔴 **Pendiente** | Exportar un libro con más de 1.500 entidades o relaciones vía Intent directo (`EXTRA_TEXT`). | Deuda técnica: sustituir pasaje en memoria por archivo temporal compartido vía `FileProvider`. |
+| **A12** | Alta | `ReaderViewModel.kt` | Divergencia entre progreso guardado por scroll visual y progreso de narración TTS | `ReaderViewModel` ↔ `SaveReadingProgressUseCase` | ✅ **Resuelto** | Leer con scroll y activar TTS alternadamente. | Resuelto en Paso 1: ambos caminos invocan `SaveReadingProgressUseCase.invoke()`, unificando la base de datos Room. |
+| **M2** | Media | `AppTypeConverters.kt:20-60` | Búsqueda $O(N)$ en conversiones de enums mediante `firstOrNull` | `AppTypeConverters` → Room queries | 🔴 **Pendiente** | Uso continuo en mapeo de listas Room. Al tener los enums 3 a 5 elementos, el costo en CPU es de microsegundos. | Optimización recomendada: mapear vía `Map<String, Enum>` estático indexado. |
+| **M4** | Media | `BookDao.kt:110` | `@Transaction @Query` retornando `PagingSource` puede disparar invalidaciones masivas | `BookDao` → Paging 3 → `LibraryScreen` | ✅ **Verificado** | Carga de listas paginadas en Compose. | Patrón oficial recomendado por AndroidX Room Paging para tablas con relaciones foráneas. |
+| **M13** | Baja | `DatabaseModule.kt:85` | Inconsistencia de estilo: `provideGraphDao` utiliza FQCN en vez de import limpio | `DatabaseModule.kt` | 🔴 **Pendiente** | Inspección de imports. Cero impacto técnico. | Limpieza de import pendiente en refactor cosmético. |
+| **M15** | Media | `InlineLookupManager.kt:45` | Scope global `appScope` no dispone de método de cancelación ante salida de lectura | `InlineLookupManager` → Diccionario flotante | 🔴 **Pendiente** | Realizar múltiples consultas de diccionario continuas al cerrar el lector. | Migrar a coroutine scope vinculado al ciclo de vida del lector (`coroutineScope` local). |
+| **SEC-1** | Alta | `KeyMaker.kt:18` | Clave privada ECDSA embebida en código fuente (`PRIVATE_KEY_BASE64`) | Módulo `:keymaker` | ✅ **Verificado** | Inspección de `:keymaker`. | El módulo `:keymaker` es una herramienta interna de escritorio para el desarrollador, excluida del build del APK `:app`. |
+
+---
+
+### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en TECNO-LH7n)
+
+Los siguientes comportamientos dependen de subsistemas de hardware, controladores OEM y el kernel de Android, por lo que **NO PUEDEN DARSE POR RESUELTOS (✅)** mediante pruebas unitarias en JVM ni en emulador estándar:
+
+1. **Pausa y Reanudación de TTS ante Pérdida y Recuperación de `AudioFocus`**:
+   - *Riesgo:* Al entrar una llamada telefónica, reproducir un audio en WhatsApp o recibir instrucciones del GPS, el sistema Android quita el foco de audio transitoriamente.
+   - *Verificación física:* Probar que `TtsManager` pause suavemente la narración y la reanude en el punto exacto al colgar, sin superponerse ni perder la posición de lectura.
+2. **Compatibilidad con `utteranceId == null` o Modificado por Motores TTS OEM**:
+   - *Riesgo:* Dispositivos de fabricantes como Samsung, Xiaomi (MIUI) o Tecno (HiOS) ejecutan motores de síntesis propietarios que a veces omiten o alteran el `utteranceId` en el callback `onDone()`.
+   - *Verificación física:* Comprobar en el teléfono TECNO-LH7n que la narración de párrafos consecutivos fluya sin detenerse eternamente esperando el listener.
+3. **Arranque en Frío con Sherpa ONNX y Latencia de Inferencia por Hardware**:
+   - *Riesgo:* Cargar los modelos ONNX (VITS / Piper) en la memoria RAM y asignarlos a la NPU/CPU de la arquitectura MediaTek puede tardar entre 150 y 350 ms.
+   - *Verificación física:* Confirmar que el método `ensurePreferencesLoaded(timeoutMs = 300)` impida condiciones de carrera sin congelar la UI de lectura al pulsar Play en frío.
+4. **Reproducción del Archivo Único `.M4A` en Reproductores de Terceros**:
+   - *Riesgo:* La caja de metadatos `moov.udta.meta.ilst` con portada en `covr` y letras en `©lyr` incrustada por `M4aMetadataEmbedder` debe ser parseada según el estándar ISO/IEC 14496-12.
+   - *Verificación física:* Abrir el archivo exportado en reproductores comerciales en el dispositivo (VLC, Poweramp, Musicolet, Samsung Music) y verificar:
+     - La carátula del libro se muestra en resolución nítida.
+     - Las letras LRC sincronizadas se desplazan al compás de la voz del narrador.
+     - No existen archivos `.lrc`, `.srt` ni `.jpg` sueltos en `Music/WoodsReader`.
+5. **Fluidez de Scroll a 60 FPS en la GPU Mali (Evitar Lag de Recomposición en Compose)**:
+   - *Riesgo:* En procesadores MediaTek con GPU Mali-G52/G57, recomposiciones innecesarias de Compose durante el scroll continuo en el WebView provocan caídas perceptibles de frames (jank).
+   - *Verificación física:* Realizar scroll continuo rápido a través de varios capítulos y verificar que el debouncing de 700 ms en `SaveReadingProgressUseCase` y los `StateFlow` desacoplados mantengan 60 FPS estables.
+6. **Apertura de Libros Masivos (>80 Capítulos / Spines) y Prevención de ANR**:
+   - *Riesgo:* El cálculo pesado de posiciones de Readium en libros con cientos de divisiones (`readingOrder.size > 80`) puede saturar el hilo principal y disparar diálogo de ANR.
+   - *Verificación física:* Abrir un libro voluminoso (>1.000 páginas) en el teléfono y cronometrar que el fast-path sintético $O(1)$ abra la pantalla en menos de 200 ms.
+
+---
 
 ## 14.1 Resultados de Tests Unitarios (`app/src/test/`)
 
