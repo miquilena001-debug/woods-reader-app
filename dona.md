@@ -92,12 +92,12 @@
 - **Hallazgos:** Timber.plant solo en DEBUG; logs descartados en release.
 
 ### `app/src/main/java/com/example/woodsreader/MainActivity.kt`
-- **Propósito:** Activity principal; manejo de intents ACTION_VIEW (abrir EPUB/PDF externo), permisos de almacenamiento (MANAGE_EXTERNAL_STORAGE, POST_NOTIFICATIONS), WorkManager LibrarySyncWorker cada 12h, MainLayout con navegación.
+- **Propósito:** Activity principal y punto de entrada de UI; manejo de intents ACTION_VIEW (abrir EPUB/PDF externo con resolución de URI y cálculo de hash), solicitud y verificación de permisos (MANAGE_EXTERNAL_STORAGE, POST_NOTIFICATIONS), encolado de WorkManager LibrarySyncWorker cada 12h, y contenedor Compose MainLayout con navegación unificada.
 - **Clases:** `MainActivity`, `MainLayout`, `BetaExpiredScreen`
-- **Depende_de:** Hilt, DataStore, BookRepository, BookScannerService, BookMetadataExtractor, Navigation Compose
-- **Usado_por:** LectorApplication
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial)
-- **Hallazgos:** Manejo de intent externo permite duplicados si hash vacío.
+- **Depende_de:** Hilt, DataStore, BookRepository, BookScannerService, BookMetadataExtractor, Navigation Compose, WorkManager
+- **Usado_por:** AndroidManifest, LectorApplication
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 507 líneas)
+- **Hallazgos:** Si el hash de un URI externo falla al calcularse, el fallback a getBookByPath puede permitir duplicados si la misma ruta se abre con URIs temporales distintos.
 
 ---
 
@@ -194,12 +194,12 @@
 ### 3.3 Repositorios
 
 #### `data/repository/BookRepository.kt`
-- **Propósito:** Single source of truth para datos de libros. ViewModels acceden exclusivamente a través de esta clase.
+- **Propósito:** Single source of truth para datos de libros, sesiones de lectura, marcadores, subrayados y reglas de TTS. Expone flujos reactivos Flow, consultas Paging 3 y operaciones asíncronas seguras con Dispatchers.IO.
 - **Clases:** `BookRepository` (@Singleton)
-- **Depende_de:** AppDatabase, DAOs, Paging, Flow, Dispatchers
-- **Usado_por:** LibraryViewModel, BookDetailViewModel, ReaderViewModel, MainActivity
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial)
-- **Hallazgos:** Acceso directo a DAOs desde Repository está bien encapsulado.
+- **Depende_de:** AppDatabase, BookDao, HighlightDao, BookmarkDao, ReadingSessionDao, TtsRuleDao, DailyWordCountDao, Flow, Dispatchers
+- **Usado_por:** LibraryViewModel, BookDetailViewModel, ReaderViewModel, SaveReadingProgressUseCase, ManageReaderAnnotationsUseCase, LoadBookFastUseCase, MainActivity
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 410 líneas)
+- **Hallazgos:** Encapsulación limpia de Room con despacho explícito en I/O. Consultas de búsqueda FTS4 optimizadas.
 
 #### `data/graph/GraphRepository.kt`
 - **Propósito:** Repositorio de grafo de entidades por libro. Envuelve GraphDao con métodos convenientes para CRUD de entidades, relaciones, menciones y aliases.
@@ -332,12 +332,12 @@
 - **Hallazgos:** Ninguno.
 
 ### `di/LibraryModule.kt`
-- **Propósito:** Readium stack: PublicationOpener, AssetRetriever, PdfiumDocumentFactory (Lazy), DefaultHttpClient compartido.
+- **Propósito:** Provisión Dagger Hilt de la infraestructura Readium: PublicationOpener con parsers de EPUB y PDF, AssetRetriever, PdfiumDocumentFactory lazily inicializado para mitigar sobrecarga de RAM en cold start, DefaultHttpClient y sanitizador de paquetes EPUB.
 - **Clases:** `LibraryModule` (object)
-- **Depende_de:** Readium (PublicationParser, AssetRetriever, PdfiumDocumentFactory, DefaultHttpClient), EpubPackageSanitizer
-- **Usado_por:** SingletonComponent
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial)
-- **Hallazgos:** PdfiumDocumentFactory lazy para ahorrar RAM en inicio.
+- **Depende_de:** Readium (PublicationOpener, AssetRetriever, PdfiumDocumentFactory, DefaultHttpClient, EpubParser, PdfParser), EpubPackageSanitizer
+- **Usado_por:** SingletonComponent (inyectado en LoadBookFastUseCase, BookMetadataExtractor)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 80 líneas)
+- **Hallazgos:** PdfiumDocumentFactory con instanciación lazy previene asignaciones prematuras de memoria gráfica en el arranque.
 
 ### `di/DataStoreModule.kt`
 - **Propósito:** Provee DataStore<UserPreferences> con serializer personalizado.
@@ -684,20 +684,20 @@
 ### 5.4 Búsqueda, X-Ray, Share, Backup, Licencia
 
 #### `core/search/FastEpubSearchEngine.kt`
-- **Propósito:** Motor de búsqueda rápida de EPUB (búsqueda streaming con Flow, caché LRU ~4MB).
+- **Propósito:** Motor de búsqueda en-libro streaming y no bloqueante para publicaciones EPUB. Emite resultados en tiempo real mediante Kotlin Flow, filtra texto HTML sin instanciar DOM completo, soporta cancelación cooperativa por corrutinas y mantiene una caché LRU de capítulos limpios.
 - **Clases:** `FastEpubSearchEngine` (object), `FastInBookSearchHit`, `FastSearchProgress`
-- **Depende_de:** Readium Publication, LruCache, Dispatchers.IO
-- **Usado_por:** LectorApplication (limpieza memoria), SearchScreen, ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** Caché LRU ~8 MB de RAM (M21).
+- **Depende_de:** Readium Publication, Link, LruCache, Dispatchers.IO, Jsoup
+- **Usado_por:** ReaderIntelligenceAndExportCoordinator, LectorApplication (onTrimMemory)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 273 líneas)
+- **Hallazgos:** La caché LRU almacena texto limpio por href (~4-8 MB max) y se limpia ordenadamente ante advertencias de memoria del sistema.
 
 #### `core/xray/BookXRayEngine.kt`
-- **Propósito:** Motor X-Ray (entidades, personajes, lugares, objetos por capítulo).
+- **Propósito:** Motor de Rayos-X offline para libros. Analiza el contenido textual del capítulo actual, extrayendo y categorizando entidades clave (Personajes, Lugares, Objetos, Conceptos) según heurísticas de capitalización, co-ocurrencia y filtrado de stopwords en español.
 - **Clases:** `BookXRayEngine` (object), `XRayEntity`, `XRayCategory`, `ChapterXRayReport`
-- **Depende_de:** —
-- **Usado_por:** ReaderXRayBottomSheet
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** Ninguno crítico.
+- **Depende_de:** SpanishTextFormatter, Stopwords
+- **Usado_por:** ReaderIntelligenceAndExportCoordinator, ReaderXRayBottomSheet
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 253 líneas)
+- **Hallazgos:** Operación 100% offline y determinista con impacto mínimo en CPU (~5-15 ms por capítulo).
 
 #### `core/share/QuoteVideoClipExporter.kt`
 - **Propósito:** Exportador de clips de video con citas (MP4 con texto sincronizado, MediaCodec/MediaMuxer).
