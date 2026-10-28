@@ -164,15 +164,26 @@ class ReaderViewModel @Inject constructor(
         private const val MAX_CACHED_REFLOW_PAGES = 50
         private const val MAX_CACHED_CHAPTERS = 5
 
+        /** Factor empírico (minutos por posición de recurso) para estimar el tiempo restante de lectura del capítulo (~0.8 min/posición). */
+        private const val RESOURCE_POSITION_MINUTES_FACTOR = 0.8
+
+        /** Velocidad de lectura predeterminada en palabras por minuto (WPM) para estimaciones de progreso en TTS y fallback. */
+        private const val DEFAULT_READING_WPM = 200
+
+        private val PDF_PAGE_PARAM_REGEX = Regex("""(?i)[#?&]page=(\d+)""")
+        private val PDF_PAGE_PATH_REGEX = Regex("""(?i)/page[_-]?(\d+)""")
+        private val PDF_PAGE_HASH_REGEX = Regex("""#(\d+)$""")
+        private val PDF_PAGE_NUMERIC_REGEX = Regex("""^/?(\d+)$""")
+
         fun extractPdfPagesFromToc(toc: List<Link>): List<Int> {
             val pages = mutableListOf<Int>()
             fun traverse(links: List<Link>) {
                 for (link in links) {
                     val href = link.href.toString()
-                    val page = Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: Regex("""(?i)/page[_-]?(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: Regex("""#(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                        ?: Regex("""^/?(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                    val page = PDF_PAGE_PARAM_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: PDF_PAGE_PATH_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: PDF_PAGE_HASH_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: PDF_PAGE_NUMERIC_REGEX.find(href)?.groupValues?.get(1)?.toIntOrNull()
                     if (page != null && page > 0) {
                         pages.add(page)
                     }
@@ -1052,16 +1063,9 @@ class ReaderViewModel @Inject constructor(
 
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Progress ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
 
-    private fun onTtsLocatorChanged(locator: Locator) {
-        if (_showEpubCoverPage.value) return
-        currentBookmarkLocator = locator
-        val locJson = saveReadingProgressUseCase.serializeLocator(locator)
-        lastSavedLocatorJson = locJson
-        saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
-        updateChapterMetadata(locator)
+    private fun updateReadingStats(locator: Locator, activeWpm: Int) {
         val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
         val totalProgression = locator.locations.totalProgression ?: 0.0
-        val activeWpm = 200
         _bookTimeRemaining.value = calculateReadingStatsUseCase.calculateBookTimeRemaining(
             totalWords = totalWords,
             totalProgression = totalProgression,
@@ -1086,6 +1090,16 @@ class ReaderViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun onTtsLocatorChanged(locator: Locator) {
+        if (_showEpubCoverPage.value) return
+        currentBookmarkLocator = locator
+        val locJson = saveReadingProgressUseCase.serializeLocator(locator)
+        lastSavedLocatorJson = locJson
+        saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
+        updateChapterMetadata(locator)
+        updateReadingStats(locator, DEFAULT_READING_WPM)
 
         saveReadingProgressUseCase.saveTtsProgressDebounced(
             scope = viewModelScope,
@@ -1185,37 +1199,11 @@ class ReaderViewModel @Inject constructor(
         }
 
         // Calculate WPM & Time remaining estimates
-        val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
         val activeWpm = calculateReadingStatsUseCase.calculateActiveWpm(
             sessionStartTimeMs = readingSessionManager.sessionStartTime,
             wordsProcessed = readingSessionManager.wordsProcessed.value
         )
-
-        val totalProgression = locator.locations.totalProgression ?: 0.0
-        _bookTimeRemaining.value = calculateReadingStatsUseCase.calculateBookTimeRemaining(
-            totalWords = totalWords,
-            totalProgression = totalProgression,
-            activeWpm = activeWpm
-        )
-
-        if (totalPositions > 0) {
-            val pub = publication
-            if (pub != null) {
-                val resourceIndex = resourceIndexCache?.get(locator.href.toString()) 
-                    ?: pub.readingOrder.indexOfFirst { it.href.toString() == locator.href.toString() }
-                val chapterStats = calculateReadingStatsUseCase.calculateChapterProgress(
-                    locatorProgression = locator.locations.progression ?: 0.0,
-                    resourceIndex = resourceIndex,
-                    positionsByResource = positionsByResource,
-                    totalPositions = totalPositions,
-                    activeWpm = activeWpm
-                )
-                if (chapterStats != null) {
-                    _chapterTimeRemaining.value = chapterStats.chapterTimeRemaining
-                    _globalProgress.value = chapterStats.globalProgress
-                }
-            }
-        }
+        updateReadingStats(locator, activeWpm)
 
         updateChapterMetadata(locator)
 
@@ -1346,46 +1334,57 @@ class ReaderViewModel @Inject constructor(
         return null
     }
 
+    enum class ChapterDirection { NEXT, PREVIOUS }
+
+    private fun navigatePdfChapter(navigator: Navigator?, direction: ChapterDirection): Boolean {
+        val pub = publication ?: return false
+        val toc = pub.tableOfContents
+        if (toc.isEmpty()) return false
+
+        val currentPage = if (isReflowMode.value) {
+            lastKnownReflowPage.takeIf { it > 0 } 
+                ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
+                ?: 1
+        } else {
+            val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
+            lastKnownReflowPage = visualPage
+            visualPage.takeIf { it > 0 } ?: 1
+        }
+        val targetPage = when (direction) {
+            ChapterDirection.NEXT -> resolveNextPdfPageFromToc(toc, currentPage)
+            ChapterDirection.PREVIOUS -> resolvePreviousPdfPageFromToc(toc, currentPage)
+        }
+
+        if (targetPage != null) {
+            if (isReflowMode.value) {
+                jumpToReflowPage(targetPage)
+                if (ttsState.value == TtsState.PLAYING) {
+                    getLocatorForPdfPage(targetPage)?.let(::playTts)
+                }
+            } else {
+                val nav = (navigator ?: this.navigator) as? VisualNavigator
+                val readingOrderLink = pub.readingOrder.firstOrNull()
+                val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
+                    ?.copy(locations = Locator.Locations(position = targetPage))
+                if (targetLoc != null) {
+                    nav?.go(targetLoc, animated = false)
+                    if (ttsState.value == TtsState.PLAYING) {
+                        playTts(targetLoc)
+                    } else {
+                        _lastTtsLocator.value = targetLoc
+                    }
+                }
+            }
+            return true
+        }
+        return false
+    }
+
     fun goToNextChapter(navigator: Navigator?) {
         val pub = publication ?: return
 
         if (isPdfBook || isReflowMode.value) {
-            val toc = pub.tableOfContents
-            if (toc.isNotEmpty()) {
-                val currentPage = if (isReflowMode.value) {
-                    lastKnownReflowPage.takeIf { it > 0 } 
-                        ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
-                        ?: 1
-                } else {
-                    val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
-                    lastKnownReflowPage = visualPage
-                    visualPage.takeIf { it > 0 } ?: 1
-                }
-                val targetPage = resolveNextPdfPageFromToc(toc, currentPage)
-
-                if (targetPage != null) {
-                    if (isReflowMode.value) {
-                        jumpToReflowPage(targetPage)
-                        if (ttsState.value == TtsState.PLAYING) {
-                            getLocatorForPdfPage(targetPage)?.let(::playTts)
-                        }
-                    } else {
-                        val nav = (navigator ?: this.navigator) as? VisualNavigator
-                        val readingOrderLink = pub.readingOrder.firstOrNull()
-                        val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
-                            ?.copy(locations = Locator.Locations(position = targetPage))
-                        if (targetLoc != null) {
-                            nav?.go(targetLoc, animated = false)
-                            if (ttsState.value == TtsState.PLAYING) {
-                                playTts(targetLoc)
-                            } else {
-                                _lastTtsLocator.value = targetLoc
-                            }
-                        }
-                    }
-                    return
-                }
-            }
+            navigatePdfChapter(navigator, ChapterDirection.NEXT)
             return
         }
 
@@ -1464,42 +1463,7 @@ class ReaderViewModel @Inject constructor(
         val pub = publication ?: return
 
         if (isPdfBook || isReflowMode.value) {
-            val toc = pub.tableOfContents
-            if (toc.isNotEmpty()) {
-                val currentPage = if (isReflowMode.value) {
-                    lastKnownReflowPage.takeIf { it > 0 } 
-                        ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
-                        ?: 1
-                } else {
-                    val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
-                    lastKnownReflowPage = visualPage
-                    visualPage.takeIf { it > 0 } ?: 1
-                }
-                val targetPage = resolvePreviousPdfPageFromToc(toc, currentPage)
-
-                if (targetPage != null) {
-                    if (isReflowMode.value) {
-                        jumpToReflowPage(targetPage)
-                        if (ttsState.value == TtsState.PLAYING) {
-                            getLocatorForPdfPage(targetPage)?.let(::playTts)
-                        }
-                    } else {
-                        val nav = (navigator ?: this.navigator) as? VisualNavigator
-                        val readingOrderLink = pub.readingOrder.firstOrNull()
-                        val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
-                            ?.copy(locations = Locator.Locations(position = targetPage))
-                        if (targetLoc != null) {
-                            nav?.go(targetLoc, animated = false)
-                            if (ttsState.value == TtsState.PLAYING) {
-                                playTts(targetLoc)
-                            } else {
-                                _lastTtsLocator.value = targetLoc
-                            }
-                        }
-                    }
-                    return
-                }
-            }
+            navigatePdfChapter(navigator, ChapterDirection.PREVIOUS)
             return
         }
 
@@ -1749,19 +1713,31 @@ class ReaderViewModel @Inject constructor(
         return null
     }
 
+    private fun getReadableReflowItems(elements: List<ReflowItem>): List<ReflowItem> {
+        return elements.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
+    }
+
+    private fun calculateReadableReflowIndex(
+        elements: List<ReflowItem>,
+        readableItems: List<ReflowItem>,
+        elementIndex: Int
+    ): Int {
+        val boundedIdx = elementIndex.coerceIn(0, (elements.size - 1).coerceAtLeast(0))
+        val visibleItem = elements.getOrNull(boundedIdx)
+        return if (visibleItem != null && visibleItem in readableItems) {
+            readableItems.indexOf(visibleItem)
+        } else {
+            elements.drop(boundedIdx).firstNotNullOfOrNull { item ->
+                readableItems.indexOf(item).takeIf { it >= 0 }
+            } ?: 0
+        }
+    }
+
     fun onPlay() {
         if (isReflowMode.value) {
             val elements = pdfReflowManager.reflowState.value.items
-            val readableItems = elements.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
-            val currentIdx = lastReflowScrollIndex
-            val visibleItem = elements.getOrNull(currentIdx)
-            val startIndex = if (visibleItem != null && visibleItem in readableItems) {
-                readableItems.indexOf(visibleItem)
-            } else {
-                elements.drop(currentIdx).firstNotNullOfOrNull { item ->
-                    readableItems.indexOf(item).takeIf { it >= 0 }
-                } ?: 0
-            }
+            val readableItems = getReadableReflowItems(elements)
+            val startIndex = calculateReadableReflowIndex(elements, readableItems, lastReflowScrollIndex)
 
             viewModelScope.launch {
                 pdfReflowManager.playReflowTts(
@@ -1829,16 +1805,12 @@ class ReaderViewModel @Inject constructor(
             pdfReflowManager.stopReflowTts()
             viewModelScope.launch {
                 val targetPage = locator.locations.position ?: lastKnownReflowPage.coerceAtLeast(1)
-                var readable = pdfReflowManager.reflowState.value.items.filter {
-                    it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text
-                }
+                var readable = getReadableReflowItems(pdfReflowManager.reflowState.value.items)
                 var targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }
 
                 if (targetIndex == -1) {
                     pdfReflowManager.loadReflowPages(fromPage = targetPage, isInitial = true)
-                    readable = pdfReflowManager.reflowState.value.items.filter {
-                        it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text
-                    }
+                    readable = getReadableReflowItems(pdfReflowManager.reflowState.value.items)
                     targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }.coerceAtLeast(0)
                 }
 
@@ -1928,16 +1900,8 @@ class ReaderViewModel @Inject constructor(
 
         if (isReflowMode.value || isPdfBook) {
             val elements = pdfReflowManager.reflowElements.value
-            val readableItems = elements.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
-            val currentIdx = lastReflowScrollIndex.coerceIn(0, (elements.size - 1).coerceAtLeast(0))
-            val visibleItem = elements.getOrNull(currentIdx)
-            val visibleReadableIdx = if (visibleItem != null && visibleItem in readableItems) {
-                readableItems.indexOf(visibleItem)
-            } else {
-                elements.drop(currentIdx).firstNotNullOfOrNull { item ->
-                    readableItems.indexOf(item).takeIf { it >= 0 }
-                } ?: 0
-            }
+            val readableItems = getReadableReflowItems(elements)
+            val visibleReadableIdx = calculateReadableReflowIndex(elements, readableItems, lastReflowScrollIndex)
 
             // Si el usuario se desplazó por la pantalla mientras estaba en pausa, reanudar desde lo que está viendo ahora
             val targetStartIndex = if (userScrolledSinceTtsPause || ttsPausedAtIndex == null) {
@@ -2068,15 +2032,8 @@ class ReaderViewModel @Inject constructor(
 
         // Solo actualizar el índice TTS pasivo cuando el scroll se detiene para evitar jank/congelamientos a 60-90fps
         if (!isScrolling && !pdfReflowManager.getIsReflowTtsRunning() && elements.isNotEmpty()) {
-            val readableItems = elements.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
-            val visibleItem = elements.getOrNull(firstVisibleItemIndex)
-            val readableIdx = if (visibleItem != null && visibleItem in readableItems) {
-                readableItems.indexOf(visibleItem)
-            } else {
-                elements.drop(firstVisibleItemIndex).firstNotNullOfOrNull { item ->
-                    readableItems.indexOf(item).takeIf { it >= 0 }
-                } ?: 0
-            }
+            val readableItems = getReadableReflowItems(elements)
+            val readableIdx = calculateReadableReflowIndex(elements, readableItems, firstVisibleItemIndex)
             if (readableIdx >= 0) {
                 pdfReflowManager.setTtsActiveBlockIndex(readableIdx)
             }
@@ -2259,7 +2216,7 @@ class ReaderViewModel @Inject constructor(
             val currentPosInResource = (locator.locations.progression ?: 0.0) * resourcePositions.size
             val remainingInResource = resourcePositions.size - currentPosInResource
 
-            timeRemaining = (remainingInResource * 0.8).toInt().coerceAtLeast(1)
+            timeRemaining = (remainingInResource * RESOURCE_POSITION_MINUTES_FACTOR).toInt().coerceAtLeast(1)
         }
 
         val resolvedTitle = locator.title?.takeIf { it.isNotBlank() }
