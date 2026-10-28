@@ -609,12 +609,12 @@
 - **Hallazgos:** Ninguno.
 
 #### `core/managers/PdfReflowManager.kt`
-- **Propósito:** Gestor de reflujo PDF. Deduplicación de páginas, ruido global, extracción de imágenes, carga en background con timeouts.
-- **Clases:** `PdfReflowManager` (@Singleton)
-- **Depende_de:** TtsManager, ReadingPipeline, NoiseClassifier, TtsRuleDao, PDFBox, Readium
-- **Usado_por:** ReaderViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-500)
-- **Hallazgos:** `_ttsNarrationUnits` sin evict de páginas lejanas (M8).
+- **Propósito:** Gestor de extracción semántica y reflujo dinámico de documentos PDF. Transforma páginas PDF fijas en bloques continuos `ReflowItem` (párrafos, títulos, listas, imágenes), deduplica encabezados y pies de página mediante `NoiseClassifier` y genera `NarrationUnit` para TTS sincronizado.
+- **Clases:** `PdfReflowManager` (@Singleton), `PdfPageExtractionState`
+- **Depende_de:** TtsManager, NoiseClassifier, TextAnalyzer, SpanishTextFormatter, Readium, Dispatchers.Default
+- **Usado_por:** ReaderViewModel, ReaderReflowOverlay
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 773 líneas)
+- **Hallazgos:** La extracción de bloques semánticos procesa en ventanas alrededor de la página actual para conservar memoria en dispositivos con bajo límite de heap.
 
 #### `core/managers/BackupManager.kt`
 - **Propósito:** Gestor de respaldo completo (JSON con kotlinx.serialization, merge inteligente por hash).
@@ -834,20 +834,20 @@
 ## 6. Servicios y Workers en Segundo Plano
 
 ### `service/ReaderTtsService.kt`
-- **Propósito:** Servicio de TTS en primer plano, MediaSession, navegador de audio, controles Bluetooth.
-- **Clases:** `ReaderTtsService`, `TtsBinder`, `TtsSessionCallback`
-- **Depende_de:** Media3, TtsManager, SherpaTtsEngine, Notification, Readium
-- **Usado_por:** MainActivity, EpubFormatManager
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-570)
-- **Hallazgos:** **A6:** Si `createNavigator` falla, servicio termina sin notificar error al ViewModel.
+- **Propósito:** Servicio en primer plano (Foreground Service) para reproducción continua de TTS con pantalla apagada. Gestiona la MediaSessionCompat, la notificación persistente multimedia con botones de play/pause/avance/retroceso, y el receptor de comandos Bluetooth AVRCP para auriculares inalámbricos.
+- **Clases:** `ReaderTtsService`, `TtsBinder`, `TtsMediaSessionCallback`
+- **Depende_de:** MediaSessionCompat, TtsManager, NotificationManagerCompat, TtsMediaNotificationProvider, WoodsKeepAliveManager
+- **Usado_por:** AndroidManifest, ReaderViewModel, MainActivity
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 855 líneas)
+- **Hallazgos:** Vinculado con WoodsKeepAliveManager para evitar que el sistema mate el proceso de audio en segundo plano mediante Doze o LMKD.
 
 ### `service/BookScannerService.kt`
-- **Propósito:** Servicio de escaneo de biblioteca (3 fases: quick scan, deep enrich, orphan cleanup). Semáforo de concurrencia, batches de 100, circuit breaker.
-- **Clases:** `BookScannerService` (@Singleton), `ScanStats`
-- **Depende_de:** MediaStore, File I/O, Room, BookRepository, BookMetadataExtractor
-- **Usado_por:** LibraryViewModel, MainActivity
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-500)
-- **Hallazgos:**
+- **Propósito:** Servicio de indexación y escaneo de libros en almacenamiento local en 3 fases coordinadas: escaneo rápido de MediaStore, rastreo profundo en árbol de carpetas con semáforo de concurrencia (max 3 hilos I/O), extracción asíncrona de metadatos y portadas, y purga atómica de libros huérfanos.
+- **Clases:** `BookScannerService` (@Singleton), `ScanPhase`, `ScanProgress`, `ScanStats`
+- **Depende_de:** MediaStore, BookRepository, BookMetadataExtractor, CoverExtractor, Dispatchers.IO
+- **Usado_por:** LibraryViewModel, MainActivity, LibrarySyncWorker
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 861 líneas)
+- **Hallazgos:** Implementa circuit-breaker de 15 segundos por libro dañado para evitar que archivos corruptos bloqueen el escaneo general de la biblioteca.
   - **M6:** `deepEnrich` usa `HashSet` en memoria (se pierde al reiniciar).
   - **M7:** `cleanupOrphanedBooks` asume `content://` como accesible sin verificar.
 
@@ -956,12 +956,12 @@
 ### 7.2 Pantallas Principales
 
 #### `ui/library/LibraryScreen.kt`
-- **Propósito:** Biblioteca de libros, lista paginada, búsqueda FTS, continuar leyendo, diálogo Web-to-EPUB.
-- **Clases:** `LibraryScreen`
-- **Depende_de:** Compose, Paging, Coil3, BookRepository, WebToEpubImporterDialog
+- **Propósito:** Pantalla principal de la biblioteca: lista y cuadrícula adaptativa de libros con Paging 3, tarjeta hero "Continuar Leyendo", botón flotante para escaneo rápido, menús contextuales por libro (eliminar, editar, exportar audio .m4a), y disparadores para importación web y traducciones Calibre.
+- **Clases:** `LibraryScreen` (@Composable)
+- **Depende_de:** Compose, Paging 3, Coil3, LibraryViewModel, LibraryHeader, ContinueReadingHero, BookOptionsBottomSheet
 - **Usado_por:** NavGraph
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Mojibake en comentarios (líneas 63-65).
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 776 líneas)
+- **Hallazgos:** Mojibake residual en comentarios descriptivos (C11). Muestra estados vacíos intuitivos cuando no hay libros indexados.
 
 #### `ui/library/LibraryViewModel.kt`
 - **Propósito:** ViewModel de biblioteca, watchers de rutas, enriquecimiento de portadas, escaneo, filtros.
@@ -972,12 +972,12 @@
 - **Hallazgos:** **A9:** `takePersistableUriPermission` sin verificación de resultado.
 
 #### `ui/library/LibraryHeader.kt`
-- **Propósito:** Cabecera de biblioteca (título, badges, botones de acción).
-- **Clases:** `LibraryHeader`
-- **Depende_de:** Compose
+- **Propósito:** Componente Compose para la cabecera superior de la biblioteca: título "Woods Reader", badge de versión de la aplicación, selector de modo de ordenamiento (recientes, título, progreso), y barra de búsqueda colapsable con animación.
+- **Clases:** `LibraryHeader` (@Composable)
+- **Depende_de:** Jetpack Compose, Material3, UserPreferences
 - **Usado_por:** LibraryScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 217 líneas)
+- **Hallazgos:** Interfaz limpia sin acoplamiento a ViewModels; recibe lambdas de callback puras.
 
 #### `ui/library/LibraryComponents.kt`
 - **Propósito:** Componentes visuales de biblioteca (tarjetas de libro, esqueleto, estado vacío, tarjeta de estadísticas de escaneo, historial reciente, barra de navegación inferior).
