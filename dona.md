@@ -72,12 +72,12 @@
 - **Hallazgos:** Ninguno.
 
 ### `dona.md` (este archivo)
-- **Propósito:** Índice atómico completo y mapa de arquitectura de todos los archivos fuente del proyecto.
+- **Propósito:** Índice atómico completo, mapa de arquitectura y documento ancla de ingeniería de todos los archivos fuente del proyecto.
 - **Clases:** —
 - **Depende_de:** —
 - **Usado_por:** Asistentes de IA y desarrolladores
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 100% sincronizado)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 100% sincronizado al commit de referencia con verificación estricta de disco)
+- **Hallazgos:** Documento maestro inmutable sin dependencias circulares.
 
 ---
 
@@ -104,12 +104,12 @@
 ## 2. Navegación (Compose Navigation)
 
 ### `app/src/main/java/com/example/woodsreader/ui/navigation/NavGraph.kt`
-- **Propósito:** sealed class `Screen` con todas las rutas (library, reader/{bookId}, book_detail/{bookId}, graph/{bookId}?chapterIndex, search, stats, settings, onboarding), `LectorNavHost` con transiciones compartidas.
+- **Propósito:** Definición de rutas sealed class `Screen` (library, reader/{bookId}, book_detail/{bookId}, graph/{bookId}?chapterIndex, candidates/{bookId}, search, stats, settings, onboarding) y grafo central `LectorNavHost` con animaciones de transición compartida (SharedTransitionLayout).
 - **Clases:** `Screen` (sealed), `LectorNavHost`
-- **Depende_de:** androidx.navigation.compose, Compose animations, todas las pantallas
+- **Depende_de:** androidx.navigation.compose, Compose animations, pantallas de UI
 - **Usado_por:** MainActivity
-- **Estado:** ✅ REVISADO_ATOMICAMENTE
-- **Hallazgos:** `bookId ?: ""` en GraphScreen puede pasar string vacío.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 206 líneas)
+- **Hallazgos:** C13 [RESUELTO]: El paso de `bookId ?: ""` en GraphScreen y CandidatesScreen podía crashear en ViewModels receptores; mitigado en commit 7ac5385 con SavedStateHandle seguro (.orEmpty()) y retorno temprano.
 
 ---
 
@@ -1743,10 +1743,7 @@
 
 ### Tests Instrumentados (`app/src/androidTest/`)
 
-| Archivo | Prueba de | Estado |
-|---------|-----------|--------|
-| `ExampleInstrumentedTest.kt` | Prueba básica instrumentada | ⏳ PENDIENTE |
-| `LibraryScreenE2ETest.kt` | LibraryScreen E2E | ⏳ PENDIENTE |
+*Los 2 archivos de prueba instrumentada de `app/src/androidTest/` se auditan y detallan en la [Sección 14.1](#141-resultados-de-tests-unitarios-appsrctest) como única fuente de verdad.*
 
 ---
 
@@ -1759,30 +1756,63 @@ Abrir archivo externo:
     → BookRepository.upsertBook (Room: books)
     → NavGraph.Screen.Reader.createRoute(bookId)
 
-Leer EPUB:
+Apertura y Carga del Lector (EPUB / PDF):
   ReaderViewModel.loadBook()
-    → EpubFormatManager (Readium Publication)
+    → LoadBookFastUseCase.invoke(book)
+        ├─ [readingOrder.size > 80]: Fast-Path Sintético O(1) de posiciones
+        └─ [readingOrder.size <= 80]: Parsing estándar de posiciones
+        → PublicationOpener.open (Readium Publication)
+        → Flattened TOC + Checkpoint de progreso resiliente (Prefs/Room fallback)
+    → EpubFormatManager / PdfReflowManager
     → ReadingPipeline.process (ReadingBlock[] + TtsNarrationUnit[])
-    → ReaderScreen (Compose UI)
+    → ReaderScreen (Compose UI con ReaderNavigatorContainer)
 
-Reproducir TTS:
+Persistencia de Progreso y Estadísticas de Lectura:
+  ReaderViewModel.onLocatorChanged / onTtsLocatorChanged
+    → SaveReadingProgressUseCase.invoke(bookId, locator)
+        ├─ Debounce reactivo de 700 ms para scroll manual continuo
+        ├─ flushReadingProgressImmediately() en ciclo ON_PAUSE / ON_STOP / cierre
+        ├─ ReadingProgressManager (Room: books.progression, locatorJson)
+        └─ ReadingSessionManager.recordSession (Room: reading_sessions, daily_word_counts)
+    → CalculateReadingStatsUseCase.invoke(book, locator)
+        → ReaderViewState (progreso 0..1, palabras y minutos restantes en tiempo real)
+
+Gestión de Anotaciones, Citas y Decoraciones:
+  ReaderViewModel.toggleBookmark / addHighlight / removeHighlight / exportNotes
+    → ManageReaderAnnotationsUseCase
+        ├─ BookRepository.toggleBookmark / addHighlight (Room: bookmarks, highlights)
+        ├─ Transformación a Readium Decoration (resaltados visuales y colores de tema)
+        └─ HighlightExporter / QuoteCardGenerator (Exportación Markdown / Citas)
+
+Inteligencia en-libro, Rayos-X y Exportación de Audio:
+  ReaderViewModel.search / generateXRay / exportChapterAudio
+    → ReaderIntelligenceAndExportCoordinator
+        ├─ FastEpubSearchEngine (Búsqueda streaming reactiva con Kotlin Flow)
+        ├─ BookXRayEngine (Reporte semántico de personajes, lugares y conceptos)
+        └─ ChapterAudioExporter.exportChapterAudio(...)
+            → Síntesis PCM con Sherpa ONNX o TTS nativo
+            → Codificación AAC a 128 kbps con MediaCodec en formato ISO MP4 (.m4a)
+            → M4aMetadataEmbedder (Incrustación binaria de portada covr y letras sincro ©lyr)
+            └─ Purga automática de residuos (.lrc, .srt, .jpg, .txt) -> 1 solo archivo .m4a limpio
+
+Reproducción TTS (Text-to-Speech) y Supervivencia en Segundo Plano:
   ReaderScreen / ReaderViewModel
-    → TtsManager (Sherpa ONNX offline o Android TTS nativo)
-    → SherpaTtsEngine (adaptador Readium)
-    → ReaderTtsService (foreground, MediaSession, notificación)
+    → TtsManager
+        ├─ ensurePreferencesLoaded() (Previene condición de carrera en cold-start)
+        ├─ SherpaTtsEngine / AudioTrack (Voz neural offline Piper/Kokoro)
+        ├─ Android TextToSpeech nativo (con UtteranceProgressListener desacoplado y blindado)
+        ├─ AmbientSoundscapePlayer (Auto-ducking de música y sonidos de bosque)
+        └─ SmartSleepTimerManager (Desvanecimiento suave al dormir)
+    → ReaderTtsService (Foreground Service, MediaSessionCompat, Lockscreen, AVRCP Bluetooth)
+    → WoodsKeepAliveManager (Protección contra LMKD y exención de optimización de batería)
 
-Persistir progreso:
-  ReaderViewModel.onTtsLocatorChanged / onLocatorChanged
-    → BookDao.updateProgressWithFallback (Room: books)
-    → ReadingSessionDao.insert (Room: reading_sessions)
-
-Buscar libros:
+Búsqueda global en biblioteca:
   BookRepository
     → BookDao.searchBooks (FTS4 books_fts)
     → o advancedSearchBooksRaw / advancedFilterBooksRaw
 
-Grafo de entidades:
-  GraphViewModel
+Grafo de entidades y candidatos:
+  GraphViewModel / CandidatesViewModel
     → GraphRepository
     → GraphDao (Room: graph_entity, graph_relation, graph_mention, graph_alias)
 ```
