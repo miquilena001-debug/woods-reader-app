@@ -1320,6 +1320,9 @@ fun ReaderScreen(
             onSkipPrev = { viewModel.skipReflowTtsBackward() },
             currentSpeed = currentSpeed,
             onSpeedChange = { viewModel.onSpeedChange(it) },
+            isAutoScrollActive = isAutoScrollActive,
+            autoScrollWpm = autoScrollWpm,
+            isAutoScrollPaused = isAutoScrollManuallyPaused || isTouchActiveState.value,
             onDismiss = { 
                 viewModel.pauseTts()
                 viewModel.toggleReflowMode()

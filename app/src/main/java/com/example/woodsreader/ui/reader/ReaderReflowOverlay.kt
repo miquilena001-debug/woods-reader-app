@@ -3,9 +3,11 @@ package com.example.woodsreader.ui.reader
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -77,11 +79,29 @@ fun ReaderReflowOverlay(
     onSkipPrev: () -> Unit = {},
     currentSpeed: Float = 1.0f,
     onSpeedChange: (Float) -> Unit = {},
+    isAutoScrollActive: Boolean = false,
+    autoScrollWpm: Int = 250,
+    isAutoScrollPaused: Boolean = false,
     onDismiss: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     val items = reflowState.items
     val coroutineScope = rememberCoroutineScope()
+
+    // Teleprompter WPM a 60 FPS en Modo Reflow
+    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollPaused, isVisible) {
+        if (!isAutoScrollActive || isAutoScrollPaused || !isVisible) return@LaunchedEffect
+        val pxPerSecond = (autoScrollWpm.toFloat() / 250f) * 45f
+        val intervalMs = 16L
+        val pxPerFrame = (pxPerSecond * intervalMs / 1000f).coerceAtLeast(0.5f)
+
+        while (isAutoScrollActive && !isAutoScrollPaused) {
+            kotlinx.coroutines.delay(intervalMs)
+            if (!listState.isScrollInProgress) {
+                listState.scrollBy(pxPerFrame)
+            }
+        }
+    }
 
     // Precalcular items legibles para O(1)
     val readableItems = remember(items) {
@@ -584,9 +604,18 @@ fun ParagraphItem(
             }
         } else textColor,
         style = textStyle,
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
+        modifier = if (isHighlighted && ttsHighlightStyle != TtsHighlightStyle.NONE) {
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF10B981).copy(alpha = if (isDarkTheme) 0.12f else 0.08f))
+                .border(1.dp, Color(0xFF10B981).copy(alpha = if (isDarkTheme) 0.35f else 0.25f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 6.dp, vertical = 4.dp)
+        } else {
+            modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp)
+        }
     )
 }
 

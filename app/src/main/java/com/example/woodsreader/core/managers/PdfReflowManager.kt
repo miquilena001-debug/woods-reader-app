@@ -33,6 +33,7 @@ import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
 import com.example.woodsreader.core.pipeline.NoiseClassifier
+import com.example.woodsreader.core.pdf.PdfCleanExtractorAndConverter
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -411,7 +412,10 @@ class PdfReflowManager @Inject constructor(
             // 4. Acumular unidades de narracion limpias para TTS (deduplicando por página)
             _ttsNarrationUnits.update { current ->
                 val filtered = current.filterNot { it.pageIndex == pageIndex }
-                filtered + processed.ttsNarrationUnits
+                val cleanTtsUnits = processed.ttsNarrationUnits.filterNot { unit ->
+                    PdfCleanExtractorAndConverter.isSpamTextLine(unit.textToSpeak)
+                }
+                filtered + cleanTtsUnits
             }
 
             // 5. Mapear ReadingBlock a ReflowItem para la UI con IDs estables
@@ -419,12 +423,20 @@ class PdfReflowManager @Inject constructor(
             for (block in processed.displayBlocks) {
                 val blockId = "p${pageIndex}_blk_${blockIdx++}"
                 when (block) {
-                    is ReadingBlock.Heading -> targetList.add(
-                        ReflowItem.Header(block.text, block.level, block.pageIndex, blockId)
-                    )
-                    is ReadingBlock.Paragraph -> targetList.add(
-                        ReflowItem.Paragraph(block.text, block.pageIndex, blockId)
-                    )
+                    is ReadingBlock.Heading -> {
+                        if (!PdfCleanExtractorAndConverter.isSpamTextLine(block.text)) {
+                            targetList.add(
+                                ReflowItem.Header(block.text, block.level, block.pageIndex, blockId)
+                            )
+                        }
+                    }
+                    is ReadingBlock.Paragraph -> {
+                        if (!PdfCleanExtractorAndConverter.isSpamTextLine(block.text)) {
+                            targetList.add(
+                                ReflowItem.Paragraph(block.text, block.pageIndex, blockId)
+                            )
+                        }
+                    }
                     is ReadingBlock.Image, is ReadingBlock.Noise -> {
                         // Imagenes se extraen por separado; ruido no llega aqui
                     }
@@ -490,6 +502,13 @@ class PdfReflowManager @Inject constructor(
 
             // Descartar iconos, separadores o imágenes diminutas (< 48x48) para no saturar memoria
             if (width < 48 || height < 48) {
+                sourceBitmap.recycle()
+                return null
+            }
+
+            // Filtro de proporción y micro-iconos (descarta banners de publicidad achatados o logos enanos)
+            val aspectRatio = width.toFloat() / height.toFloat()
+            if ((width < 140 && height < 140) || aspectRatio > 3.6f || aspectRatio < 0.22f) {
                 sourceBitmap.recycle()
                 return null
             }
