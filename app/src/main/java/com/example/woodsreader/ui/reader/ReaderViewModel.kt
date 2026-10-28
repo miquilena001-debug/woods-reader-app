@@ -9,6 +9,7 @@ import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
 import com.example.woodsreader.domain.reader.LoadBookFastUseCase
 import com.example.woodsreader.domain.reader.LoadBookResult
 import com.example.woodsreader.domain.reader.ManageReaderAnnotationsUseCase
+import com.example.woodsreader.domain.reader.ReaderIntelligenceAndExportCoordinator
 import android.content.Context
 import java.util.Locale
 
@@ -41,7 +42,6 @@ import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.TtsPresetCatalog
 import com.example.woodsreader.core.tts.TtsPresetPack
-import com.example.woodsreader.core.tts.ChapterAudioExporter
 import com.example.woodsreader.core.tts.SherpaVoiceOption
 import com.example.woodsreader.core.tts.PronunciationLexiconManager
 import com.example.woodsreader.core.tts.SupportedTtsLanguage
@@ -49,7 +49,6 @@ import com.example.woodsreader.core.tts.SleepTimerPreset
 import com.example.woodsreader.core.tts.EdgeNeuralTtsClient
 import com.example.woodsreader.core.tts.EdgeVoiceOption
 import com.example.woodsreader.core.tts.AmbientSoundscapePlayer
-import com.example.woodsreader.core.search.FastEpubSearchEngine
 import com.example.woodsreader.core.search.FastInBookSearchHit
 import com.example.woodsreader.core.search.FastSearchProgress
 import com.example.woodsreader.core.managers.PdfReflowManager
@@ -95,7 +94,6 @@ import org.readium.r2.shared.util.asset.AssetRetriever
 import android.util.LruCache
 import com.example.woodsreader.core.pipeline.ProcessedDocument
 import com.example.woodsreader.core.pipeline.ReadingBlock
-import com.example.woodsreader.core.xray.BookXRayEngine
 import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.core.license.ProLicenseManager
 
@@ -147,7 +145,7 @@ class ReaderViewModel @Inject constructor(
     private val ambienceEngine: ForestAmbienceEngine,
     private val coverExtractor: CoverExtractor,
     private val ttsPresetCatalog: TtsPresetCatalog,
-    private val chapterAudioExporter: ChapterAudioExporter,
+    private val readerIntelligenceAndExportCoordinator: ReaderIntelligenceAndExportCoordinator,
     private val edgeNeuralTtsClient: EdgeNeuralTtsClient,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     val proLicenseManager: ProLicenseManager,
@@ -380,7 +378,7 @@ class ReaderViewModel @Inject constructor(
     private val _currentTtsRange = MutableStateFlow<IntRange?>(null)
     val currentTtsRange = _currentTtsRange.asStateFlow()
 
-    val audioExportState = chapterAudioExporter.exportState
+    val audioExportState = readerIntelligenceAndExportCoordinator.audioExportState
     val selectedSherpaVoice = sherpaModelManager.selectedVoice
 
     fun isSherpaVoiceDownloaded(option: com.example.woodsreader.core.tts.SherpaVoiceOption): Boolean =
@@ -410,7 +408,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun resetAudioExportState() {
-        chapterAudioExporter.resetState()
+        readerIntelligenceAndExportCoordinator.resetAudioExportState()
     }
 
     fun speakSnippet(text: String) {
@@ -437,75 +435,47 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun cancelAudioExport() {
-        chapterAudioExporter.cancelExport()
+        readerIntelligenceAndExportCoordinator.cancelAudioExport()
     }
 
     fun exportAudioChapters(maxChaptersToExport: Int = 1) {
         val book = (_uiState.value as? ReaderUiState.Success)?.book ?: return
         val pub = publication ?: return
         val startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
-        val coverFile = book.coverCachePath?.takeIf { it.isNotBlank() }?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
-            ?: File(context.filesDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
-            ?: File(context.cacheDir, "covers/cover_${book.fileHash}.jpg").takeIf { it.exists() && it.length() > 0 }
+        val coverFile = readerIntelligenceAndExportCoordinator.resolveCoverFile(book, context)
 
-        val job = viewModelScope.launch {
-            if (isReflowMode.value || isPdfBook) {
-                val items = pdfReflowManager.reflowState.value.items.mapNotNull {
-                    when (it) {
-                        is ReflowItem.Paragraph -> it.content
-                        is ReflowItem.Header -> it.content
-                        else -> null
-                    }
+        if (isReflowMode.value || isPdfBook) {
+            readerIntelligenceAndExportCoordinator.exportReflowChapter(
+                scope = viewModelScope,
+                book = book,
+                chapterTitle = startChapTitle,
+                items = pdfReflowManager.reflowState.value.items,
+                speed = currentSpeed.value,
+                coverFile = coverFile
+            )
+        } else {
+            val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
+            readerIntelligenceAndExportCoordinator.exportEpubChapters(
+                scope = viewModelScope,
+                book = book,
+                readingOrder = pub.readingOrder,
+                currentHref = currentHref,
+                startChapTitle = startChapTitle,
+                maxChaptersToExport = maxChaptersToExport,
+                speed = currentSpeed.value,
+                coverFile = coverFile
+            ) { targetIdx, link ->
+                val cached = chapterLruCache.get(targetIdx)
+                val doc = cached?.document ?: epubFormatManager.processResource(link.href.toString(), book.id)
+                if (doc != null && cached == null) {
+                    val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
+                    chapterLruCache.put(targetIdx, ParsedChapterData(targetIdx, link.href.toString(), title, doc))
                 }
-                chapterAudioExporter.exportChaptersToM4a(
-                    bookTitle = book.title,
-                    exportLabel = startChapTitle,
-                    totalChaptersCount = 1,
-                    chapterProvider = { com.example.woodsreader.core.tts.ChapterTextChunk(startChapTitle, items) },
-                    speed = currentSpeed.value,
-                    coverImageFile = coverFile,
-                    bookAuthor = book.author
-                )
-            } else {
-                val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString()
-                    ?.substringBefore('#').orEmpty()
-                val startIdx = pub.readingOrder.indexOfFirst {
-                    it.href.toString().substringBefore('#') == currentHref ||
-                        it.href.toString().substringAfterLast('/') == currentHref.substringAfterLast('/')
-                }.coerceAtLeast(0)
-
-                val availableCount = (pub.readingOrder.size - startIdx).coerceAtLeast(1)
-                val countToExport = minOf(maxChaptersToExport, availableCount)
-                val label = when {
-                    countToExport == 1 -> startChapTitle
-                    countToExport >= pub.readingOrder.size -> "Libro_Completo"
-                    else -> "Caps_${startIdx + 1}_a_${startIdx + countToExport}"
-                }
-
-                chapterAudioExporter.exportChaptersToM4a(
-                    bookTitle = book.title,
-                    exportLabel = label,
-                    totalChaptersCount = countToExport,
-                    chapterProvider = { offset ->
-                        val targetIdx = startIdx + offset
-                        val link = pub.readingOrder.getOrNull(targetIdx) ?: return@exportChaptersToM4a null
-                        val cached = chapterLruCache.get(targetIdx)
-                        val doc = cached?.document ?: epubFormatManager.processResource(link.href.toString(), book.id)
-                        if (doc != null && cached == null) {
-                            val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
-                            chapterLruCache.put(targetIdx, ParsedChapterData(targetIdx, link.href.toString(), title, doc))
-                        }
-                        val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
-                        val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
-                        com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
-                    },
-                    speed = currentSpeed.value,
-                    coverImageFile = coverFile,
-                    bookAuthor = book.author
-                )
+                val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
+                val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
+                com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
             }
         }
-        chapterAudioExporter.setActiveJob(job)
     }
 
     fun exportCurrentChapterToAudio() = exportAudioChapters(1)
@@ -2390,15 +2360,9 @@ class ReaderViewModel @Inject constructor(
     }
 
     // ── Búsqueda En-Libro Streaming con Cero Bloqueo ─────────────────────────
-    private var inBookSearchJob: Job? = null
-    private val _inBookSearchResults = MutableStateFlow<List<FastInBookSearchHit>>(emptyList())
-    val inBookSearchResults: StateFlow<List<FastInBookSearchHit>> = _inBookSearchResults.asStateFlow()
-
-    private val _inBookSearchProgress = MutableStateFlow<FastSearchProgress?>(null)
-    val inBookSearchProgress: StateFlow<FastSearchProgress?> = _inBookSearchProgress.asStateFlow()
-
-    private val _isInBookSearching = MutableStateFlow(false)
-    val isInBookSearching: StateFlow<Boolean> = _isInBookSearching.asStateFlow()
+    val inBookSearchResults: StateFlow<List<FastInBookSearchHit>> = readerIntelligenceAndExportCoordinator.inBookSearchResults
+    val inBookSearchProgress: StateFlow<FastSearchProgress?> = readerIntelligenceAndExportCoordinator.inBookSearchProgress
+    val isInBookSearching: StateFlow<Boolean> = readerIntelligenceAndExportCoordinator.isInBookSearching
 
     fun getCurrentChapterIndex(): Int {
         val pub = publication ?: return 0
@@ -2412,52 +2376,22 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun searchInBook(query: String, startFromChapterIndex: Int? = null) {
-        val pub = publication ?: return
-        if (query.isBlank()) {
-            cancelInBookSearch()
-            return
-        }
-
-        inBookSearchJob?.cancel()
         val startIndex = startFromChapterIndex ?: getCurrentChapterIndex()
-        inBookSearchJob = viewModelScope.launch {
-            _isInBookSearching.value = true
-            _inBookSearchResults.value = emptyList()
-            _inBookSearchProgress.value = null
-
-            try {
-                FastEpubSearchEngine.searchPublicationStreaming(
-                    bookId = bookId,
-                    publication = pub,
-                    rawQuery = query,
-                    startFromChapterIndex = startIndex
-                ).collect { progress ->
-                    _inBookSearchResults.value = progress.hits
-                    _inBookSearchProgress.value = progress
-                    if (progress.isFinished) {
-                        _isInBookSearching.value = false
-                    }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in searchInBook: ${e.message}", e)
-                _isInBookSearching.value = false
-            } finally {
-                _isInBookSearching.value = false
-            }
-        }
+        readerIntelligenceAndExportCoordinator.searchInBook(
+            scope = viewModelScope,
+            bookId = bookId,
+            publication = publication,
+            query = query,
+            startIndex = startIndex
+        )
     }
 
     fun cancelInBookSearch() {
-        inBookSearchJob?.cancel()
-        inBookSearchJob = null
-        _isInBookSearching.value = false
+        readerIntelligenceAndExportCoordinator.cancelInBookSearch()
     }
 
     override fun onCleared() {
-        cancelInBookSearch()
-        FastEpubSearchEngine.clearCache()
+        readerIntelligenceAndExportCoordinator.clearSearchCache()
         ambientSoundscapePlayer.onReaderVisibilityChanged(false)
         flushReadingProgressImmediately()
         stopTts()
@@ -2500,50 +2434,19 @@ class ReaderViewModel @Inject constructor(
             } else null
         } else null
 
-        val effectiveBlocks = epubBlocks ?: cachedDoc?.displayBlocks
+        val visualProg = (navigator as? VisualNavigator)?.currentLocator?.value?.locations?.progression ?: 0.0
 
-        val paragraphs = if (!effectiveBlocks.isNullOrEmpty()) {
-            effectiveBlocks.mapNotNull { block ->
-                when (block) {
-                    is ReadingBlock.Paragraph -> block.text
-                    is ReadingBlock.Heading -> block.text
-                    else -> null
-                }
-            }.filter { it.isNotBlank() }
-        } else {
-            pdfReflowManager.reflowState.value.items.mapNotNull { item ->
-                when (item) {
-                    is ReflowItem.Paragraph -> item.content
-                    is ReflowItem.Header -> item.content
-                    is ReflowItem.Text -> item.element.locator.text.highlight
-                    else -> null
-                }
-            }.filter { it.isNotBlank() }
-        }
-
-        val currentIdx = currentParagraphIndex ?: run {
-            val ttsIdx = if (isReflowMode.value) {
-                pdfReflowManager.ttsActiveBlockIndex.value
-            } else {
-                -1
-            }
-            if (ttsIdx in paragraphs.indices) {
-                ttsIdx
-            } else {
-                val prog = (navigator as? VisualNavigator)?.currentLocator?.value?.locations?.progression ?: 0.0
-                if (paragraphs.isNotEmpty()) {
-                    ((prog * paragraphs.size).toInt()).coerceIn(0, paragraphs.size - 1)
-                } else 0
-            }
-        }
-
-        return BookXRayEngine.analyzeChapter(
+        return readerIntelligenceAndExportCoordinator.generateXRayReport(
             chapterTitle = title,
-            paragraphs = paragraphs,
-            currentParagraphIndex = currentIdx
+            epubBlocks = epubBlocks,
+            cachedDocumentBlocks = cachedDoc?.displayBlocks,
+            reflowItems = pdfReflowManager.reflowState.value.items,
+            currentParagraphIndex = currentParagraphIndex,
+            ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex.value,
+            isReflowMode = isReflowMode.value,
+            visualProgression = visualProg
         )
     }
-
 }
 
 
