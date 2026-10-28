@@ -170,13 +170,19 @@ class LoadBookFastUseCase @Inject constructor(
                     )
                 }
 
-                // 4. Aplanar Tabla de Contenidos (TOC)
-                val flatToc = flattenToc(pub.tableOfContents.ifEmpty { pub.readingOrder })
+                // 4. Aplanar Tabla de Contenidos (TOC) y generar TOC virtual para PDFs sin índice
+                val finalPub = if (isPdf && pub.tableOfContents.isEmpty()) {
+                    generateVirtualPdfPublication(pub, uri, book)
+                } else {
+                    pub
+                }
+
+                val flatToc = flattenToc(finalPub.tableOfContents.ifEmpty { finalPub.readingOrder })
 
                 LoadBookResult.Success(
                     LoadedBookSessionData(
                         book = book,
-                        publication = pub,
+                        publication = finalPub,
                         uri = uri,
                         resourceIndexCache = fastIndexCache,
                         positionsByResource = computedPositions,
@@ -215,6 +221,38 @@ class LoadBookFastUseCase @Inject constructor(
             asset = EpubPackageSanitizer.transformAsset(asset),
             allowUserInteraction = false
         ).getOrNull()
+    }
+
+    private fun generateVirtualPdfPublication(pub: Publication, uri: Uri, book: BookEntity): Publication {
+        return try {
+            val file = when (uri.scheme) {
+                "file" -> uri.path?.let { File(it) } ?: File(book.filePath)
+                else -> File(book.filePath)
+            }
+            if (!file.exists()) return pub
+
+            val chapters = com.tom_roush.pdfbox.pdmodel.PDDocument.load(file).use { doc ->
+                com.example.woodsreader.core.pdf.PdfParagraphHealer.scanChapters(doc)
+            }
+            if (chapters.isEmpty()) return pub
+
+            val virtualLinks = com.example.woodsreader.core.pdf.PdfParagraphHealer.chaptersToTocLinks(chapters)
+            if (virtualLinks.isEmpty()) return pub
+
+            val containerField = Publication::class.java.getDeclaredField("container").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val container = containerField.get(pub) as org.readium.r2.shared.util.data.Container<org.readium.r2.shared.util.resource.Resource>
+            val servicesBuilderField = Publication::class.java.getDeclaredField("servicesBuilder").apply { isAccessible = true }
+            val servicesBuilder = servicesBuilderField.get(pub) as? Publication.ServicesBuilder
+            Publication(
+                manifest = pub.manifest.copy(tableOfContents = virtualLinks),
+                container = container,
+                servicesBuilder = servicesBuilder ?: Publication.ServicesBuilder()
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "No se pudo generar TOC virtual para PDF: ${e.message}")
+            pub
+        }
     }
 
     /**
@@ -374,9 +412,36 @@ class LoadBookFastUseCase @Inject constructor(
     }
 
     /**
-     * Resuelve el título de un capítulo a partir de su href buscando en TOC y readingOrder.
+     * Extrae el número de página de un [Link] con destino de página (ej. #page=15, /page_15, /15).
      */
-    fun resolveChapterTitle(pub: Publication, resourceHref: String): String? {
+    fun extractPageNumberFromLink(link: Link): Int? {
+        val linkHref = link.href.toString()
+        Regex("""(?i)[#?&]page=(\d+)""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""(?i)/page[_-]?(\d+)""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""#(\d+)$""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""^/?(\d+)$""").find(linkHref)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        return null
+    }
+
+    /**
+     * Resuelve el título de un capítulo a partir de su href o número de página buscando en TOC y readingOrder.
+     */
+    fun resolveChapterTitle(pub: Publication, resourceHref: String, pageNumber: Int? = null): String? {
+        if (pageNumber != null && pageNumber > 0) {
+            val tocLinks = pub.tableOfContents.ifEmpty { pub.readingOrder }
+            val matchingLink = tocLinks
+                .mapNotNull { link ->
+                    val page = extractPageNumberFromLink(link)
+                    if (page != null) page to link else null
+                }
+                .filter { it.first <= pageNumber }
+                .maxByOrNull { it.first }
+                ?.second
+            if (matchingLink?.title?.isNotBlank() == true) {
+                return matchingLink.title?.trim()
+            }
+        }
+
         val normalized = EpubPackageSanitizer.normalizeResourcePath(resourceHref)
         val fileName = normalized.substringAfterLast('/')
 

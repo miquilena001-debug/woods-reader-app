@@ -276,4 +276,39 @@ class LoadBookFastUseCaseTest {
         val flat = useCase.flattenToc(emptyList())
         assertEquals(0, flat.size)
     }
+
+    // ── Resolución de Título de Capítulo en PDF / EPUB (resolveChapterTitle) ──
+
+    @Test
+    fun testResolveChapterTitleResolvesVirtualPdfChapterByPageNumber() {
+        val ch1 = createMockLink("/page_1#page=1", "Chapter 1: The Beginning")
+        val ch2 = createMockLink("/page_10#page=10", "Chapter 2: The Academy")
+        val ch3 = createMockLink("/page_25#page=25", "Chapter 3: The Trial")
+
+        val pub = mockk<Publication>(relaxed = true)
+        every { pub.tableOfContents } returns listOf(ch1, ch2, ch3)
+        every { pub.readingOrder } returns emptyList()
+
+        // Página 5 pertenece al Capítulo 1 (inicia en 1, antes de 10)
+        assertEquals("Chapter 1: The Beginning", useCase.resolveChapterTitle(pub, "doc.pdf", pageNumber = 5))
+        // Página 10 es el inicio del Capítulo 2
+        assertEquals("Chapter 2: The Academy", useCase.resolveChapterTitle(pub, "doc.pdf", pageNumber = 10))
+        // Página 20 pertenece al Capítulo 2 (entre 10 y 25)
+        assertEquals("Chapter 2: The Academy", useCase.resolveChapterTitle(pub, "doc.pdf", pageNumber = 20))
+        // Página 30 pertenece al Capítulo 3 (después de 25)
+        assertEquals("Chapter 3: The Trial", useCase.resolveChapterTitle(pub, "doc.pdf", pageNumber = 30))
+    }
+
+    @Test
+    fun testExtractPageNumberFromLinkVariousFormats() {
+        val link1 = createMockLink("/page_15#page=15", "Cap 1")
+        val link2 = createMockLink("reader.xhtml?page=42", "Cap 2")
+        val link3 = createMockLink("chapter#12", "Cap 3")
+        val link4 = createMockLink("/99", "Cap 4")
+
+        assertEquals(15, useCase.extractPageNumberFromLink(link1))
+        assertEquals(42, useCase.extractPageNumberFromLink(link2))
+        assertEquals(12, useCase.extractPageNumberFromLink(link3))
+        assertEquals(99, useCase.extractPageNumberFromLink(link4))
+    }
 }
