@@ -105,6 +105,114 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 
 ---
 
+## 🌐 MAPA DE CONEXIONES DEL SISTEMA
+
+### 1. Grafo de Inyección de Dependencias (Hilt)
+El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance singleton en el contenedor de aplicación:
+
+```
+[DatabaseModule]
+  ├─ provideAppDatabase() ──────────────► AppDatabase (Room v11, WAL)
+  ├─ provideAppTypeConverters() ────────► AppTypeConverters
+  ├─ provideBookDao() ──────────────────► BookRepository, ReadingProgressManager, BookScannerService
+  ├─ provideHighlightDao() ─────────────► BookRepository, ManageReaderAnnotationsUseCase
+  ├─ provideBookmarkDao() ──────────────► BookRepository, ManageReaderAnnotationsUseCase
+  ├─ provideReadingSessionDao() ────────► ReadingSessionManager
+  ├─ provideReadingStatsDao() ──────────► ReadingSessionManager
+  ├─ provideCollectionDao() ────────────► BookRepository
+  ├─ provideTtsRuleDao() ───────────────► PronunciationLexiconManager
+  └─ provideGraphDao() ─────────────────► GraphRepository
+
+[DataStoreModule]
+  └─ provideUserPreferencesDataStore() ─► UserPreferencesRepository
+
+[LibraryModule]
+  ├─ provideHttpClient() ───────────────► DefaultHttpClient (Readium)
+  ├─ providePdfiumDocumentFactory() ────► PdfiumDocumentFactory (Readium PDF)
+  └─ provideAssetRetriever() ───────────► PublicationOpener, LoadBookFastUseCase
+
+[NetworkModule]
+  └─ provideOkHttpClient() ─────────────► WebNovelImportWorker, GoogleFreeNetworkTranslator
+
+[TtsModule]
+  └─ provideTtsManager() ───────────────► ReaderViewModel, ReaderTtsService
+
+[ScannerModule]
+  ├─ bindMediaStoreScanner() ───────────► MediaStoreBookScanner
+  └─ bindDeepFileSystemScanner() ───────► DeepFileSystemScanner
+```
+
+#### Inyección en ViewModels (@HiltViewModel) y Servicios:
+- **`ReaderViewModel`:** Inyecta 26 dependencias de primer nivel:
+  - Casos de Uso / Coordinadores: `SaveReadingProgressUseCase`, `CalculateReadingStatsUseCase`, `LoadBookFastUseCase`, `ManageReaderAnnotationsUseCase`, `ReaderIntelligenceAndExportCoordinator`.
+  - Repositorios y Gestores de Dominio: `BookRepository`, `UserPreferencesRepository`, `ReadingSessionManager`, `ReadingProgressManager`, `TtsManager`, `SherpaModelManager`, `PronunciationLexiconManager`, `ProLicenseManager`, `WoodsKeepAliveManager`.
+- **`LibraryViewModel`:** Inyecta `BookRepository`, `UserPreferencesRepository`, `SherpaModelManager`.
+- **`BookDetailViewModel`:** Inyecta `BookRepository`, `SavedStateHandle` (con lectura segura .orEmpty()).
+- **`GraphViewModel`:** Inyecta `GraphRepository`, `BookRepository`, `SavedStateHandle`.
+- **`CandidatesViewModel`:** Inyecta `GraphRepository`, `SavedStateHandle`.
+- **`SettingsViewModel`:** Inyecta `UserPreferencesRepository`, `SherpaModelManager`, `BackupManager`.
+- **`StatsViewModel`:** Inyecta `BookRepository`, `ReadingSessionManager`.
+- **`ReaderTtsService`:** Inyecta `TtsManager`, `UserPreferencesRepository`, `WoodsKeepAliveManager`.
+- **`BookScannerForegroundService`:** Inyecta `BookScannerService`, `BookRepository`.
+
+---
+
+### 2. Cadena de Datos (Persistencia Room → DAO → Repositorio → ViewModel → UI)
+
+```
+[Tablas Room]                 [DAOs]                 [Repositorios/Managers]            [ViewModels]               [Pantallas Compose]
+┌─────────────────────────┐   ┌──────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────┐   ┌─────────────────────────┐
+│ books                   │──►│ BookDao          │──►│ BookRepository               │──►│ LibraryViewModel     │──►│ LibraryScreen           │
+│ books_fts               │   │                  │   │                              │   │ BookDetailViewModel  │──►│ BookDetailScreen        │
+│ collections             │──►│ CollectionDao    │   │                              │   │ ReaderViewModel      │──►│ ReaderScreen            │
+│ collection_books        │   │                  │   │                              │   │ StatsViewModel       │──►│ ReadingStatsScreen      │
+├─────────────────────────┼───┼──────────────────┼───┼──────────────────────────────┼───┼──────────────────────┼───┼─────────────────────────┤
+│ reading_sessions        │──►│ ReadingSessionDao│──►│ ReadingSessionManager        │──►│ StatsViewModel       │──►│ ReadingStatsScreen      │
+│ daily_word_counts       │   │ ReadingStatsDao  │   │ ReadingProgressManager       │   │ ReaderViewModel      │   │ ReaderScreen (Stats)    │
+├─────────────────────────┼───┼──────────────────┼───┼──────────────────────────────┼───┼──────────────────────┼───┼─────────────────────────┤
+│ highlights              │──►│ HighlightDao     │──►│ BookRepository               │──►│ ReaderViewModel      │──►│ ReaderScreen            │
+│ bookmarks               │   │ BookmarkDao      │   │ ManageAnnotationsUseCase     │   │                      │   │ (ReaderNotesTab)        │
+├─────────────────────────┼───┼──────────────────┼───┼──────────────────────────────┼───┼──────────────────────┼───┼─────────────────────────┤
+│ tts_pronunciation_rules │──►│ TtsRuleDao       │──►│ PronunciationLexiconManager  │──►│ ReaderViewModel      │──►│ ReaderTtsMacroWindow    │
+│                         │   │                  │   │                              │   │                      │   │ TtsRulesBottomSheet     │
+├─────────────────────────┼───┼──────────────────┼───┼──────────────────────────────┼───┼──────────────────────┼───┼─────────────────────────┤
+│ graph_entity            │──►│ GraphDao         │──►│ GraphRepository              │──►│ GraphViewModel       │──►│ GraphScreen             │
+│ graph_relation          │   │                  │   │                              │   │ CandidatesViewModel  │   │ GraphCanvas             │
+│ graph_mention           │   │                  │   │                              │   │                      │   │ CandidatesScreen        │
+│ graph_alias             │   │                  │   │                              │   │                      │   │ EntitySheet             │
+└─────────────────────────┘   └──────────────────┘   └──────────────────────────────┘   └──────────────────────┘   └─────────────────────────┘
+```
+
+---
+
+### 3. Componentes de Android Declarados en el Manifest y Lanzadores
+
+| Componente | Tipo Android | Permisos / Flags | Responsabilidad | Quién lo Inicia |
+|---|---|---|---|---|
+| `MainActivity` | `Activity` (SingleTop) | Permisos de almacenamiento, audio, bluetooth | Entrada principal, gestión de Deep Links, selector SAF e Intents de apertura (`VIEW` de archivos .epub/.pdf) | Sistema Android / Launcher |
+| `BookScannerForegroundService` | `Service` (Foreground) | `FOREGROUND_SERVICE_DATA_SYNC` | Escaneo en segundo plano de almacenamiento masivo y extracción de portadas | `MainActivity`, `LibraryViewModel` |
+| `ReaderTtsService` | `Service` (Foreground) | `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK` | Reproducción continua TTS con pantalla bloqueada, notificación MediaStyle y sesión AVRCP Bluetooth | `ReaderViewModel`, `TtsManager` |
+| `SystemForegroundService` | `Service` (WorkManager) | `FOREGROUND_SERVICE_DATA_SYNC` | Ejecutor de tareas diferidas de WorkManager | Sistema Android / WorkManager |
+| `LibrarySyncWorker` | `CoroutineWorker` | Acceso a almacenamiento | Sincronización diferencial y verificación de integridad de archivos | Programado por WorkManager |
+| `GraphExtractionWorker` | `CoroutineWorker` | Acceso a Room | Minería de entidades, aliases y menciones a partir del texto del libro | Disparado desde `GraphViewModel` |
+| `WebNovelImportWorker` | `CoroutineWorker` | `INTERNET` | Descarga de capítulos web, sanitización y empaquetado a EPUB | Disparado desde `LegacyWebToEpubImporterDialog` |
+
+---
+
+### 4. Dependencias Externas y Archivos Consumidores
+
+| Dependencia Externa | Versión / Tipo | Archivos que la Consumen Directamente | Rol en el Proyecto |
+|---|---|---|---|
+| **Readium 3.x** | Binario / Maven Central (31 archivos) | `LoadBookFastUseCase.kt`, `SaveReadingProgressUseCase.kt`, `CalculateReadingStatsUseCase.kt`, `ManageReaderAnnotationsUseCase.kt`, `ReaderIntelligenceAndExportCoordinator.kt`, `EpubFormatManager.kt`, `PdfReflowManager.kt`, `ReaderScreen.kt`, `ReaderViewModel.kt`, `FastEpubSearchEngine.kt`, `SherpaTtsEngine.kt`, `SherpaTtsEngineProvider.kt`, etc. | Core del lector: parseo de contenedores EPUB, extracción de Locator, decoraciones, renderizado de WebView y navegación por capítulos. |
+| **Sherpa ONNX** | v1.10.30 via JitPack (2 archivos) | `SherpaModelManager.kt`, `TtsManager.kt` | Motor de síntesis de voz neural offline por hardware local (modelos VITS, Piper, Kokoro). Invoca binarios nativos C++ vía JNI. |
+| **Media3 / MediaCompat** | AndroidX Media (3 archivos) | `ReaderTtsService.kt`, `SherpaTtsEngineProvider.kt`, `TtsMediaNotificationProvider.kt` | Control de sesión multimedia, integración con Android Auto, lockscreen y receptor AVRCP de auriculares Bluetooth. |
+| **PDFBox / Pdfium** | Readium Adapter / Tom Roush (7 archivos) | `PdfReflowManager.kt`, `BookMetadataExtractor.kt`, `LibraryModule.kt`, `ReaderExtensions.kt`, `ReaderScreen.kt`, `ReaderScreenOverlays.kt`, `LectorApplication.kt` | Renderizado nativo de documentos PDF, cálculo de páginas virtuales y extracción semántica de texto para modo reflow. |
+| **Coil3** | Multiplatform Image Loader (13 archivos) | `LibraryScreen.kt`, `BookDetailScreen.kt`, `ContinueReadingHero.kt`, `EpubCoverPage.kt`, `BookAudioExportDialog.kt`, `ReaderHeroSplash.kt`, `SearchScreen.kt`, etc. | Carga asíncrona y almacenamiento en caché de imágenes de portadas y avatares con soporte de animación cruzada. |
+| **WorkManager** | AndroidX Work (6 archivos) | `MainActivity.kt`, `LectorApplication.kt`, `GraphExtractionWorker.kt`, `WebNovelImportWorker.kt`, `LibrarySyncWorker.kt`, `GraphViewModel.kt` | Orquestación persistente de tareas pesadas en segundo plano tolerantes a cierre de app. |
+| **DataStore** | AndroidX Proto/Preferences (3 archivos) | `UserPreferencesSerializer.kt`, `UserPreferencesRepository.kt`, `DataStoreModule.kt` | Persistencia reactiva tipada de configuración de usuario (velocidad TTS, tema, tipografía, motor de audio, soundscapes). |
+
+---
+
 ## 0. Raíz y Build
 
 ### `build.gradle.kts` (raíz)
@@ -1186,7 +1294,7 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 #### `ui/library/LibraryViewModel.kt`
 - **Propósito:** ViewModel de biblioteca, watchers de rutas, enriquecimiento de portadas, escaneo, filtros.
 - **Clases:** `LibraryViewModel` (@HiltViewModel)
-- **Depende_de:** BookRepository, BookScannerService, ProLicenseManager, CalibreStyleEpubTranslator, UserPreferencesRepository
+- **Depende_de:** BookRepository, UserPreferencesRepository, BookScannerService, SherpaModelManager, ProLicenseManager, CalibreStyleEpubTranslator
 - **Usado_por:** LibraryScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (líneas 1-321)
 - **Hallazgos:** **A9:** `takePersistableUriPermission` sin verificación de resultado.
@@ -1358,7 +1466,7 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 #### `ui/reader/ReaderViewModel.kt`
 - **Propósito:** Orquestador principal de UI del lector. Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica de negocio a casos de uso especializados.
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `ParsedChapterData`, `AutoScrollTeleprompterState`, `ChapterInfo`
-- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, TtsManager, EpubFormatManager, PdfReflowManager, UserPreferencesRepository, ForestAmbienceEngine, AmbientSoundscapePlayer
+- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.472 líneas)
 - **Hallazgos:**
@@ -1605,7 +1713,7 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 #### `ui/graph/GraphViewModel.kt`
 - **Propósito:** ViewModel de grafo, física de fuerzas, WorkManager para extracción, flujos combinados (máx 2 por combine según regla 6).
 - **Clases:** `GraphViewModel` (@HiltViewModel), `GraphUiState`, `GraphAnalysisProgress`
-- **Depende_de:** GraphRepository, ForceLayout, WorkManager, GraphExtractionWorker, GraphPositionsCache, GraphJsonHelper, Readium Locator/Url/MediaType
+- **Depende_de:** GraphRepository, BookRepository, SavedStateHandle, ForceLayout, WorkManager, GraphExtractionWorker, GraphPositionsCache, GraphJsonHelper, Readium Locator/Url/MediaType
 - **Usado_por:** GraphScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 250+ líneas)
 - **Hallazgos:** `checkNotNull(savedStateHandle["bookId"])` crashea si falta `bookId` (C13, heredado de fase anterior). Uso correcto de combines anidados de 2 (regla 6 de GRAPH_PLAN.md). Loop de física en viewModelScope/Dispatchers.Default con `tick` para forzar redibujo.
@@ -1841,203 +1949,173 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 
 ---
 
-## 13. Flujo de Datos Atómico (Referencia Cruzada)
+## 13. Flujos de Datos Atómicos por Funcionalidad (Verificación de Flechas en Código)
 
+### Flujo 1: Apertura de Libro (EPUB / PDF) y Carga O(1)
 ```
-Abrir archivo externo:
-  MainActivity.handleIncomingIntent
-    → BookMetadataExtractor.extractMetadata
-    → BookRepository.upsertBook (Room: books)
-    → NavGraph.Screen.Reader.createRoute(bookId)
+Usuario pulsa libro en LibraryScreen:
+  LibraryScreen.onBookClick(bookId)
+    → NavGraph: Screen.Reader.createRoute(bookId)
+    → ReaderScreen(bookId)
+    → ReaderViewModel.loadBook(bookId)
+        ├─ SavedStateHandle seguro: bookId.orEmpty()
+        ├─ if (bookId.isBlank()) → ReaderUiState.Error(...) [Resuelto C2]
+        ├─ BookRepository.getBook(bookId)
+        └─ LoadBookFastUseCase.invoke(book)
+            ├─ AssetRetriever.retrieve(book.filePath)
+            ├─ [readingOrder.size > 80]: Fast-Path Sintético O(1) de posiciones virtuales
+            ├─ [readingOrder.size <= 80]: computePositions() estándar de Readium
+            ├─ PublicationOpener.open() → Readium Publication
+            ├─ Flattened TOC + Checkpoint de progreso resiliente (DataStore/Room fallback)
+            └─ Retorna LoadBookFastResult.Success(publication, initialLocator, toc)
+    → ReaderViewModel expone StateFlows:
+        ├─ _publication.value = pub
+        ├─ _currentLocator.value = initialLocator
+        ├─ _toc.value = flatToc
+        └─ _uiState.value = ReaderUiState.Success
+    → ReaderScreen renderiza ReaderNavigatorContainer (WebView Readium con CSS paginado inyectado)
+```
 
-Apertura y Carga del Lector (EPUB / PDF):
-  ReaderViewModel.loadBook()
-    → LoadBookFastUseCase.invoke(book)
-        ├─ [readingOrder.size > 80]: Fast-Path Sintético O(1) de posiciones
-        └─ [readingOrder.size <= 80]: Parsing estándar de posiciones
-        → PublicationOpener.open (Readium Publication)
-        → Flattened TOC + Checkpoint de progreso resiliente (Prefs/Room fallback)
-    → EpubFormatManager / PdfReflowManager
-    → ReadingPipeline.process (ReadingBlock[] + TtsNarrationUnit[])
-    → ReaderScreen (Compose UI con ReaderNavigatorContainer)
+### Flujo 2: Persistencia de Progreso y Cálculo de Estadísticas en Tiempo Real
+```
+Usuario hace scroll o cambia página / TTS avanza párrafo:
+  ReaderScreen / WebView
+    → ReaderViewModel.onLocatorChanged(locator) / onTtsLocatorChanged(locator)
+        ├─ SaveReadingProgressUseCase.invoke(bookId, locator)
+        │   ├─ Debounce reactivo de 700 ms para scroll continuo (evita IO masivo en DB)
+        │   ├─ flushReadingProgressImmediately() invocado en ON_PAUSE / ON_STOP / cierre
+        │   ├─ ReadingProgressManager: serializa Locator JSON
+        │   ├─ BookDao.updateProgressWithFallback(bookId, progression, locatorJson)
+        │   └─ ReadingSessionManager.recordSession(bookId, wordsRead, timeSpent)
+        │       → Room: reading_sessions, daily_word_counts
+        └─ CalculateReadingStatsUseCase.invoke(book, locator)
+            ├─ Calcula tiempo restante de capítulo y libro (palabras restantes / WPM de usuario)
+            ├─ Calcula porcentaje total de avance (0.0 .. 1.0)
+            └─ Actualiza ReaderViewState: exposed WPM, ETA y lectura del día
+```
 
-Persistencia de Progreso y Estadísticas de Lectura:
-  ReaderViewModel.onLocatorChanged / onTtsLocatorChanged
-    → SaveReadingProgressUseCase.invoke(bookId, locator)
-        ├─ Debounce reactivo de 700 ms para scroll manual continuo
-        ├─ flushReadingProgressImmediately() en ciclo ON_PAUSE / ON_STOP / cierre
-        ├─ ReadingProgressManager (Room: books.progression, locatorJson)
-        └─ ReadingSessionManager.recordSession (Room: reading_sessions, daily_word_counts)
-    → CalculateReadingStatsUseCase.invoke(book, locator)
-        → ReaderViewState (progreso 0..1, palabras y minutos restantes en tiempo real)
+### Flujo 3: Gestión de Anotaciones, Citas y Decoraciones Visuales
+```
+Usuario selecciona texto en el lector:
+  ReaderScreen (Menú contextual de selección)
+    → ReaderViewModel.addHighlight(text, color, note) / toggleBookmark()
+        → ManageReaderAnnotationsUseCase
+            ├─ Room: HighlightDao.insertHighlight() / BookmarkDao.insertBookmark()
+            ├─ Transforma entidades a Readium Decoration (HighlightDecorationListener)
+            ├─ Inyecta CSS de resaltado en el WebView sin recargar el capítulo
+            └─ QuoteCardGenerator / HighlightExporter (si el usuario pulsa "Compartir Cita")
+                ├─ Genera tarjeta estilizada con tipografía del libro y autor
+                └─ QuoteVideoClipExporter (genera clip animado MP4 con audio y texto)
+```
 
-Gestión de Anotaciones, Citas y Decoraciones:
-  ReaderViewModel.toggleBookmark / addHighlight / removeHighlight / exportNotes
-    → ManageReaderAnnotationsUseCase
-        ├─ BookRepository.toggleBookmark / addHighlight (Room: bookmarks, highlights)
-        ├─ Transformación a Readium Decoration (resaltados visuales y colores de tema)
-        └─ HighlightExporter / QuoteCardGenerator (Exportación Markdown / Citas)
-
-Inteligencia en-libro, Rayos-X y Exportación de Audio:
-  ReaderViewModel.search / generateXRay / exportChapterAudio
+### Flujo 4: Búsqueda Streaming, Rayos-X y Exportación Unificada `.m4a`
+```
+Búsqueda y Análisis Semántico:
+  ReaderViewModel.search(query) / generateXRay()
     → ReaderIntelligenceAndExportCoordinator
-        ├─ FastEpubSearchEngine (Búsqueda streaming reactiva con Kotlin Flow)
-        ├─ BookXRayEngine (Reporte semántico de personajes, lugares y conceptos)
-        └─ ChapterAudioExporter.exportChapterAudio(...)
-            → Síntesis PCM con Sherpa ONNX o TTS nativo
-            → Codificación AAC a 128 kbps con MediaCodec en formato ISO MP4 (.m4a)
-            → M4aMetadataEmbedder (Incrustación binaria de portada covr y letras sincro ©lyr)
-            └─ Purga automática de residuos (.lrc, .srt, .jpg, .txt) -> 1 solo archivo .m4a limpio
+        ├─ FastEpubSearchEngine.search(publication, query)
+        │   └─ Kotlin Flow streaming: emite coincidencias parciales con snippet y Locator
+        └─ BookXRayEngine.analyze(publication, currentChapterIndex)
+            └─ Extracción de entidades clave (personajes, lugares, términos) para ReaderXRayBottomSheet
 
-Reproducción TTS (Text-to-Speech) y Supervivencia en Segundo Plano:
-  ReaderScreen / ReaderViewModel
-    → TtsManager
-        ├─ ensurePreferencesLoaded() (Previene condición de carrera en cold-start)
-        ├─ SherpaTtsEngine / AudioTrack (Voz neural offline Piper/Kokoro)
-        ├─ Android TextToSpeech nativo (con UtteranceProgressListener desacoplado y blindado)
-        ├─ AmbientSoundscapePlayer (Auto-ducking de música y sonidos de bosque)
-        └─ SmartSleepTimerManager (Desvanecimiento suave al dormir)
-    → ReaderTtsService (Foreground Service, MediaSessionCompat, Lockscreen, AVRCP Bluetooth)
-    → WoodsKeepAliveManager (Protección contra LMKD y exención de optimización de batería)
+Exportación a Archivo .M4A Único (PARTE 73):
+  ReaderViewModel.exportChapterAudio(chapterIndex)
+    → ReaderIntelligenceAndExportCoordinator.exportChapterAudio(...)
+        → ChapterAudioExporter.exportChapterAudio(...)
+            ├─ 1. Extrae texto limpio del capítulo desde Readium Publication
+            ├─ 2. Sintetiza audio PCM con Sherpa ONNX o Android TTS nativo
+            ├─ 3. Codifica stream AAC a 128 kbps usando MediaCodec en contenedor ISO MP4 (.m4a)
+            ├─ 4. M4aMetadataEmbedder.embedMetadata(m4aFile, coverBitmap, lrcString, title, author)
+            │   ├─ Incrusta portada JPEG en átomo moov.udta.meta.ilst.covr
+            │   ├─ Incrusta subtítulos sincronizados en átomo moov.udta.meta.ilst.©lyr
+            │   └─ Escribe etiquetas estándar de título (©nam) y autor (©ART)
+            └─ 5. Purga atómica de archivos temporales sueltos (.lrc, .srt, .jpg, .txt)
+                └─ Resultado en MediaStore: UN SOLO ARCHIVO .m4a en Music/WoodsReader
+```
 
-Búsqueda global en biblioteca:
-  BookRepository
-    → BookDao.searchBooks (FTS4 books_fts)
-    → o advancedSearchBooksRaw / advancedFilterBooksRaw
+### Flujo 5: Reproducción TTS (Text-to-Speech) y Supervivencia en Background
+```
+Usuario pulsa botón Play de audio:
+  ReaderScreen → ReaderViewModel.playTts()
+    → TtsManager.narrateSequence(blocks, startIndex)
+        ├─ ensurePreferencesLoaded() [Resuelto C6]: espera asíncrona máx 300 ms si la caché aún no cargó
+        ├─ Lee preferencia cachedUseSherpaTts (sin bloquear con .first())
+        ├─ Si usa Sherpa ONNX:
+        │   → SherpaTtsEngine.synthesizeStream(text) → AudioTrack nativo PCM
+        ├─ Si usa TTS Nativo:
+        │   → android.speech.tts.TextToSpeech.speak(text, ..., utteranceId)
+        │   → UtteranceProgressListener único [Resuelto C7]:
+        │       ├─ Maneja speakResult != SUCCESS inmediatamente
+        │       ├─ IDs monótonos con AtomicLong
+        │       └─ Fallback para utteranceId == null en dispositivos OEM
+        ├─ AmbientSoundscapePlayer: mezcla sonidos de bosque (lluvia, viento, chimenea) con auto-ducking
+        └─ SmartSleepTimerManager: cuenta regresiva de sueño con desvanecimiento gradual de volumen
+    → ReaderTtsService.start(context)
+        ├─ Servicio Foreground con MediaSessionCompat y MediaStyle notification
+        ├─ WoodsKeepAliveManager: retiene Partial WakeLock y protección contra LMKD
+        └─ Sincronización de progreso: emite onTtsLocatorChanged(locator) para auto-scroll del texto
+```
 
-Grafo de entidades y candidatos:
-  GraphViewModel / CandidatesViewModel
-    → GraphRepository
-    → GraphDao (Room: graph_entity, graph_relation, graph_mention, graph_alias)
+### Flujo 6: Traducción In-Place de Libros EPUB
+```
+Usuario solicita traducción de libro en biblioteca:
+  LibraryScreen → CalibreTranslationProgressDialog
+    → CalibreStyleEpubTranslator.translate(bookFile, targetLanguage)
+        ├─ EpubInPlaceTranslator: abre archivo ZIP original como contenedor
+        ├─ EpubPackageParser: extrae OPF, spine y hojas XHTML del libro
+        ├─ Itera documentos XHTML con XhtmlTranslatorDoc:
+        │   ├─ Segmenta nodos de texto protegiendo etiquetas HTML y entidades
+        │   └─ GoogleFreeNetworkTranslator: traduce texto con reintentos y pacing
+        └─ EpubZipWriter: reescribe archivo EPUB destino preservando compresión STORED en mimetype
+    → BookRepository.insertTranslatedBook(newBook)
+```
+
+### Flujo 7: Importación de Novelas Web (Web2EPUB)
+```
+Usuario ingresa URL en diálogo de importación:
+  LegacyWebToEpubImporterDialog
+    → WorkManager: encola WebNovelImportWorker(novelUrl)
+        → NovelImporter.importNovel(url)
+            ├─ SiteProfileLoader: busca perfil de sitio en JSON (selectores CSS para ads y contenido)
+            ├─ NovelIndexLoader: descarga índice de capítulos y metadatos
+            ├─ RequestPacer: respeta rate limits y reglas de robots.txt (RobotsAdvisor)
+            ├─ ContentExtractor: limpia HTML de cada capítulo usando Jsoup Safelist
+            ├─ ImageSniffer: descarga e incrusta imágenes de portada e ilustraciones internas
+            ├─ ImportStore: persiste estado y progreso en disco (soporta reanudación ante desconexión)
+            └─ EpubAssembler: compila capítulos limpios en archivo EPUB estándar válido
+        → BookRepository.upsertBook(...) → Notificación de descarga completada
+```
+
+### Flujo 8: Grafo de Entidades y Minería Semántica
+```
+Usuario abre Grafo o pulsa "Construir Grafo de Personajes":
+  GraphScreen / CandidatesScreen
+    → GraphViewModel.loadGraph(bookId)
+        ├─ SavedStateHandle seguro: bookId.orEmpty() [Resuelto C13]
+        ├─ GraphRepository.getEntitiesForBook(bookId) → Room: graph_entity
+        ├─ GraphRepository.getRelationsForBook(bookId) → Room: graph_relation
+        ├─ Si no existen datos o usuario solicita minería:
+        │   └─ WorkManager: lanza GraphExtractionWorker(bookId)
+        │       ├─ Lee texto de capítulos con EpubContentExtractor
+        │       ├─ EntityHeuristics / TextRankSummarizer: detecta menciones de personajes y co-ocurrencias
+        │       └─ GraphDao: inserta entidades, aliases y relaciones en transacción Room
+        └─ GraphCanvas renderiza visualización de nodos mediante ForceLayout
+            └─ GraphPositionsCache: almacena coordenadas físicas calculadas para asentamiento instantáneo
+```
+
+### Flujo 9: Licencia Pro y Verificación Criptográfica Offline
+```
+Usuario ingresa clave de activación en WoodsProUnlockDialog:
+  WoodsProUnlockDialog
+    → ProLicenseManager.verifyLicenseKey(key)
+        ├─ Obtiene identificador único de hardware del dispositivo
+        ├─ Computa hash criptográfico SHA-256 con salt interno del proyecto
+        ├─ Compara firma binaria sin requerir conexión a internet
+        └─ Si es válida:
+            ├─ Persiste estado Pro en DataStore (UserPreferences.isProUser = true)
+            └─ Habilita exportador de video (QuoteVideoClipExporter), soundscapes ilimitados y modelos TTS avanzados
 ```
 
 ---
 
-## 14. Estado General de la Auditoría Atómica
 
-### Leyenda de Estados
-- ✅ **Resuelto y verificado en código:** Probado estáticamente, compilado y testeado con tests unitarios.
-- 🟡 **Resuelto en código, pendiente de validación en dispositivo:** Implementado y compilado, pero requiere confirmación en hardware real (`TECNO-LH7n`).
-- 🔴 **Pendiente:** Deuda técnica o bug detectado que aún no ha sido corregido en código.
-- ⚪ **No verificado:** Elemento que requiere inspección adicional.
-
-### Contadores Globales de la Auditoría (Verificados con git ls-files y test suite)
-- **Archivos totales en proyecto:** 237 archivos `.kt` (184 en `app/src/main/`, 47 en `app/src/test/`, 2 en `app/src/androidTest/`, 4 en `keymaker/`)
-- **Tests unitarios ejecutados:** 182 casos de prueba unitarios en 42 clases de test (100% en verde bajo `:app:testDebugUnitTest`, 0 fallos, 0 errores)
-- **Hallazgos críticos totales:** 13
-  - ✅ **Resueltos y verificados en código:** 9 (C1, C2, C3, C5, C8, C9, C10, C12, C13)
-  - 🟡 **Resueltos en código, pendientes de validación en dispositivo (TECNO-LH7n):** 2 (C6, C7)
-  - 🔴 **Pendientes:** 2 (C4: corrutina en init de `SherpaModelManager.kt:280`; C11: mojibake residual en comentarios de `TtsManager.kt:572+`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `ReaderViewModel.kt`)
-  - ⚪ **No verificados:** 0
-- **Hallazgos de severidad alta resueltos:** A12 resuelto (`SaveReadingProgressUseCase.kt`). Otros altos registrados: A1 (`mergeInto`), A5 (`playPcmDispatcher`), A6 (`createNavigator`), A9 (`persistableUriPermission`), A10 (`exportJsonBinder`), A11 (`importTransactions`).
-- **Funcionalidades en estado 🟡 (pendientes de validación en dispositivo):**
-  - C6: Arranque no bloqueante de TTS y caché reactiva de preferencias.
-  - C7: Avance de oraciones nativas sin race conditions ni desincronización de utterances.
-  - PARTE 73: Exportación a único archivo `.m4a` con portada (`covr`) y subtítulos (`©lyr`) probada en reproductores nativos (Musicolet, VLC, Poweramp, Samsung Music).
-  - Apertura O(1) en libros masivos (>80 capítulos) en el procesador Helio G85 / Mali-G52 del TECNO-LH7n.
-  - Fluidez de scroll continuo sin caídas de frames en Compose.
-
-### Resumen de Hallazgos Críticos
-
-| ID | Problema | Archivo y Línea Real | Impacto | Estado | Evidencia y Justificación Técnica |
-|---|---|---|---|---|---|
-| C1 | Room v11 sin migración manual 10→11 | `AppDatabase.kt:37-39`, `app/schemas/.../10.json`, `11.json` | Fallo de migración en actualización de app | ✅ **Resuelto y verificado** | Resuelto vía `@AutoMigration(from = 10, to = 11)`. La comparativa estricta de esquemas v10 vs v11 confirma que solo se agregaron 4 tablas (`graph_entity`, `graph_relation`, `graph_alias`, `graph_mention`), sin tablas/columnas modificadas ni borradas ni renombradas. Room no requiere `AutoMigrationSpec`. |
-| C2 | `checkNotNull(bookId)` crashea al abrir libro | `ReaderViewModel.kt:171, 597` | Cierre inesperado (crash) al abrir lector sin bookId válido | ✅ **Resuelto y verificado** | Commit `7ac5385`. Línea 171 lee seguro con `savedStateHandle.get<String>("bookId").orEmpty()` y línea 597 valida con `if (bookId.isBlank()) { _uiState.value = ReaderUiState.Error(...); return }`. |
-| C3 | ViewModel con 17 dependencias directas (God Class) | `ReaderViewModel.kt:124-153` | God ViewModel, acoplamiento alto, riesgo de regresiones | ✅ **Resuelto y verificado** | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`. Descomprimido mediante patrón *Strangler Fig* en 5 Casos de Uso/Coordinadores (`domain/reader/`). Eliminadas 5 inyecciones directas (`AssetRetriever`, `PublicationOpener`, `FastEpubSearchEngine`, `BookXRayEngine`, `ChapterAudioExporter`). Tamaño reducido a 2.476 líneas. |
-| C4 | Corrutina huérfana en bloque init | `SherpaModelManager.kt:280` | Corrutina sin cancelación explícita en singleton | 🔴 **Pendiente (Error conocido)** | `managerScope.launch` en el bloque `init` lanza un borrado recursivo del directorio Kokoro-82M de forma asíncrona usando `SupervisorJob() + Dispatchers.IO` sin cancelación explícita ni enlace de ciclo de vida. |
-| C5 | Logging nativo exhaustivo atado a debug build | `SherpaModelManager.kt:437` | Logs nativos de Sherpa ONNX saturan logcat en depuración | 🔴 **Pendiente (Error conocido)** | Línea 437 pasa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En compilaciones Debug activa logs nativos intensivos de C++ por cada frame de audio; en Release compila como `false`. Pendiente desacoplarlo a flag de depuración opcional en tiempo de ejecución. |
-| C6 | `.first()` en StateFlow bloquea/suspende arranque de TTS | `TtsManager.kt:1375` | TTS se congela o bloquea hilo de síntesis en arranque en frío | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. Se eliminó `.first()` de `userPreferencesFlow` en `narrateSequence`, sustituyéndolo por la propiedad `@Volatile cachedUseSherpaTts`. Se blindó la carrera de arranque en frío con `ensurePreferencesLoaded()` con timeout asíncrono de 300 ms antes de la primera narración. |
-| C7 | UtteranceProgressListener en bucle y carreras de oraciones | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización, continuación colgada o silencio | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. El listener se asigna una sola vez en `initialize()`. IDs de utterance monótonos con `AtomicLong`. Se gestiona retorno `speakResult != SUCCESS`, se cancelan continuaciones pendientes forzadamente en `pause()`, `stop()`, `shutdown()`, y se acepta `utteranceId == null` como fallback de compatibilidad OEM. |
-| C8 | Mojibake en comentarios de ReaderViewModel | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado en refactorizaciones de los Pasos 1 a 4 a UTF-8 limpio. |
-| C9 | Migración Room 11 sin 10→11 | `AppDatabase.kt:37` | Confirma C1 | ✅ **Resuelto y verificado** | Verificado con Room `@AutoMigration(from = 10, to = 11)`. |
-| C10 | Mojibake en comentarios | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado a UTF-8 limpio. |
-| C11 | Mojibake residual en comentarios de código fuente | `TtsManager.kt:309, 548, 613`, `BookScannerService.kt:566`, `LibraryScreen.kt:64, 119, 156`, `ReaderViewModel.kt:355, 502, 755` | Comentarios descriptivos con caracteres corruptos (Latin1/Windows-1252) | 🔴 **Pendiente (Error conocido)** | 4 archivos contienen mojibake residual en comentarios descriptivos (símbolos `?`, tildes rotas). No afecta compilación ni lógica de ejecución; pendiente saneamiento ortográfico. |
-| C12 | `checkNotNull(bookId)` crashea en detalle de libro | `BookDetailViewModel.kt:59, 69` | Cierre inesperado al abrir detalle de libro | ✅ **Resuelto y verificado** | Commit `7ac5385`. `val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()`. Si viene vacío, `loadBookData()` valida `if (bookId.isBlank())` y expone `BookDetailUiState(error = "...")`. |
-| C13 | `checkNotNull(bookId)` crashea en grafo y candidatos | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre inesperado al abrir grafo o candidatos | ✅ **Resuelto y verificado** | Commit `7ac5385`. `savedStateHandle.get<String>("bookId").orEmpty()` en ambos ViewModels. Si `bookId.isBlank()`, exponen listas vacías de forma segura y los métodos de confirmación/fusión abortan sin crashear. |
-
-## 14.1 Resultados de Tests Unitarios (`app/src/test/`)
-
-Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
-
-| Archivo | Clase bajo prueba | Estado | Hallazgos |
-|---------|-------------------|--------|-----------|
-| `ExampleUnitTest.kt` | Prueba básica | ✅ REVISADO | 1 test trivial (2+2=4), pasa |
-| `EntityHeuristicsTest.kt` | EntityHeuristics | ✅ REVISADO | Localizado en `app/src/test/.../util/` |
-| `ReaderViewModelTest.kt` | ReaderViewModel | ✅ REVISADO | Localizado en `app/src/test/.../ui/reader/` (192 líneas) |
-| `ForceLayoutTest.kt` | ForceLayout | ✅ REVISADO | Localizado en `app/src/test/.../ui/graph/` |
-| `BookScannerServiceExtremeTest.kt` | BookScannerService | ✅ REVISADO | Mock-based, testa dedup y batches |
-| `TextRankSummarizerTest.kt` | TextRankSummarizer | ✅ REVISADO | Localizado en `app/src/test/.../service/` |
-| `CoverExtractorTest.kt` | CoverExtractor | ✅ REVISADO | Tests de extracción de portada, migración cacheDir→filesDir |
-| `LibraryViewModelExtremeTest.kt` | LibraryViewModel | ✅ REVISADO | Localizado en `app/src/test/.../ui/library/` |
-| `WordExclusionEngineTest.kt` | WordExclusionEngine | ✅ REVISADO | Tests de exclusión, regex, stress test <200ms |
-| `SpanishTextFormatterTest.kt` | SpanishTextFormatter | ✅ REVISADO | Tests de NBSP, em dash, comillas invertidas |
-| `ReadingPipelineTest.kt` | ReadingPipeline | ✅ REVISADO | Pipeline vacío, ruido filtrado, imágenes con narración, reglas de exclusión |
-| `ReadingPipelineBddTest.kt` | ReadingPipeline (BDD) | ✅ REVISADO | Escenarios de restauración de posición, importación externa, PDF externo |
-| `PdfSemanticExtractionTest.kt` | Extracción semántica PDF | ✅ REVISADO | Lista vacía, imágenes intercaladas, ruido filtrado |
-| `PdfBookViewSynchronizerTest.kt` | PdfBookViewSynchronizer | ✅ REVISADO | Mapeo bloque→página y página→bloque |
-| `NoiseClassifierTest.kt` | NoiseClassifier | ✅ REVISADO | Números de página, romanos, URLs, boilerplate, spam de traductor, encabezados recurrentes |
-| `ImageAnnouncerTest.kt` | ImageAnnouncer | ✅ REVISADO | Anuncios con caption, alt text, fallback "Ilustración" |
-| `EpubContentExtractorTest.kt` | EpubContentExtractor | ✅ REVISADO | HTML vacío, headings con tamaños, imágenes, figuras con figcaption |
-| `EpubHtmlSanitizerTest.kt` | EpubHtmlSanitizer | ✅ REVISADO | xmlns, head tag, wrapping, charset detection, chapter title injection |
-| `EpubPackageSanitizerTest.kt` | EpubPackageSanitizer | ✅ REVISADO | NCX reference repair, cover property repair |
-| `SleepTimerManagerTest.kt` | SleepTimerManager | ✅ REVISADO | Countdown, expiración, cancelación restaura velocidad |
-| `ReadingSessionManagerTest.kt` | ReadingSessionManager | ✅ REVISADO | Sesión nueva, palabras/páginas, sesión fantasma descartada |
-| `ReadingProgressManagerTest.kt` | ReadingProgressManager | ✅ REVISADO | ETF manual y TTS, fecha de finalización |
-| `ProLicenseManagerTest.kt` | ProLicenseManager | ✅ REVISADO | ID de dispositivo, activación con clave válida, mismatching |
-| `GraphPositionsCacheTest.kt` | GraphPositionsCache | ✅ REVISADO | ForceLayout con caché se asienta casi instantáneamente |
-| `GraphJsonTest.kt` | GraphJson | ✅ REVISADO | Export/import JSON usa nombres, no IDs internos |
-| `SiteProfileRegistryTest.kt` | SiteProfile | ✅ REVISADO | Parsing JSON, dominio exacto, subdominio, dominio no registrado, JSON inválido |
-| `RobotsAdvisorTest.kt` | RobotsAdvisor | ✅ REVISADO | Reglas de disallow, admin y private bloqueados, capítulos permitidos |
-| `RequestPacerTest.kt` | RequestPacer | ✅ REVISADO | Delay mínimo respetado con reloj virtual |
-| `PageFetcherTest.kt` | PageFetcher | ✅ REVISADO | Fake fetcher, fallos configurados, fixtures válidos |
-| `Fixtures.kt` | Fixtures web2epub | ✅ REVISADO | TOC descendente, capítulo rico, bloqueado, Cloudflare |
-| `FakePageFetcher.kt` | Fake PageFetcher | ✅ REVISADO | Respuestas y fallos configurados, conteo de llamadas |
-| `CharsetDetectorTest.kt` | CharsetDetector | ✅ REVISADO | UTF-8, BOM, ISO-8859-1, GBK, windows-1252 |
-| `ChallengeDetectorTest.kt` | ChallengeDetector | ✅ REVISADO | Cloudflare 403/503, "Just a moment", turnstile, página normal |
-| `TestEpubFactory.kt` | EPUB factory tests | ✅ REVISADO | Localizado en `core/translation/calibre/inplace/` |
-| `FakeTextTranslator.kt` | Fake translator | ✅ REVISADO | Localizado en `core/translation/calibre/inplace/` |
-| `CalibreStyleEpubTranslatorStructureTest.kt` | CalibreStyleEpubTranslator (Estructura) | ✅ REVISADO | Tests de integridad estructural del EPUB traducido (mimetype, META-INF, OPF) |
-| `EpubInPlaceTranslatorTest.kt` | EpubInPlaceTranslator | ✅ REVISADO | Tests de traducción in-place de documentos XHTML en ZIP EPUB |
-| `EpubPackageParserTest.kt` | EpubPackageParser | ✅ REVISADO | Tests de parseo de OPF, manifest, spine y metadatos |
-| `EpubZipWriterTest.kt` | EpubZipWriter | ✅ REVISADO | Tests de reempaquetado ZIP de EPUB con compresión STORED en mimetype |
-| `XhtmlTranslatorDocTest.kt` | XhtmlTranslatorDoc | ✅ REVISADO | Tests de segmentación de texto, nodos y atributos en XHTML |
-| `ContentExtractorTest.kt` | ContentExtractor | ✅ REVISADO | Tests de extracción de capítulos HTML, limpieza con SiteProfile y extracción de imágenes |
-| `EpubAssemblerTest.kt` | EpubAssembler | ✅ REVISADO | Tests de ensamblado de capítulos descargados en archivo EPUB estándar |
-| `ImageSnifferTest.kt` | ImageSniffer | ✅ REVISADO | Tests de detección y resolución de URLs de imágenes en páginas de novelas |
-| `ImportStoreTest.kt` | ImportStore | ✅ REVISADO | Tests de almacenamiento local y estado de progreso de importaciones web |
-| `NovelImporterTest.kt` | NovelImporter | ✅ REVISADO | Tests del orquestador de importación web a EPUB |
-| `NovelIndexLoaderTest.kt` | NovelIndexLoader | ✅ REVISADO | Tests de carga y parseo del índice/TOC de novelas web |
-| `DeepFileSystemScannerTest.kt` | DeepFileSystemScanner | ✅ REVISADO | Tests de escaneo profundo recursivo de carpetas de almacenamiento |
-
-### Tests Instrumentados (`app/src/androidTest/`)
-
-| Archivo | Clase bajo prueba | Estado | Hallazgos |
-|---------|-------------------|--------|-----------|
-| `ExampleInstrumentedTest.kt` | Prueba básica instrumentada | ✅ REVISADO | Verifica packageName de la app |
-| `LibraryScreenE2ETest.kt` | LibraryScreen E2ETest | ⏳ PENDIENTE | Clase de stub (solo `assertTrue(true)`) |
-
----
-
-## 15. Cómo Usar este Archivo con una IA y Desarrolladores
-
-Cualquier sesión de desarrollo o intervención de un asistente de IA debe consultar este archivo como **única fuente de verdad** del proyecto antes de sugerir o aplicar modificaciones en el código fuente.
-
-### Protocolo de Inicio de Sesión
-Inicia la interacción estableciendo:
-> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual del Proyecto, los Invariantes e Intocables (Sección 🛡️), las Decisiones de Arquitectura (Sección 🏛️) y las Reglas de Trabajo antes de proponer cualquier cambio al código."*
-
-### Protocolo de Modificación de Archivos
-Antes de alterar cualquier componente:
-1. **Comprobar Intocables:** Verifica que el archivo objetivo no forme parte de los invariantes del lector (`ChapterScrollDetector.kt`, CSS de `ReaderExtensions.kt`, `AudioFocus` en `TtsManager.kt`, firmas públicas de `ReaderViewModel.kt`).
-2. **Consultar Entrada Atómica:** Localiza la ruta del archivo en las secciones 0 a 12 del índice para conocer sus dependencias ascendentes (`depende_de`) y descendentes (`usado_por`).
-3. **Revisar Hallazgos Asociados:** Consulta la columna de hallazgos del archivo y la matriz de criticidad de la Sección 14 para evitar reintroducir bugs corregidos o pasar por alto casos borde.
-4. **Respetar la Leyenda de Estados:**
-   - ✅ **Resuelto y verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
-   - 🟡 **Resuelto en código, pendiente de validación en dispositivo:** Requiere comprobación física en `TECNO-LH7n` antes de considerarse cerrado.
-   - 🔴 **Pendiente:** Deuda técnica identificada que debe abordarse bajo un plan dedicado.
-   - ⚪ **No verificado:** Estado preventivo de componentes no auditados.
-5. **Verificación Continua:** Ejecutar obligatoriamente `.\gradlew.bat :app:compileDebugKotlin` y `.\gradlew.bat :app:testDebugUnitTest` tras cada fase de trabajo.
-
----
-
-*`dona.md` es un documento vivo de alta fidelidad mantenido bajo control de versiones.*
