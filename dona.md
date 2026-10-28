@@ -1,15 +1,107 @@
-# dona.md — Índice Atómico Completo de Woods Reader
+# dona.md — Documento Ancla e Índice Atómico Completo de Woods Reader
 
-**Propósito:** Archivo maestro para que cualquier IA entienda instantáneamente la estructura, dependencias y estado de cada archivo del proyecto sin escanear el código fuente línea por línea.
+**Propósito:** Documento ancla maestro y fuente de verdad técnica para que cualquier desarrollador o asistente de IA entienda instantáneamente la arquitectura, invariantes, decisiones de diseño, estado real y estructura de cada archivo de Woods Reader sin requerir el historial de chats previo.
 
-**Formato por archivo:**
-- `ruta` — ubicación relativa desde la raíz
-- `propósito` — qué hace en una frase
-- `clases` — clases/top-level definitions definidas
-- `depende_de` — qué consume (imports clave)
-- `usado_por` — quién lo consume (inverso)
-- `estado` — `✅ REVISADO_ATOMICAMENTE` / `⏳ PENDIENTE_REVISION`
-- `hallazgos` — problemas detectados (si los hay)
+---
+
+## 📌 ESTADO ACTUAL DEL PROYECTO (Al 28/10/2026)
+- **Fecha de última auditoría:** 28 de octubre de 2026.
+- **Commit hash de referencia:** `480f604` (rama `master`).
+- **Resumen Ejecutivo:**
+  1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
+  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias (`app/src/test/`) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
+  3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
+  4. **Arquitectura del Lector Descomprimida:** `ReaderViewModel.kt` desacoplado con éxito mediante el patrón *Strangler Fig*, extrayendo 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (reducción de más de 1.100 líneas y 5 inyecciones directas eliminadas).
+  5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
+
+---
+
+## 🛡️ INVARIANTES E INTOCABLES (Reglas del Proyecto)
+Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA DEBEN MODIFICARSE** sin aprobación expresa ni sin una suite de pruebas de regresión visual/auditiva:
+1. `ChapterScrollDetector.kt`:
+   - **Razón:** Maneja la detección sensible de scroll horizontal y vertical de Readium con heurísticas de tolerancia gestual. Cualquier alteración de sus umbrales produce saltos de página erráticos, bloqueos de scroll o regresiones en modo continuo.
+2. **CSS de paginado en `ReaderExtensions.kt`**:
+   - **Razón:** Inyectado dinámicamente en el WebView de Readium. Controla el cálculo de columnas, márgenes, separación de párrafos, tipografía y soporte de temas (sepia, noche, blanco). Modificarlo corrompe la paginación y altera el conteo de páginas virtuales.
+3. **Manejo de `AudioFocus` en `TtsManager.kt`**:
+   - **Razón:** Implementa las directrices estrictas de Android para `AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` y transiciones de audio. Alterarlo provoca colisiones de reproducción con llamadas entrantes, reproductores de música externos (Spotify/YouTube) y pérdida de sonido al pausar.
+4. **Firmas y `StateFlow` públicos en `ReaderViewModel.kt` consumidos por `ReaderScreen.kt`**:
+   - **Razón:** Representa el contrato rígido de la UI con la lógica de negocio. Cualquier refactorización debe ser interna (hacia casos de uso o coordinadores delegados) sin alterar las firmas ni nombres de métodos ni flows observados por la pantalla de lectura.
+
+---
+
+## 🏛️ DECISIONES DE ARQUITECTURA Y MOTIVOS
+1. **Strangler Fig de Adentro Hacia Afuera para `ReaderViewModel`**:
+   - *Decisión:* En lugar de reescribir el ViewModel de 2.900 líneas en un solo paso de alto riesgo, se extrajeron gradualmente las responsabilidades de dominio comenzando por las hojas periféricas (`SaveReadingProgressUseCase`, `CalculateReadingStatsUseCase`, `LoadBookFastUseCase`, `ManageReaderAnnotationsUseCase`, `ReaderIntelligenceAndExportCoordinator`).
+   - *Motivo:* Permitió mantener la compilación y las 182 pruebas unitarias pasando en cada commit individual, con cero regresiones en la UI y facilitando la cobertura aislada de pruebas.
+2. **NO a un `ReaderUiState` Monolítico Único**:
+   - *Decisión:* Se conservan `StateFlow` independientes para aspectos ortogonales (progreso de lectura, estado de audio/TTS, notas y resaltados, búsqueda en libro, rayos-X, etc.).
+   - *Motivo:* Unificar todos los campos en una sola data class provocaba que cualquier cambio milimétrico de posición (scroll continuo a 60 fps) disparara recomposiciones masivas de menús, barras de audio y diálogos en Compose, degradando el rendimiento.
+3. **Fast-Path Sintético O(1) en `LoadBookFastUseCase`**:
+   - *Decisión:* Para libros voluminosos con más de 80 capítulos/spines, se omite el cálculo tradicional y pesado de posiciones de Readium (`computePositions()`) y se genera un array sintético de posiciones virtuales proporcionales.
+   - *Motivo:* Reduce el tiempo de apertura de libros masivos (>1.000 páginas) de ~12 segundos a menos de 200 milisegundos, erradicando los congelamientos de ANR al abrir libros grandes.
+4. **Un Solo Archivo Contenedor `.m4a` con Metadatos Binarios**:
+   - *Decisión:* En lugar de generar hasta 7 archivos externos complementarios (`.jpg`, `.lrc`, `.srt`, `.txt`), la exportación de audio sintetizado genera exclusivamente un archivo `.m4a` que aloja la pista de audio AAC a 128 kbps, la portada JPEG en la caja `covr` y la letra sincronizada en la caja `©lyr` del átomo `moov.udta.meta.ilst`.
+   - *Motivo:* Cero contaminación de carpetas en `Music/WoodsReader`, compatibilidad inmediata con reproductores estándar (Samsung Music, Poweramp, Musicolet, VLC) y portabilidad completa de la biblioteca de audio.
+
+---
+
+## 📋 REGLAS DE TRABAJO PARA DESARROLLADORES Y AGENTES DE IA
+1. **Punto de Restauración Previo Obligatorio:** Antes de aplicar cualquier cambio o refactorización, registrar el estado con `git add -A && git commit -m "..."`.
+2. **Tolerancia Cero a Errores de Build:** Todo cambio debe verificar `:app:compileDebugKotlin` y `:app:testDebugUnitTest` con 0 errores antes de dar por buena una intervención.
+3. **Atomicidad de Fases:** Un commit descriptivo por fase o componente. Nunca acumular múltiples tareas no relacionadas en un solo commit.
+4. **Evidencia Antes de Aserción:** Prohibido afirmar que un bug está resuelto o que un módulo funciona sin haber inspeccionado el código fuente, ejecutado las pruebas o validado en logcat.
+5. **Criterio de Validación Dispositivo (🟡 → ✅):** Todo hallazgo o refactor que involucre hardware o subsistemas de Android (TTS nativo, Sherpa ONNX, audio focus, ciclo de vida del WebView) se marca como 🟡 hasta ser ejecutado y comprobado físicamente en el teléfono (`TECNO-LH7n`).
+
+---
+
+## 🗺️ PENDIENTES PRIORIZADOS Y ROADMAP
+*(Referencia completa: [ROADMAP.md](file:///c:/Users/Orbit/Downloads/woods%20reader/ROADMAP.md))*
+
+1. **Fase 1 del Roadmap: TTS Karaoke Sincronizado Palabra por Palabra**:
+   - Implementación de resaltado visual continuo de palabras en el texto durante la narración TTS mediante los timestamps emitidos por los tokens de Sherpa ONNX.
+2. **Fase 2 del Roadmap: Tipografía y Ortotipografía Española Avanzada**:
+   - Formateo automatizado de diálogos con raya/guion largo (`—`), comillas latinas (`«` y `»`), espacios de no separación (NBSP) antes de signos dobles (`¿`, `¡`) y partición silábica en español.
+3. **Fase 3 del Roadmap: Doble Vista para Documentos PDF**:
+   - Alternancia fluida entre modo Reflow accesible (extracción semántica) y modo Réplica Original con zoom, conservando la sincronización de lectura bidireccional.
+4. **Deuda Técnica Crítica Pendiente:**
+   - 🔴 **C4:** Cancelación ordenada de la corrutina de limpieza en `SherpaModelManager.kt:280`.
+   - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos de 5 archivos (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `ReaderViewModel.kt`).
+
+---
+
+## 📜 HISTORIAL DE COMMITS RECIENTES (Cadena de Refactor y Blindaje)
+
+| Commit | Fecha | Tipo | Descripción |
+|---|---|---|---|
+| `480f604` | 2026-10-28 | docs | Bloque C: corregir inconsistencias internas, flujo de datos 13 y unicidad de tests |
+| `6c80c85` | 2026-10-28 | docs | Bloque B Tanda 5 y completitud: documentar 4 UI parciales, incorporar 23 clases y 10 tests faltantes |
+| `d795719` | 2026-10-28 | docs | Bloque B Tanda 4: revisión completa de ReaderTopBar, ReaderSideMenu, ReaderAudioBottomSheet, ReaderTtsBar, ReaderNotesTab |
+| `9f26bba` | 2026-10-28 | docs | Bloque B Tanda 3: revisión completa de PdfReflowManager, ReaderTtsService, BookScannerService, LibraryHeader, LibraryScreen |
+| `eda579d` | 2026-10-28 | docs | Bloque B Tanda 2: revisión completa de QuoteVideoClipExporter, WoodsBackupManager, ProLicenseManager, ReaderContract, EpubFormatManager |
+| `4ec744c` | 2026-10-28 | docs | Bloque B Tanda 1: revisión completa de MainActivity, BookRepository, LibraryModule, FastEpubSearchEngine, BookXRayEngine |
+| `e03c6e0` | 2026-10-28 | docs | Bloque A: corregir estados de hallazgos C1-C13 y recalcular contadores con leyenda estricta |
+| `5a9b341` | 2026-10-28 | fix | blindar carrera de preferencias en arranque en frío y evitar continuaciones colgadas en tts nativo |
+| `93e4dc2` | 2026-10-28 | fix | eliminar `.first()` bloqueante y desacoplar UtteranceProgressListener en TtsManager (C6, C7) |
+| `7ac5385` | 2026-10-28 | fix | lectura segura de bookId en savedStateHandle (C2, C12, C13) en ViewModels |
+| `8a4013a` | 2026-10-28 | feat | PARTE 73: incrustar portada (covr) y subtítulos sincronizados (©lyr) directo en .m4a único vía M4aMetadataEmbedder |
+| `d86e7a1` | 2026-10-28 | refactor | Paso 4: extraer ReaderIntelligenceAndExportCoordinator y desacoplar búsqueda/X-Ray/audio |
+| `1c949cc` | 2026-10-28 | refactor | Paso 3: extraer ManageReaderAnnotationsUseCase y desacoplar lógica de marcadores/resaltados |
+| `26810fd` | 2026-10-28 | refactor | Paso 2: extraer LoadBookFastUseCase y desacoplar apertura O(1) de libros |
+| `4de4bd7` | 2026-10-28 | refactor | Paso 1: extraer SaveReadingProgressUseCase y CalculateReadingStatsUseCase |
+
+---
+
+## 🏷️ LEYENDA Y FORMATO DEL ÍNDICE POR ARCHIVO
+Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
+- `ruta` — ubicación relativa desde la raíz del proyecto.
+- `propósito` — responsabilidad técnica resumida en una frase clara.
+- `clases` — clases, interfaces o tipos top-level definidos en el archivo.
+- `depende_de` — módulos, casos de uso o librerías clave que consume.
+- `usado_por` — componentes que lo inyectan o invocan directamente.
+- `estado` — estado de revisión:
+  - `✅ REVISADO_ATOMICAMENTE` — inspeccionado en su totalidad línea por línea.
+  - `🟡 REVISION_PARCIAL` — auditado por secciones (especificado con rangos de líneas).
+- `hallazgos` — advertencias, riesgos de crash o deuda técnica identificada.
 
 ---
 
@@ -1914,18 +2006,26 @@ Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
 
 ---
 
-## 15. Cómo Usar este Archivo con una IA
+## 15. Cómo Usar este Archivo con una IA y Desarrolladores
 
-Inicia cada sesión diciendo:
+Cualquier sesión de desarrollo o intervención de un asistente de IA debe consultar este archivo como **única fuente de verdad** del proyecto antes de sugerir o aplicar modificaciones en el código fuente.
 
-> *"Lee el archivo `dona.md` para entender la arquitectura completa de Woods Reader. Cada archivo tiene su propósito, clases, dependencias, dependientes, estado de revisión y hallazgos."*
+### Protocolo de Inicio de Sesión
+Inicia la interacción estableciendo:
+> *"Consulta el documento ancla `dona.md`. Revisa el Estado Actual del Proyecto, los Invariantes e Intocables (Sección 🛡️), las Decisiones de Arquitectura (Sección 🏛️) y las Reglas de Trabajo antes de proponer cualquier cambio al código."*
 
-Cuando necesites modificar un archivo:
-1. Busca su ruta en este índice.
-2. Verifica su `estado` (✅ revisado / ⏳ pendiente).
-3. Revisa sus `hallazgos` antes de tocarlo.
-4. Consulta `depende_de` y `usado_por` para entender el impacto del cambio.
+### Protocolo de Modificación de Archivos
+Antes de alterar cualquier componente:
+1. **Comprobar Intocables:** Verifica que el archivo objetivo no forme parte de los invariantes del lector (`ChapterScrollDetector.kt`, CSS de `ReaderExtensions.kt`, `AudioFocus` en `TtsManager.kt`, firmas públicas de `ReaderViewModel.kt`).
+2. **Consultar Entrada Atómica:** Localiza la ruta del archivo en las secciones 0 a 12 del índice para conocer sus dependencias ascendentes (`depende_de`) y descendentes (`usado_por`).
+3. **Revisar Hallazgos Asociados:** Consulta la columna de hallazgos del archivo y la matriz de criticidad de la Sección 14 para evitar reintroducir bugs corregidos o pasar por alto casos borde.
+4. **Respetar la Leyenda de Estados:**
+   - ✅ **Resuelto y verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
+   - 🟡 **Resuelto en código, pendiente de validación en dispositivo:** Requiere comprobación física en `TECNO-LH7n` antes de considerarse cerrado.
+   - 🔴 **Pendiente:** Deuda técnica identificada que debe abordarse bajo un plan dedicado.
+   - ⚪ **No verificado:** Estado preventivo de componentes no auditados.
+5. **Verificación Continua:** Ejecutar obligatoriamente `.\gradlew.bat :app:compileDebugKotlin` y `.\gradlew.bat :app:testDebugUnitTest` tras cada fase de trabajo.
 
 ---
 
-*Este archivo se actualiza a medida que se completa la revisión atómica de cada archivo fuente.*
+*`dona.md` es un documento vivo de alta fidelidad mantenido bajo control de versiones.*
