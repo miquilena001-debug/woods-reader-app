@@ -6,18 +6,18 @@
 
 ## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `b0a3f0b` (rama `master`).
+- **Commit hash de referencia:** `fe11ed7` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
-  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 186 casos de test en verde (0 fallos, 0 errores).
+  2. **Pruebas Unitarias al 100%:** 43 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 48 archivos de test y utilidades) ejecutan 194 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
-  4. **Descompresión Parcial del Lector:** Extracción de 6 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator); `ReaderViewModel.kt` delega navegación, precarga y caché de capítulos en `ReaderChapterNavigationCoordinator`, reduciendo su volumen a 2.229 líneas (137.6 KB).
+  4. **Descompresión Parcial del Lector:** Extracción de 7 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController); `ReaderViewModel.kt` reduce sus dependencias a 21 parámetros de constructor y su volumen a 2.158 líneas (135.4 KB).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
 
 - **Resumen de Auditoría de Hallazgos (Sección 14):**
   - ✅ **Verificado / Resuelto:** 11 hallazgos (C1, C2, C5, C9, C12, C13, A1, A12, M4, M28, SEC-1).
-  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 4 hallazgos (C6, C7, M25, M26).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 22 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M27, M29).
+  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 5 hallazgos (C3, C6, C7, M25, M26).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 21 hallazgos (C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M27, M29).
   - ⚪ **No verificado:** 0.
 
 ---
@@ -125,7 +125,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 3. **Fase 3 del Roadmap: Doble Vista para Documentos PDF**:
    - Alternancia fluida entre modo Reflow accesible (extracción semántica) y modo Réplica Original con zoom, conservando la sincronización de lectura bidireccional.
 4. **Deuda Técnica Crítica Pendiente:**
-   - 🔴 **C3:** Descompresión de God Class en `ReaderViewModel.kt` (24 dependencias inyectadas en constructor, ~2.476 líneas).
+   - 🟡 **C3 [Mitigado en código - Pendiente dispositivo]:** Descompresión de God Class en `ReaderViewModel.kt` (reducido a 21 parámetros inyectados en constructor, ~2.158 líneas tras extraer `ReaderVoiceAndAmbienceController` y `ReaderChapterNavigationCoordinator`).
    - 🔴 **C4:** Cancelación ordenada de la corrutina de limpieza en `SherpaModelManager.kt:280`.
    - ✅ **C5 [Mitigado]:** Logging nativo C++ de Sherpa atado a `BuildConfig.DEBUG` en `SherpaModelManager.kt:437` (desactivado en release).
    - 🔴 **C11:** Saneamiento de mojibake residual en comentarios descriptivos y regex en 5 archivos adicionales (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`, `MultilingualAudiobookNormalizer.kt`).
@@ -136,6 +136,10 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 
 | Commit | Fecha | Tipo | Descripción |
 |---|---|---|---|
+| `fe11ed7` | 2026-10-28 | refactor | extraer ReaderVoiceAndAmbienceController para voces, ambientes y sleep timer (P6) |
+| `548289e` | 2026-10-28 | docs | indexar ReaderChapterNavigationCoordinator y actualizar estado de M28 y ReaderViewModel |
+| `b0a3f0b` | 2026-10-28 | refactor | extraer ReaderChapterNavigationCoordinator desacoplando navegación, caché y prefetch (P5) |
+| `833a866` | 2026-10-28 | refactor | unificar cálculo de reading stats en updateReadingStats y resolver M28 (P5) |
 | `75c91e5` | 2026-10-28 | docs | Fase 3: registro consolidado de errores, conexiones y riesgos en dispositivo |
 | `029dd43` | 2026-10-28 | docs | Fase 2: mapa de conexiones Hilt, Room, Android y 9 flujos de datos |
 | `e18afd7` | 2026-10-28 | docs | Fase 1: veracidad estricta, inventario 237/237 kt y hallazgos con evidencia |
@@ -524,6 +528,14 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Usado_por:** ReaderViewModel
 - **Estado:** 🟡 Validar en tlf. (completo, 444 líneas: pendiente de validación en hardware del avance de capítulo manual y automático con TTS)
 - **Hallazgos:** M28 resuelto en código. Centraliza toda la lógica de salto y precarga de capítulos para EPUB y PDF.
+
+#### `domain/reader/ReaderVoiceAndAmbienceController.kt`
+- **Propósito:** Controlador y coordinador de dominio para voces de síntesis (Sherpa ONNX offline y Edge Neural online), reglas fonéticas de pronunciación (`PronunciationLexiconManager` + `TtsPresetCatalog`), soundscapes de ambiente (`ForestAmbienceEngine` + `AmbientSoundscapePlayer`) y temporizador de apagado progresivo (`SleepTimer`). Desacopla la lógica de audio y ambiente de `ReaderViewModel`.
+- **Clases:** `ReaderVoiceAndAmbienceController` (@Singleton / @Inject constructor)
+- **Depende_de:** SleepTimer, SherpaModelManager, ForestAmbienceEngine, AmbientSoundscapePlayer, EdgeNeuralTtsClient, PronunciationLexiconManager, TtsPresetCatalog, UserPreferencesRepository, TtsManager
+- **Usado_por:** ReaderViewModel
+- **Estado:** 🟡 Validar en tlf. (completo, 255 líneas, 8 tests unitarios en verde: pendiente validación en TECNO-LH7n del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer)
+- **Hallazgos:** C3 mitigado parcialmente: reduce 6 dependencias del constructor de `ReaderViewModel` (de 27 a 21) centralizando métodos puente de audio/ambiente y gestión de diálogos.
 
 ### 3.4 Escáneres de Archivos
 
@@ -1559,13 +1571,13 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **C11:** Mojibake en comentarios descriptivos de líneas 546, 563 y 1919.
 
 #### `ui/reader/ReaderViewModel.kt`
-- **Propósito:** Orquestador principal de UI del lector (~2.229 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 6 casos de uso y coordinadores especializados.
+- **Propósito:** Orquestador principal de UI del lector (~2.158 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 7 casos de uso y coordinadores especializados.
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
-- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer, SleepTimer, PdfBookViewSynchronizer, CoverExtractor, TtsPresetCatalog, EdgeNeuralTtsClient, QuoteVideoClipExporter
+- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, PdfBookViewSynchronizer, CoverExtractor, QuoteVideoClipExporter
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.229 líneas, 137.6 KB)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.158 líneas, 135.4 KB)
 - **Hallazgos:**
-  - **C3 [PENDIENTE]:** God Class en descompresión: se extrajo `ReaderChapterNavigationCoordinator` (444 líneas) al dominio, delegando en él la caché LRU de capítulos, prefetch asíncrono y orquestación de saltos manuales y TTS.
+  - **C3 [MITIGADO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Descompresión de God Class en curso: reducidas 6 dependencias del constructor (de 27 a 21 parámetros) tras extraer `ReaderVoiceAndAmbienceController` (255 líneas, P6) y `ReaderChapterNavigationCoordinator` (444 líneas, P5). Pendiente validación en `TECNO-LH7n` del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer.
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
   - **C2 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Emite `ReaderUiState.Error` seguro si falta el parámetro.
   - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) confirmados en comentarios de líneas 355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245.
@@ -2026,6 +2038,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 | `ExampleUnitTest.kt` | `app/src/test/.../ExampleUnitTest.kt` | Prueba básica de sanidad | ✅ REVISADO |
 | `EntityHeuristicsTest.kt` | `app/src/test/.../util/EntityHeuristicsTest.kt` | Heurísticas de extracción de entidades | ✅ REVISADO |
 | `ReaderViewModelTest.kt` | `app/src/test/.../ui/reader/ReaderViewModelTest.kt` | Rangos de palabras, puntuación y navegación | ✅ REVISADO |
+| `ReaderVoiceAndAmbienceControllerTest.kt` | `app/src/test/.../domain/reader/ReaderVoiceAndAmbienceControllerTest.kt` | Delegación de voces Sherpa/Edge, léxico, ambientes y sleep timer | ✅ REVISADO |
 | `ForceLayoutTest.kt` | `app/src/test/.../ui/graph/ForceLayoutTest.kt` | Layout de fuerzas del grafo | ✅ REVISADO |
 | `BookScannerServiceExtremeTest.kt` | `app/src/test/.../service/BookScannerServiceExtremeTest.kt` | Dedup y batches de escaneo | ✅ REVISADO |
 | `TextRankSummarizerTest.kt` | `app/src/test/.../service/TextRankSummarizerTest.kt` | Extracción de sinopsis por TextRank | ✅ REVISADO |
@@ -2264,7 +2277,7 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 |---|---|---|---|---|---|---|---|
 | **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` confirman que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
 | **C2** | Crítica | `ReaderViewModel.kt:171, 597` | Cierre forzado inmediato (`IllegalStateException`) si el lector se abre con URI sin `bookId` | `NavGraph` → `ReaderScreen` → `ReaderViewModel` | ✅ **Resuelto** | Navegar a `Screen.Reader.createRoute("")`. Antes crasheaba en `checkNotNull(savedStateHandle["bookId"])`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene en blanco, emite `ReaderUiState.Error` seguro. |
-| **C3** | Crítica | `ReaderViewModel.kt:134-158` | God Class monolítica con 24 dependencias inyectadas en constructor (25 con Application) frente a 22 en `4de4bd7^` | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | 🔴 **Pendiente** | Contar parámetros en constructor (L134-158): 24 dependencias (25 con Application). En `4de4bd7^` eran 22 (23 con Application). | Deuda técnica documentada. Se extrajeron 3 dependencias a casos de uso pero se agregaron 5 casos de uso/coordinadores; siguen dentro TTS, teleprompter, sueño, ambientes, preferencias y navegación. |
+| **C3** | Crítica | `ReaderViewModel.kt:129-161` | Descompresión de God Class en curso: 21 parámetros en constructor (20 inyecciones + Application) tras extraer `ReaderVoiceAndAmbienceController` (255 líneas, P6) y `ReaderChapterNavigationCoordinator` (444 líneas, P5). Reducido desde 27 parámetros | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | 🟡 **Validar en tlf.** | Contar parámetros en constructor (L129-161): 21 parámetros. Pendiente validar físicamente en `TECNO-LH7n` cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer. | Encapsuladas 7 dependencias puente en `ReaderVoiceAndAmbienceController` (Sherpa ONNX, Edge Neural, léxico, ambientes y sleep timer) y delegada navegación en `ReaderChapterNavigationCoordinator`. Firmas públicas en UI intactas. |
 | **C4** | Alta | `SherpaModelManager.kt:280` | Corrutina huérfana en `init` lanzada en singleton sin control de cancelación | `SherpaModelManager` → Ciclo de vida de app | 🔴 **Pendiente** | Inspeccionar línea 280: `managerScope.launch` borra directorio de Kokoro recursivamente sin almacenar el `Job`. | Deuda técnica documentada. No impacta runtime crítico al ser `@Singleton`, pero carece de método de cancelación ordenado. |
 | **C5** | Baja | `SherpaModelManager.kt:437` | Logging nativo C++ de Sherpa ONNX emitido en logcat durante depuración | `SherpaModelManager` → Logcat del sistema | ✅ **Mitigado** | Inspeccionar línea 437: pasa `debug = BuildConfig.DEBUG`. En release compila como `false`, anulando logs en producción. | No representa riesgo en producción (`BuildConfig.DEBUG == false`). En depuración local genera trazas nativas estándar en logcat. |
 | **C6** | Crítica | `TtsManager.kt:1375` | Congelamiento o suspensión prolongada del hilo de síntesis de TTS en arranque en frío | `TtsManager` → `narrateSequence` → `ReaderTtsService` | 🟡 **Validar en tlf.** | Pulsar Play de TTS inmediatamente tras abrir la app en frío con motor Sherpa activado. | Commits `93e4dc2` y `5a9b341`: eliminó `.first()`, usa `@Volatile cachedUseSherpaTts` y `ensurePreferencesLoaded(300ms)`. |
@@ -2337,6 +2350,13 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
      - Abrir un PDF con tabla de contenidos (TOC) estructurada en modo libro y en modo Reflow.
      - Pulsar el botón de siguiente capítulo y anterior capítulo en el slider inferior: verificar que la página salte al inicio del capítulo correspondiente sin requerir `navigator` activo en Compose.
      - Activar TTS cerca del final del capítulo y confirmar que al concluir el último bloque de texto, la app cargue y comience a sintetizar automáticamente el siguiente capítulo sin congelarse ni interrumpir la sesión de lectura.
+9. **Control de Voces Sherpa/Edge, Soundscapes de Ambiente y Temporizador en Controlador Desacoplado (C3 / P6)**:
+   - *Riesgo:* Condiciones de carrera al cambiar entre modelos de voz ONNX en caliente, descarga en segundo plano y extracción de modelos tar.bz2 en almacenamiento local, activación de soundscapes concurrentes (`ForestAmbienceEngine` + `AmbientSoundscapePlayer`) o parada de sleep timer.
+   - *Verificación física:* En el teléfono TECNO-LH7n:
+     - Cambiar voz de síntesis Sherpa ONNX a una voz ya descargada y probar síntesis en caliente.
+     - Seleccionar una voz no descargada: verificar apertura del diálogo oficial de descarga, progreso de descarga porcentual y conmutación automática una vez extraído el modelo.
+     - Activar soundscape de ambiente (`ForestAmbienceEngine`) mientras se reproduce TTS y ajustar volumen relativo.
+     - Iniciar temporizador de sueño y verificar que detenga TTS y ambiente sonoro simultáneamente al expirar.
 
 ---
 
@@ -2349,6 +2369,7 @@ Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
 | `ExampleUnitTest.kt` | Prueba básica | ✅ REVISADO | 1 test trivial (2+2=4), pasa |
 | `EntityHeuristicsTest.kt` | EntityHeuristics | ✅ REVISADO | Localizado en `app/src/test/.../util/` |
 | `ReaderViewModelTest.kt` | ReaderViewModel | ✅ REVISADO | Localizado en `app/src/test/.../ui/reader/` (260 líneas: tests de navegación por TOC para PDF/Reflow en primera página, intermedia y última) |
+| `ReaderVoiceAndAmbienceControllerTest.kt` | ReaderVoiceAndAmbienceController | ✅ REVISADO | 8 tests: sleep timer (countdown, expiración, fin cap, presets inteligentes), ambientes (presets, volumen, visibilidad), voces Sherpa/Edge, léxico fonético y ciclo de vida |
 | `ForceLayoutTest.kt` | ForceLayout | ✅ REVISADO | Localizado en `app/src/test/.../ui/graph/` |
 | `BookScannerServiceExtremeTest.kt` | BookScannerService | ✅ REVISADO | Mock-based, testa dedup y batches |
 | `TextRankSummarizerTest.kt` | TextRankSummarizer | ✅ REVISADO | Localizado en `app/src/test/.../service/` |
