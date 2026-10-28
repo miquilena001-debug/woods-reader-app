@@ -1552,8 +1552,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Propósito:** Pantalla principal del lector de libros. Orquestador monolítico y superficie de interacción Readium WebView / Pdfium, gestos de navegación táctil (toques, deslizamientos, `ChapterScrollDetector`), modos de lectura (Paginado, Scroll vertical continuo, Modo Reflow para PDF/EPUB), barra de progreso, teleprompter WPM, gestión de notas/subrayados/entidades de grafo, integración con menús flotantes, bottom sheets (`ReaderTtsMacroWindow`, `ReaderXRaySheet`, `FootnoteSheet`, `ReaderSideMenu`), y estado visual de carga y error (`ReaderUiState.Error`).
 - **Clases / Composables:**
   - `ReaderScreen` (público, L161–1848): Composable raíz del lector. Gestiona ciclo de vida (`DisposableEffect` con guardado inmediato en `ON_PAUSE`), `BackHandler`, `HazeState`, eventos de `VisualNavigator` (Readium), integración con `ChapterScrollDetector`, overlays de TTS (`ReaderTtsMacroWindow`), paneles laterales, hojas modales y teleprompter.
-  - `PullToChapterIndicator` (público, L1851–1909): Indicador animado de sobre-desplazamiento vertical en bordes de capítulo con efecto glassmorphism (`HazeChild` / `GlassStyle`), icono `KeyboardArrowUp`/`KeyboardArrowDown` y feedback háptico.
-  - `FootnoteSheet` (público, L1924–1960): Hoja inferior modal (`ModalBottomSheet`) con estilo visual `ReaderDesign.GlassStyle` que despliega notas al pie de página emergentes sin perder la posición de lectura.
 - **Contrato con ViewModel:**
   - *StateFlows y estados observados:* `uiState` (`ReaderUiState`), `ttsState` (`TtsState`), `currentTtsLocator` (`Locator?`), `currentTtsSentence` (`String`), `currentTtsPage` (`Int`), `isReflowMode` (`Boolean`), `reflowState`, `isLoadingMoreReflow`, `ttsActiveBlockIndex`, `currentSpeed`, `currentPitch`, `bookTimeRemaining`, `chapterTimeRemaining`, `isAutoScrollActive`, `autoScrollWpm`, `isAutoScrollManuallyPaused`, `globalProgress`, `chapterInfo`, `highlights`, `bookmarks`, `isCurrentPageBookmarked`, `lastTtsLocator`, `sleepTimerRemaining`, `sherpaDownloadState`, `selectedSherpaVoice`, `audioExportState`, `useEdgeNeuralTts`, `selectedEdgeVoice`, `availableVoices`, `ttsRules`.
   - *Métodos invocados:* `loadBook(bookId)`, `saveCurrentProgressBeforeExit()`, `saveProgress(locator)`, `flushReadingProgressImmediately()`, `stopTts()`, `pauseTts()`, `resumeTts()`, `onPlay()`, `playTts(locator)`, `playTtsFromLast()`, `speakSnippet(text)`, `addHighlight(locator, color, text, note)`, `addBookmark(locator)`, `deleteHighlight(id)`, `deleteBookmark(id)`, `toggleReflowMode()`, `jumpToReflowPage(page)`, `onReflowScroll(index, isScrolling)`, `loadNextPage()`, `loadPreviousPage()`, `skipReflowTtsForward()`, `skipReflowTtsBackward()`, `toggleAutoScroll()`, `toggleAutoScrollPause()`, `setAutoScrollWpm(wpm)`, `seekToGlobalProgress(progress, nav)`, `goToLocator(nav, loc)`, `goToNextChapter(nav)`, `goToPreviousChapter(nav)`, `generateXRayReport()`, `exportCurrentChapterToAudio()`, `exportAudioChapters(max)`, `cancelAudioExport()`, `resetAudioExportState()`, `downloadSherpaModel()`, `selectOrDownloadSherpaVoice(voice)`, `deleteSherpaVoiceFromReader(voice)`, `saveTtsRule(rule)`, `deleteTtsRule(id)`, `installTtsPresetPack(pack)`, `installTtsPresetPackWithResult(pack)`, `startSleepTimer(mins)`, `cancelSleepTimer()`, `toggleNextAmbience()`, `onThemeChange(theme)`, `onFontSizeChange(sp)`, `onLineSpacingChange(mul)`, `onMarginChange(margin)`, `onTextAlignChange(align)`, `onFontFamilyChange(font)`, `updateHyphenation(bool)`, `updateVolumeKeysNavigation(bool)`, `onScrollModeChange(mode)`, `onPageTurnAnimationChange(anim)`, `onPageTurnStyleChange(style)`, `onInvertedTapZonesChange(bool)`, `updateTtsHighlightStyle(style)`, `updateTtsUiStyle(style)`, `updateTtsVoiceName(name)`, `onSpeedChange(speed)`, `onPitchChange(pitch)`, `onLanguageChange(lang)`, `onTtsAutoScrollChange(bool)`, `updateUseSherpaTts(bool)`, `setUseEdgeNeuralTts(bool)`, `selectEdgeVoice(voice)`, `addWordExclusionRule(pattern, isExact, allBooks)`.
@@ -1564,11 +1562,29 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - Fallback a navegador externo: si falla el diccionario offline (`InlineLookupManager`), lanza `Intent(Intent.ACTION_VIEW)` hacia Wiktionary o Google Translate.
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeEffect`, `hazeChild`), Readium Navigator (`VisualNavigator`, `EpubNavigatorFragment`, `PdfNavigatorFragment`), `ReaderViewModel`, `EgoGraphViewModel`, `ChapterScrollDetector`, `ReaderTopBar`, `ReaderBottomControls`, `ReaderSideMenu`, `ReaderSettingsDialog`, `ReaderTtsMacroWindow`, `ReaderXRaySheet`, `FootnoteSheet`, `PullToChapterIndicator`, `InlineLookupManager`.
 - **Usado_por:** `NavGraph.kt`.
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 1.960 líneas)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 1.855 líneas - validar en TECNO-LH7n)
 - **Hallazgos:**
   - **M18:** Inyección de JavaScript directo en L1158–1163 (`s.modify('move', 'backward', 'sentence')`) sobre instancias de WebView sin timeout de ejecución ni callback de error ante sintaxis no soportada en motores WebView desactualizados.
   - **M19:** Captura de excepciones vacía (`catch (_: Exception) {}`) en L1207–1215 al disparar el intent implícito `ACTION_VIEW` para abrir definiciones web externas, ocultando posibles `ActivityNotFoundException` si el dispositivo no tiene navegador instalado.
   - **C11:** Mojibake en comentarios descriptivos de líneas 546, 563 y 1919.
+
+#### `ui/reader/PullToChapterIndicator.kt`
+- **Propósito:** Indicador animado de sobre-desplazamiento vertical en los bordes inicial y final de capítulo ("Pull to Chapter"). Muestra una pastilla flotante con efecto glassmorphism (`HazeChild` / `GlassStyle`), icono direccional (`KeyboardArrowUp` / `KeyboardArrowDown`), porcentaje de estiramiento y etiqueta localizada (capítulo anterior o siguiente).
+- **Clases / Composables:**
+  - `PullToChapterIndicator` (@Composable, L27-88): Indicador visual de tracción táctil entre capítulos.
+- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `ReaderDesign`, `HiddenForest`.
+- **Usado_por:** `ReaderScreen.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 88 líneas - validar en TECNO-LH7n)
+- **Hallazgos:** Ninguno.
+
+#### `ui/reader/FootnoteSheet.kt`
+- **Propósito:** Hoja modal inferior (`ModalBottomSheet`) con estilo visual `ReaderDesign.GlassStyle` que despliega el contenido de notas al pie de página emergentes sin perder la posición de lectura cuando el usuario pulsa un enlace o referencia `[1]` en el EPUB.
+- **Clases / Composables:**
+  - `FootnoteSheet` (@Composable, L18-59): BottomSheet para lectura fluida de notas al pie.
+- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `ReaderDesign`, `HiddenForest`.
+- **Usado_por:** `ReaderScreen.kt`.
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 59 líneas - validar en TECNO-LH7n)
+- **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderViewModel.kt`
 - **Propósito:** Orquestador principal de UI del lector (~2.158 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 7 casos de uso y coordinadores especializados.

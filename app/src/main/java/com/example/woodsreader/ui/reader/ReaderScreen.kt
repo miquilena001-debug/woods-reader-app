@@ -129,6 +129,13 @@ import com.example.woodsreader.ui.theme.LiterataFamily
 
 
 
+private const val MENU_ITEM_TTS_ID = 0x7F0A_BEEF
+private const val MENU_ITEM_HIGHLIGHT_ID = 0x7F0A_FEED
+private const val MENU_ITEM_DICTIONARY_ID = 0x7F0A_FEEC
+private const val MENU_ITEM_TRANSLATE_ID = 0x7F0A_FEEB
+private const val MENU_ITEM_ADD_TO_GRAPH_ID = 0x7F0A_FEEA
+private const val MENU_ITEM_VIEW_GRAPH_ID = 0x7F0A_FEE9
+
 private fun resolveTocTargetPage(link: Link, locator: Locator?): Int? {
     // 1. Posición directa en el locator
     locator?.locations?.position?.takeIf { it > 0 }?.let { return it }
@@ -1845,116 +1852,4 @@ fun ReaderScreen(
 
     }
 }
-}
-
-@Composable
-fun PullToChapterIndicator(
-    progress: Float,
-    hazeState: HazeState,
-    modifier: Modifier = Modifier
-) {
-    if (progress == 0f) return
-    
-    val isForward = progress > 0
-    val absProgress = kotlin.math.abs(progress)
-    
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(ComposeColor.Black.copy(alpha = 0.2f * absProgress))
-    ) {
-        Box(
-            modifier = Modifier
-                .align(if (isForward) Alignment.BottomCenter else Alignment.TopCenter)
-                .padding(bottom = if (isForward) 120.dp else 24.dp, top = if (!isForward) 120.dp else 24.dp)
-                .graphicsLayer {
-                    alpha = absProgress
-                    scaleX = 0.8f + (0.2f * absProgress)
-                    scaleY = 0.8f + (0.2f * absProgress)
-                }
-                .hazeChild(
-                    state = hazeState,
-                    style = ReaderDesign.GlassStyle
-                )
-                .clip(RoundedCornerShape(32.dp))
-                .background(HiddenForest.Surface.copy(alpha = 0.8f))
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        0.0f to Color.White.copy(alpha = 0.2f),
-                        1.0f to Color.Transparent
-                    ),
-                    shape = RoundedCornerShape(32.dp)
-                )
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(
-                    imageVector = if (isForward) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
-                    contentDescription = null,
-                    tint = if (absProgress >= 0.95f) HiddenForest.Accent else HiddenForest.TextSecondary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    text = stringResource(if (isForward) R.string.reader_next_chapter else R.string.reader_previous_chapter),
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                    color = if (absProgress >= 0.95f) HiddenForest.Accent else HiddenForest.TextSecondary
-                )
-            }
-        }
-    }
-}
-
-private const val MENU_ITEM_TTS_ID = 0x7F0A_BEEF
-private const val MENU_ITEM_HIGHLIGHT_ID = 0x7F0A_FEED
-private const val MENU_ITEM_DICTIONARY_ID = 0x7F0A_FEEC
-private const val MENU_ITEM_TRANSLATE_ID = 0x7F0A_FEEB
-private const val MENU_ITEM_ADD_TO_GRAPH_ID = 0x7F0A_FEEA
-private const val MENU_ITEM_VIEW_GRAPH_ID = 0x7F0A_FEE9
-
-/**
- * Muestra el contenido de una nota al pie en un BottomSheet sin perder la posiciÃƒÂ³n de lectura.
- * Se activa cuando el usuario toca una referencia [1] en el EPUB.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun FootnoteSheet(
-    content: String,
-    hazeState: HazeState,
-    onDismiss: () -> Unit
-) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = HiddenForest.Outline) },
-        containerColor = HiddenForest.Surface.copy(alpha = 0.7f),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        modifier = Modifier
-            .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-            .hazeChild(state = hazeState, style = ReaderDesign.GlassStyle)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 48.dp)
-        ) {
-            Text(
-                text = "NOTA",
-                style = MaterialTheme.typography.labelSmall,
-                color = HiddenForest.Accent,
-                letterSpacing = 2.sp,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            Text(
-                text = content,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    lineHeight = 24.sp,
-                    color = HiddenForest.Text
-                )
-            )
-        }
-    }
 }
