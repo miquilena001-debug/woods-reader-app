@@ -41,6 +41,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import com.example.woodsreader.core.pdf.PdfCleanExtractorAndConverter
+import com.example.woodsreader.core.pdf.PdfConversionProgress
 import javax.inject.Inject
 
 @HiltViewModel
@@ -326,6 +328,77 @@ class LibraryViewModel @Inject constructor(
 
     fun cancelEpubTranslation() {
         translationJob?.cancel()
+    }
+
+    private val _pdfConversionProgress = MutableStateFlow<PdfConversionProgress?>(null)
+    val pdfConversionProgress: StateFlow<PdfConversionProgress?> = _pdfConversionProgress.asStateFlow()
+
+    private var pdfConversionJob: kotlinx.coroutines.Job? = null
+
+    fun convertPdfToCleanEpub(
+        book: BookEntity,
+        ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+        onComplete: ((Result<File>) -> Unit)? = null
+    ) {
+        pdfConversionJob?.cancel()
+        pdfConversionJob = viewModelScope.launch(ioDispatcher) {
+            try {
+                val rawPath = book.filePath
+                val cleanPath = when {
+                    rawPath.startsWith("file://") -> android.net.Uri.parse(rawPath).path ?: rawPath.removePrefix("file://")
+                    rawPath.startsWith("file:") -> rawPath.removePrefix("file:")
+                    else -> rawPath
+                }
+                val pdfFile = File(cleanPath)
+                if (!pdfFile.exists()) {
+                    val err = IllegalStateException("No se encontró el archivo PDF: $cleanPath")
+                    withContext(Dispatchers.Main) { onComplete?.invoke(Result.failure(err)) }
+                    return@launch
+                }
+
+                val parentDir = pdfFile.parentFile?.takeIf { it.canWrite() }
+                    ?: (context.getExternalFilesDir(null) ?: context.filesDir)
+                val safeBaseName = pdfFile.nameWithoutExtension.replace(Regex("""[^\w\-_\s]"""), "").trim()
+                val outputEpubFile = File(parentDir, "${safeBaseName}_Limpio.epub")
+
+                val result = PdfCleanExtractorAndConverter.convertPdfToCleanEpub(
+                    pdfFile = pdfFile,
+                    outputEpubFile = outputEpubFile,
+                    bookTitle = book.title.ifBlank { pdfFile.nameWithoutExtension },
+                    bookAuthor = book.author.ifBlank { "Web Novel" },
+                    languageCode = "es",
+                    onProgress = { progress ->
+                        _pdfConversionProgress.value = progress
+                    }
+                )
+
+                result.onSuccess { cleanEpubFile ->
+                    scannerService.importSingleFile(cleanEpubFile)
+                }
+
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(result)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                    onComplete?.invoke(Result.failure(e))
+                }
+                throw e
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(Result.failure(e))
+                }
+            }
+        }
+    }
+
+    fun cancelPdfConversion() {
+        pdfConversionJob?.cancel()
+        _pdfConversionProgress.value = null
+    }
+
+    fun dismissPdfConversionDialog() {
+        _pdfConversionProgress.value = null
     }
 
     val audioExportState = chapterAudioExporter.exportState

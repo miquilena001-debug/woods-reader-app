@@ -102,6 +102,9 @@ fun LibraryScreen(
     val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
     val currentVoice by viewModel.selectedVoice.collectAsStateWithLifecycle()
 
+    var bookActivePdfConversion by remember { mutableStateOf<BookEntity?>(null) }
+    val pdfConversionProgress by viewModel.pdfConversionProgress.collectAsStateWithLifecycle()
+
     val isTranslatingBook by viewModel.calibreStyleEpubTranslator.isTranslatingBook.collectAsStateWithLifecycle()
     val translationProgress by viewModel.calibreStyleEpubTranslator.progressState.collectAsStateWithLifecycle()
 
@@ -481,6 +484,26 @@ fun LibraryScreen(
                     bookPendingAudioExport = selectedBook
                     bookForOptions = null
                     showAudioExportDialog = true
+                },
+                onPdfToEpubClick = { selectedBook ->
+                    bookActivePdfConversion = selectedBook
+                    bookForOptions = null
+                    viewModel.convertPdfToCleanEpub(selectedBook) { result ->
+                        if (result.isSuccess) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "¡EPUB limpio generado e importado exitosamente!",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            val err = result.exceptionOrNull()?.localizedMessage ?: "Error desconocido"
+                            android.widget.Toast.makeText(
+                                context,
+                                "Error al convertir PDF: $err",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
                 }
             )
         }
@@ -651,6 +674,22 @@ fun LibraryScreen(
                 onDismiss = {
                     viewModel.resetAudioExportState()
                     bookActiveAudioExport = null
+                }
+            )
+        }
+
+        // ── Diálogo de Progreso de Conversión PDF a EPUB (Emerald Liquid Glass) ──
+        if (bookActivePdfConversion != null && pdfConversionProgress != null) {
+            PdfConversionProgressDialog(
+                bookTitle = bookActivePdfConversion!!.title,
+                progress = pdfConversionProgress!!,
+                onCancel = {
+                    viewModel.cancelPdfConversion()
+                    bookActivePdfConversion = null
+                },
+                onDismiss = {
+                    viewModel.dismissPdfConversionDialog()
+                    bookActivePdfConversion = null
                 }
             )
         }

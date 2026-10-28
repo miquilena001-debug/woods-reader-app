@@ -46,7 +46,8 @@ fun BookOptionsBottomSheet(
     onCollectionChange: (String?) -> Unit,
     onDeleteClick: () -> Unit,
     onTranslateClick: ((BookEntity) -> Unit)? = null,
-    onAudioExportClick: ((BookEntity) -> Unit)? = null
+    onAudioExportClick: ((BookEntity) -> Unit)? = null,
+    onPdfToEpubClick: ((BookEntity) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
@@ -327,6 +328,94 @@ fun BookOptionsBottomSheet(
                 }
 
                 // Sección 4.5: Convertir a Audiolibro (.M4A)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFF0C2A20),
+                                    Color(0xFF144D3D)
+                                )
+                            )
+                        )
+                        .border(1.25.dp, Color(0xFF34D399).copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            onAudioExportClick?.invoke(book)
+                            onDismiss()
+                        }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Audiotrack,
+                            contentDescription = "Convertir a Audiolibro",
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "🎧 Convertir a Audiolibro (.M4A)",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFFECFDF5)
+                        )
+                    }
+                }
+            }
+
+            // Sección 4 (PDF): Convertir PDF a EPUB Completo (Sin Publicidad) y Audiolibro
+            if (book.filePath.endsWith(".pdf", ignoreCase = true) || book.format.name.equals("PDF", ignoreCase = true)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(
+                                    Color(0xFF064E3B),
+                                    Color(0xFF047857)
+                                )
+                            )
+                        )
+                        .border(1.25.dp, Color(0xFF10B981).copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                        .clickable {
+                            onPdfToEpubClick?.invoke(book)
+                            onDismiss()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "⚡",
+                            fontSize = 20.sp
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Convertir PDF a EPUB Completo (Sin Publicidad)",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                color = Color(0xFFECFDF5)
+                            )
+                            Text(
+                                text = "Conserva ilustraciones reales, une párrafos y elimina encabezados/pies de página molestos.",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                color = Color(0xFFA7F3D0),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // Sección 4.5 (PDF): Convertir a Audiolibro (.M4A)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
