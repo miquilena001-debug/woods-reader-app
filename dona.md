@@ -1683,14 +1683,16 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 #### `ui/reader/ReaderUIComponents.kt`
 - **Propósito:** Catálogo base de componentes visuales, tokens de diseño y tarjetas reutilizables del lector. Aloja los tokens de diseño glassmorphism (`ReaderDesign`) y componentes atómicos de alta frecuencia (`ReaderIconButton`, `ReaderSolidCard`, `ReaderCrystalCard`, `PremiumSlider`).
 - **Clases y Composables:**
-  - `ReaderDesign` (object, L94–111): Tokens de diseño estandarizados (`GlassStyle` con `HazeStyle`, blur 32.dp y tinte bosque oscuro; radios de curvatura `CardRadius = 24.dp`, `ButtonRadius = 14.dp`, `PillRadius = 20.dp`).
-  - `ReaderIconButton` (público, L113–146): Botón circular táctil de 48.dp con icono estilizado y fondo translúcido.
-  - `ReaderSolidCard` (público, L148–164): Tarjeta con fondo sólido (`#14241B`) y borde tenue para renderizado ligero sin efecto blur.
-  - `ReaderCrystalCard` (público, L166–191): Contenedor con efecto de vidrio translúcido mediante `hazeChild(style = ReaderDesign.GlassStyle)`.
-  - `PremiumSlider` (público, L193–226): Slider personalizado para velocidad de TTS, tamaño de tipografía y márgenes, con acentos en verde esmeralda y feedback háptico.
-- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`, `HazeStyle`), `HiddenForest`.
+  - `ReaderDesign` (object, L94–110): Tokens de diseño estandarizados (`SurfaceColor = HiddenForest.SurfaceVariant`, `GlassStyle` con `HazeStyle`, blur 15.dp y tinte superficie 40%; `DeepGlassStyle` con blur 20.dp y fondo `#020302` al 92%).
+  - `ReaderIconButton` (público, L113–144): Botón circular táctil de 14.dp con icono representativo, soporte para estado activo con acento esmeralda (`#10B981`) y borde degradado.
+  - `ReaderSolidCard` (público, L148–160): Tarjeta con fondo sólido `ReaderDesign.SurfaceColor` y borde tenue para renderizado ligero sin efecto blur.
+  - `ReaderCrystalCard` (público, L166–190): Contenedor con efecto de vidrio translúcido mediante `hazeChild(state = hazeState, style = ReaderDesign.GlassStyle)` y borde degradado blanco translúcido.
+  - `PremiumSlider` (público, L193–226): Slider personalizado para velocidad de TTS, tamaño de tipografía y márgenes, con acentos en verde esmeralda y visualización formateada a 2 decimales.
+- **Contrato con ViewModel:** Componentes atómicos de diseño y presentación pura; no consumen ni observan directamente ningún ViewModel ni StateFlow.
+- **Navegación y Efectos:** Ninguno directo (vistas desacopladas sin efectos de ciclo de vida ni navegación).
+- **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`, `HazeStyle`, `HazeTint`), `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`, `ReaderScreenOverlays.kt`, `ReaderBottomControls.kt`, `ReaderTtsMacroWindow.kt`, `ReaderTtsAmbienceTab.kt`, `ReaderTtsActiveControls.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 226 líneas - validar en TECNO-LH7n)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 226 líneas)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/HighlightColorMenu.kt`
