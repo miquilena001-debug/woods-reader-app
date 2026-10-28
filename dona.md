@@ -9,7 +9,7 @@
 - **Commit hash de referencia:** `480f604` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
-  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias (`app/src/test/`) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
+  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
   4. **Arquitectura del Lector Descomprimida:** `ReaderViewModel.kt` desacoplado con éxito mediante el patrón *Strangler Fig*, extrayendo 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (reducción de más de 1.100 líneas y 5 inyecciones directas eliminadas).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
@@ -1027,7 +1027,15 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 167 líneas)
 - **Hallazgos:** Resiliente ante caídas de red o cierres del proceso.
 
-#### `core/web2epub/novel/NovelImporter.kt`
+#### `core/web2epub/novel/ContentExtractor.kt`
+- **Propósito:** Extractor puro de contenido de capítulos HTML a XHTML limpio compatible con EPUB 3 (sanitización Jsoup, Safelist, extracción de títulos, conteo de palabras e imágenes).
+- **Clases:** `ChapterStatus` (enum), `ExtractedChapter` (data class), `ContentExtractor`
+- **Depende_de:** org.jsoup.*, java.net.URI, SiteProfile
+- **Usado_por:** NovelImporter, WebNovelImportWorker
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 309 líneas)
+- **Hallazgos:** Ninguno. Sin dependencias de android.* según regla R-TEST.
+
+### `core/web2epub/novel/NovelImporter.kt`
 - **Propósito:** Motor principal de importación de novelas web por lotes. Coordina la descarga de capítulos, control de ritmo (RequestPacer), procesamiento de imágenes y ensamblado en EPUB final.
 - **Clases:** `NovelImporter`, `ImportStage`, `ImportProgress`
 - **Depende_de:** NovelIndexLoader, PageFetcher, EpubAssembler, ImportStore, ImageSniffer
@@ -1678,13 +1686,6 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 84 líneas)
 - **Hallazgos:** Ninguno.
 
-### `data/graph/GraphTypeConverters.kt`
-- **Propósito:** TypeConverters de grafo (definido dentro de GraphEntities.kt).
-- **Clases:** `GraphTypeConverters`
-- **Depende_de:** Room @TypeConverter
-- **Usado_por:** AppDatabase
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (dentro de GraphEntities.kt)
-- **Hallazgos:** Ninguno.
 
 ---
 
@@ -1832,6 +1833,7 @@ Cada entrada de archivo fuente en las secciones siguientes sigue este esquema:
 | `ImportStoreTest.kt` | ImportStore | ✅ REVISADO | Tests de persistencia y reanudación de importación |
 | `NovelImporterTest.kt` | NovelImporter | ✅ REVISADO | Tests del pipeline de importación por lotes |
 | `NovelIndexLoaderTest.kt` | NovelIndexLoader | ✅ REVISADO | Tests de extracción de índice y lista de capítulos |
+| `ContentExtractorTest.kt` | ContentExtractor | ✅ REVISADO | Tests de extracción y sanitización de capítulos HTML con SiteProfile |
 
 ### Tests Instrumentados (`app/src/androidTest/`)
 
@@ -1939,21 +1941,19 @@ Grafo de entidades y candidatos:
 
 | ID | Problema | Archivo y Línea Real | Impacto | Estado | Evidencia y Justificación Técnica |
 |---|---|---|---|---|---|
-| C1 | Room v11 sin migración manual 10→11 | `AppDatabase.kt:37-39`, `10.json`, `11.json` | Fallo de migración en actualización | ✅ **Resuelto y verificado** | Resuelto vía `@AutoMigration(from = 10, to = 11)`. La comparativa de esquemas demuestra que v10→v11 solo añade 4 tablas de grafos (`graph_entity`, `graph_relation`, `graph_alias`, `graph_mention`), sin renombres ni columnas borradas. No requiere `AutoMigrationSpec`. |
-| C2 | `checkNotNull(bookId)` crashea | `ReaderViewModel.kt:171, 597` | Cierre inesperado al abrir lector sin bookId | ✅ **Resuelto y verificado** | Commit `7ac5385`. Línea 171 lee seguro con `.orEmpty()` y línea 597 valida con `if (bookId.isBlank()) { _uiState.value = ReaderUiState.Error(...); return }`. |
-| C3 | ViewModel con 17 dependencias (God Class) | `ReaderViewModel.kt:124-153` | God ViewModel, acoplamiento alto, riesgo de regresiones | ✅ **Resuelto y verificado** | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`. Descomprimido en 5 Casos de Uso/Coordinadores en `domain/reader/`. Eliminadas 5 dependencias directas (`AssetRetriever`, `PublicationOpener`, `FastEpubSearchEngine`, `BookXRayEngine`, `ChapterAudioExporter`). Tamaño reducido a 2.476 líneas. |
-| C4 | Corrutina huérfana en init | `SherpaModelManager.kt:280` | Corrutina sin cancelación explícita | 🔴 **Pendiente** | `managerScope.launch` en el bloque `init` borra el directorio de Kokoro-82M de forma asíncrona. Al ser `@Singleton`, su impacto es bajo pero carece de método de cancelación ordenado. |
-| C5 | `debug = true` en producción | `SherpaModelManager.kt:437` | Logs excesivos y degradación de rendimiento | ✅ **Resuelto y verificado** | Verificado en código: usa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En release compila como `false`. |
-| C6 | `.first()` en StateFlow bloquea/suspende TTS | `TtsManager.kt:1375` | TTS se congela o bloquea hilo de síntesis | 🟡 **Resuelto en código, pendiente de validación en dispositivo** | Commits `93e4dc2` y `5a9b341`. Se eliminó `.first()` de `userPreferencesFlow` en `narrateSequence`, usando la propiedad `@Volatile cachedUseSherpaTts`. Se blindó la carrera de arranque en frío con `ensurePreferencesLoaded()` con timeout asíncrono de 300 ms antes de la primera narración. |
-| C7 | UtteranceProgressListener en bucle y carreras | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización y oraciones colgadas | 🟡 **Resuelto en código, pendiente de validación en dispositivo** | Commits `93e4dc2` y `5a9b341`. El listener se asigna una sola vez en `initialize()`. IDs de utterance monótonos (`utteranceCounter.incrementAndGet()`). Se maneja retorno `speakResult != SUCCESS`, se cancelan continuaciones pendientes forzadamente en `pause()`, `stop()`, `shutdown()`, y se acepta `utteranceId == null` como fallback de compatibilidad OEM. |
-| C8 | Mojibake en comentarios de ReaderViewModel | `ReaderViewModel.kt` | Ilegibilidad | ✅ **Resuelto y verificado** | Saneado a UTF-8 limpio sin caracteres corruptos. |
+| C1 | Room v11 sin migración manual 10→11 | `AppDatabase.kt:37-39`, `app/schemas/.../10.json`, `11.json` | Fallo de migración en actualización de app | ✅ **Resuelto y verificado** | Resuelto vía `@AutoMigration(from = 10, to = 11)`. La comparativa estricta de esquemas v10 vs v11 confirma que solo se agregaron 4 tablas (`graph_entity`, `graph_relation`, `graph_alias`, `graph_mention`), sin tablas/columnas modificadas ni borradas ni renombradas. Room no requiere `AutoMigrationSpec`. |
+| C2 | `checkNotNull(bookId)` crashea al abrir libro | `ReaderViewModel.kt:171, 597` | Cierre inesperado (crash) al abrir lector sin bookId válido | ✅ **Resuelto y verificado** | Commit `7ac5385`. Línea 171 lee seguro con `savedStateHandle.get<String>("bookId").orEmpty()` y línea 597 valida con `if (bookId.isBlank()) { _uiState.value = ReaderUiState.Error(...); return }`. |
+| C3 | ViewModel con 17 dependencias directas (God Class) | `ReaderViewModel.kt:124-153` | God ViewModel, acoplamiento alto, riesgo de regresiones | ✅ **Resuelto y verificado** | Commits `4de4bd7`, `26810fd`, `1c949cc`, `d86e7a1`. Descomprimido mediante patrón *Strangler Fig* en 5 Casos de Uso/Coordinadores (`domain/reader/`). Eliminadas 5 inyecciones directas (`AssetRetriever`, `PublicationOpener`, `FastEpubSearchEngine`, `BookXRayEngine`, `ChapterAudioExporter`). Tamaño reducido a 2.476 líneas. |
+| C4 | Corrutina huérfana en bloque init | `SherpaModelManager.kt:280` | Corrutina sin cancelación explícita en singleton | 🔴 **Pendiente (Error conocido)** | `managerScope.launch` en el bloque `init` lanza un borrado recursivo del directorio Kokoro-82M de forma asíncrona usando `SupervisorJob() + Dispatchers.IO` sin cancelación explícita ni enlace de ciclo de vida. |
+| C5 | Logging nativo exhaustivo atado a debug build | `SherpaModelManager.kt:437` | Logs nativos de Sherpa ONNX saturan logcat en depuración | 🔴 **Pendiente (Error conocido)** | Línea 437 pasa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En compilaciones Debug activa logs nativos intensivos de C++ por cada frame de audio; en Release compila como `false`. Pendiente desacoplarlo a flag de depuración opcional en tiempo de ejecución. |
+| C6 | `.first()` en StateFlow bloquea/suspende arranque de TTS | `TtsManager.kt:1375` | TTS se congela o bloquea hilo de síntesis en arranque en frío | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. Se eliminó `.first()` de `userPreferencesFlow` en `narrateSequence`, sustituyéndolo por la propiedad `@Volatile cachedUseSherpaTts`. Se blindó la carrera de arranque en frío con `ensurePreferencesLoaded()` con timeout asíncrono de 300 ms antes de la primera narración. |
+| C7 | UtteranceProgressListener en bucle y carreras de oraciones | `TtsManager.kt:225, 327, 477, 831, 869` | Desincronización, continuación colgada o silencio | 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n)** | Commits `93e4dc2` y `5a9b341`. El listener se asigna una sola vez en `initialize()`. IDs de utterance monótonos con `AtomicLong`. Se gestiona retorno `speakResult != SUCCESS`, se cancelan continuaciones pendientes forzadamente en `pause()`, `stop()`, `shutdown()`, y se acepta `utteranceId == null` como fallback de compatibilidad OEM. |
+| C8 | Mojibake en comentarios de ReaderViewModel | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado en refactorizaciones de los Pasos 1 a 4 a UTF-8 limpio. |
 | C9 | Migración Room 11 sin 10→11 | `AppDatabase.kt:37` | Confirma C1 | ✅ **Resuelto y verificado** | Verificado con Room `@AutoMigration(from = 10, to = 11)`. |
-| C10 | Mojibake en comentarios | `ReaderViewModel.kt` | Ilegibilidad | ✅ **Resuelto y verificado** | Saneado en refactorizaciones previas. |
-| C11 | Mojibake en comentarios de TtsManager y servicios | `TtsManager.kt:572+`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt` | Comentarios con caracteres corruptos (Latin1 vs UTF-8) | 🔴 **Pendiente** | Se identificaron 5 archivos de código fuente con mojibake residual en comentarios descriptivos. No afecta compilación ni runtime, pendiente de saneamiento ortográfico. |
-| C12 | `checkNotNull(bookId)` crashea en detalle | `BookDetailViewModel.kt:59, 69` | Cierre inesperado al abrir detalle de libro | ✅ **Resuelto y verificado** | Commit `7ac5385`. `val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()`. Si viene vacío, `loadBookData()` valida `if (bookId.isBlank())` y expone `BookDetailUiState(error = "...")`. |
+| C10 | Mojibake en comentarios | `ReaderViewModel.kt` | Ilegibilidad de comentarios | ✅ **Resuelto y verificado** | Saneado a UTF-8 limpio. |
+| C11 | Mojibake residual en comentarios de código fuente | `TtsManager.kt:309, 548, 613`, `BookScannerService.kt:566`, `LibraryScreen.kt:64, 119, 156`, `ReaderViewModel.kt:355, 502, 755` | Comentarios descriptivos con caracteres corruptos (Latin1/Windows-1252) | 🔴 **Pendiente (Error conocido)** | 4 archivos contienen mojibake residual en comentarios descriptivos (símbolos `?`, tildes rotas). No afecta compilación ni lógica de ejecución; pendiente saneamiento ortográfico. |
+| C12 | `checkNotNull(bookId)` crashea en detalle de libro | `BookDetailViewModel.kt:59, 69` | Cierre inesperado al abrir detalle de libro | ✅ **Resuelto y verificado** | Commit `7ac5385`. `val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()`. Si viene vacío, `loadBookData()` valida `if (bookId.isBlank())` y expone `BookDetailUiState(error = "...")`. |
 | C13 | `checkNotNull(bookId)` crashea en grafo y candidatos | `GraphViewModel.kt:72, 77, 96`, `CandidatesScreen.kt:52, 56, 75` | Cierre inesperado al abrir grafo o candidatos | ✅ **Resuelto y verificado** | Commit `7ac5385`. `savedStateHandle.get<String>("bookId").orEmpty()` en ambos ViewModels. Si `bookId.isBlank()`, exponen listas vacías de forma segura y los métodos de confirmación/fusión abortan sin crashear. |
-
----
 
 ## 14.1 Resultados de Tests Unitarios (`app/src/test/`)
 
@@ -1996,6 +1996,18 @@ Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
 | `ChallengeDetectorTest.kt` | ChallengeDetector | ✅ REVISADO | Cloudflare 403/503, "Just a moment", turnstile, página normal |
 | `TestEpubFactory.kt` | EPUB factory tests | ✅ REVISADO | Localizado en `core/translation/calibre/inplace/` |
 | `FakeTextTranslator.kt` | Fake translator | ✅ REVISADO | Localizado en `core/translation/calibre/inplace/` |
+| `CalibreStyleEpubTranslatorStructureTest.kt` | CalibreStyleEpubTranslator (Estructura) | ✅ REVISADO | Tests de integridad estructural del EPUB traducido (mimetype, META-INF, OPF) |
+| `EpubInPlaceTranslatorTest.kt` | EpubInPlaceTranslator | ✅ REVISADO | Tests de traducción in-place de documentos XHTML en ZIP EPUB |
+| `EpubPackageParserTest.kt` | EpubPackageParser | ✅ REVISADO | Tests de parseo de OPF, manifest, spine y metadatos |
+| `EpubZipWriterTest.kt` | EpubZipWriter | ✅ REVISADO | Tests de reempaquetado ZIP de EPUB con compresión STORED en mimetype |
+| `XhtmlTranslatorDocTest.kt` | XhtmlTranslatorDoc | ✅ REVISADO | Tests de segmentación de texto, nodos y atributos en XHTML |
+| `ContentExtractorTest.kt` | ContentExtractor | ✅ REVISADO | Tests de extracción de capítulos HTML, limpieza con SiteProfile y extracción de imágenes |
+| `EpubAssemblerTest.kt` | EpubAssembler | ✅ REVISADO | Tests de ensamblado de capítulos descargados en archivo EPUB estándar |
+| `ImageSnifferTest.kt` | ImageSniffer | ✅ REVISADO | Tests de detección y resolución de URLs de imágenes en páginas de novelas |
+| `ImportStoreTest.kt` | ImportStore | ✅ REVISADO | Tests de almacenamiento local y estado de progreso de importaciones web |
+| `NovelImporterTest.kt` | NovelImporter | ✅ REVISADO | Tests del orquestador de importación web a EPUB |
+| `NovelIndexLoaderTest.kt` | NovelIndexLoader | ✅ REVISADO | Tests de carga y parseo del índice/TOC de novelas web |
+| `DeepFileSystemScannerTest.kt` | DeepFileSystemScanner | ✅ REVISADO | Tests de escaneo profundo recursivo de carpetas de almacenamiento |
 
 ### Tests Instrumentados (`app/src/androidTest/`)
 
