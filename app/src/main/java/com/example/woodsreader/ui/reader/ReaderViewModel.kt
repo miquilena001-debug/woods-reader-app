@@ -6,6 +6,8 @@ import com.example.woodsreader.core.managers.ReadingSessionManager
 import com.example.woodsreader.core.managers.ReadingProgressManager
 import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
 import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
+import com.example.woodsreader.domain.reader.LoadBookFastUseCase
+import com.example.woodsreader.domain.reader.LoadBookResult
 import android.content.Context
 import java.util.Locale
 
@@ -130,9 +132,7 @@ class ReaderViewModel @Inject constructor(
     private val bookRepository: BookRepository,
 
     private val userPreferencesRepository: UserPreferencesRepository,
-    private val assetRetriever: AssetRetriever,
-
-    private val publicationOpener: PublicationOpener,
+    private val loadBookFastUseCase: LoadBookFastUseCase,
     private val ttsManager: TtsManager,
 
     private val pdfReflowManager: PdfReflowManager,
@@ -633,9 +633,7 @@ class ReaderViewModel @Inject constructor(
                 publication?.close()
                 publication = null
 
-                val loadedBook = withContext(Dispatchers.IO) {
-                    bookRepository.getBook(bookId)
-                }
+                val loadedBook = loadBookFastUseCase.getBookEntity(bookId)
                 if (loadedBook == null) {
                     Log.e(TAG, "loadBook: Book not found for id $bookId")
                     _uiState.value = ReaderUiState.Error("Libro no encontrado en la base de datos")
@@ -647,107 +645,21 @@ class ReaderViewModel @Inject constructor(
                 lastProcessedChapterHref = null
                 _uiState.value = ReaderUiState.InitialLoading(book)
 
-                val uri = resolveBookUri(book)
-                if (uri == null) {
-                    Log.e(TAG, "loadBook: Could not resolve URI for book: ${book.filePath}")
-                    _uiState.value = ReaderUiState.Error("Archivo no accesible: ${book.title}")
-                    return@launch
-                }
-
-                val pub = withContext(Dispatchers.IO) {
-                    val assetResult = when (uri.scheme) {
-                        "file" -> {
-                            val filePath = uri.path ?: book.filePath
-                            assetRetriever.retrieve(File(filePath))
-                        }
-                        else -> {
-                            val url = AbsoluteUrl(uri.toString())
-                            if (url != null) assetRetriever.retrieve(url) else null
-                        }
+                val sessionData = when (val result = loadBookFastUseCase(book)) {
+                    is LoadBookResult.Error -> {
+                        Log.e(TAG, "loadBook: Failed to load book $bookId: ${result.message}", result.throwable)
+                        _uiState.value = ReaderUiState.Error(result.message)
+                        return@launch
                     }
-                    val asset = assetResult?.getOrNull()
-                    if (asset == null) {
-                        Log.e(TAG, "loadBook: assetRetriever returned null for $uri")
-                        return@withContext null
-                    }
-                    publicationOpener.open(
-                        asset = EpubPackageSanitizer.transformAsset(asset),
-                        allowUserInteraction = false
-                    ).getOrNull()
+                    is LoadBookResult.Success -> result.data
                 }
 
-                if (pub == null) {
-                    Log.e(TAG, "loadBook: publicationOpener failed to open publication for $uri")
-                    _uiState.value = ReaderUiState.Error("No se pudo abrir el formato de ${book.title}")
-                    return@launch
-                }
-
+                val pub = sessionData.publication
                 publication = pub
-
-                // 1. Construcción O(1) de resourceIndexCache con pre-asignación en Dispatchers.Default
-                val fastIndexCache = withContext(Dispatchers.Default) {
-                    val order = pub.readingOrder
-                    val map = HashMap<String, Int>(order.size * 4)
-                    for (i in order.indices) {
-                        val rawHref = order[i].href.toString()
-                        val cleanHref = rawHref.substringBefore('#').removePrefix("/")
-                        val filename = rawHref.substringAfterLast('/')
-                        val cleanFilename = filename.substringBefore('#')
-                        map[rawHref] = i
-                        map[cleanHref] = i
-                        map[filename] = i
-                        map[cleanFilename] = i
-                    }
-                    map
-                }
-                resourceIndexCache = fastIndexCache
-
-                // 2. Posiciones sintéticas inmediatas O(N) sin escanear ZIP en libros extensos (> 80 capítulos)
-                val totalChapters = pub.readingOrder.size.coerceAtLeast(1)
-                val computedPositions: List<List<Locator>> = if (totalChapters > 80) {
-                    withContext(Dispatchers.Default) {
-                        val invTotal = 1.0 / totalChapters.toDouble()
-                        pub.readingOrder.mapIndexed { index, link ->
-                            listOf(
-                                Locator(
-                                    href = link.url(),
-                                    mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
-                                    title = link.title,
-                                    locations = Locator.Locations(
-                                        progression = 0.0,
-                                        position = index + 1,
-                                        totalProgression = index.toDouble() * invTotal
-                                    )
-                                )
-                            )
-                        }
-                    }
-                } else {
-                    withContext(Dispatchers.IO) {
-                        val rawPos = runCatching { pub.positions() }.getOrDefault(emptyList())
-                        if (rawPos.isNotEmpty()) {
-                            rawPos.groupBy { it.href.toString().substringBefore('#') }.values.toList()
-                        } else {
-                            val invTotal = 1.0 / totalChapters.toDouble()
-                            pub.readingOrder.mapIndexed { index, link ->
-                                listOf(
-                                    Locator(
-                                        href = link.url(),
-                                        mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
-                                        title = link.title,
-                                        locations = Locator.Locations(
-                                            progression = 0.0,
-                                            position = index + 1,
-                                            totalProgression = index.toDouble() * invTotal
-                                        )
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-                positionsByResource = computedPositions
-                totalPositions = computedPositions.sumOf { it.size }
+                resourceIndexCache = sessionData.resourceIndexCache
+                positionsByResource = sessionData.positionsByResource
+                totalPositions = sessionData.totalPositions
+                val uri = sessionData.uri
 
                 ttsManager.setCurrentBookId(book.id)
 
@@ -760,18 +672,13 @@ class ReaderViewModel @Inject constructor(
                     pdfReflowManager.initialize(physicalPath, book.id) { words ->
                         recordActivity()
                     }
-                    val initialPage = book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
+                    val initialPage = sessionData.initialPdfPage ?: book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
                     lastKnownReflowPage = initialPage
                     pdfReflowManager.setReflowMode(enabled = true, scope = viewModelScope, initialPosition = initialPage)
                     null
                 } else {
                     pdfReflowManager.setReflowMode(enabled = false, scope = viewModelScope)
-                    val loc = validateAndRestoreLocator(
-                        publication = pub,
-                        cfiJson = book.currentLocatorJson,
-                        fallbackHref = book.fallbackLocatorHref,
-                        fallbackPosition = book.fallbackLocatorPosition
-                    )
+                    val loc = sessionData.initialLocator
                     viewModelScope.launch {
                         epubFormatManager.initNavigator(pub, loc, viewModelScope, navigator, book.id)
                     }
@@ -825,104 +732,7 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Resuelve y valida la ruta o URI del libro.
-     * Soporta rutas de archivo clásicas (/storage/...), URIs de MediaStore (content://media/...)
-     * y URIs de SAF (content://com.android.externalstorage.documents/...).
-     *
-     * Para URIs de MediaStore, extrae la ruta física real usando la columna DATA y devuelve
-     * una URI file:// que Readium puede abrir directamente.
-     *
-     * Retorna la URI válida o null si el archivo ya no existe o no es accesible.
-     */
-    private fun resolveBookUri(book: BookEntity): android.net.Uri? {
-        val path = book.filePath
 
-        if (path.isBlank()) return null
-        try {
-            // Caso 1: Ruta de archivo pura (/storage/emulated/0/...)
-            if (path.startsWith("/")) {
-                val file = File(path)
-                return if (file.exists()) android.net.Uri.fromFile(file) else null
-            }
-
-            // Caso 2: URI parseable (content:// o file://)
-            val uri = android.net.Uri.parse(path)
-
-            when (uri.scheme) {
-                "content" -> {
-                    // Sub-caso A: URI de MediaStore (content://media/...)
-                    // Readium NO puede leer directamente URIs de MediaStore.
-                    // Necesitamos extraer la ruta física real usando la columna DATA.
-                    if (uri.authority?.startsWith("media") == true) {
-                        val physicalPath = try {
-                            context.contentResolver.query(
-                                uri,
-                                arrayOf(android.provider.MediaStore.Files.FileColumns.DATA),
-                                null, null, null
-                            )?.use { cursor ->
-                                if (cursor.moveToFirst()) {
-                                    val colIdx = cursor.getColumnIndex(android.provider.MediaStore.Files.FileColumns.DATA)
-                                    if (colIdx >= 0) cursor.getString(colIdx) else null
-                                } else null
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Could not query DATA column for MediaStore URI: $uri", e)
-                            null
-                        }
-
-                        if (physicalPath != null) {
-                            val file = File(physicalPath)
-                            if (file.exists()) {
-                                Log.d(TAG, "Resolved MediaStore URI to file path: $physicalPath")
-                                return android.net.Uri.fromFile(file)
-                            }
-                        }
-
-                        // Fallback: intentar abrir el descriptor directamente (Android 10+ puede funcionar)
-                        return try {
-                            context.contentResolver.openFileDescriptor(uri, "r")?.use {
-                                Log.d(TAG, "MediaStore URI accessible via FileDescriptor (no DATA path): $uri")
-                                uri
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "MediaStore URI no longer accessible: $path")
-                            null
-                        }
-                    }
-
-                    // Sub-caso B: URI de SAF (content://com.android.externalstorage.documents/...)
-                    // Readium puede leer estas URIs directamente si tiene permisos persistentes.
-                    return try {
-                        context.contentResolver.openFileDescriptor(uri, "r")?.use {
-                            uri
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "SAF URI no longer accessible: $path")
-                        null
-                    }
-                }
-
-                "file" -> {
-                    val file = File(uri.path ?: return null)
-                    return if (file.exists()) uri else null
-                }
-
-                else -> {
-                    // Otros esquemas (ej. http si se soporta en el futuro)
-
-                    return uri
-                }
-
-            }
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error resolving book URI: $path", e)
-
-        }
-
-        return null
-    }
 
     // â”€â”€ Session management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     val isLoadingTtsModel: StateFlow<Boolean> = ttsManager.isLoadingModel
@@ -1396,79 +1206,6 @@ class ReaderViewModel @Inject constructor(
         )
 
         recordActivity()
-    }
-
-    /**
-     * Valida el CFI guardado con una cascada de 3 niveles:
-
-     * 1. CFI exacto (Locator.fromJSON) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â el mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡s preciso
-     * 2. Fallback por href/capÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­tulo ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â recupera al menos el capÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â­tulo correcto
-
-     * 3. Primera posiciÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³n del libro ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âºltimo recurso seguro
-     */
-
-    private suspend fun validateAndRestoreLocator(
-        publication: Publication,
-        cfiJson: String?,
-        fallbackHref: String?,
-        fallbackPosition: Int?
-    ): Locator? {
-        val cache = resourceIndexCache
-
-        // Nivel 1: CFI exacto con verificación O(1)
-        if (cfiJson != null) {
-            try {
-                val locator = Locator.fromJSON(org.json.JSONObject(cfiJson))
-                if (locator != null) {
-                    val hrefStr = locator.href.toString()
-                    val fastIndex = cache?.get(hrefStr)
-                        ?: cache?.get(hrefStr.substringBefore('#'))
-                        ?: cache?.get(hrefStr.substringAfterLast('/'))
-                        ?: cache?.get(hrefStr.substringAfterLast('/').substringBefore('#'))
-
-                    if (fastIndex != null && fastIndex in publication.readingOrder.indices) {
-                        Log.d(TAG, "Locator restored via CFI (Level 1)")
-                        return locator
-                    }
-                    Log.w(TAG, "CFI href not found in publication, falling back to Level 2")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "CFI parse failed, falling back to Level 2: ${e.message}")
-            }
-        }
-
-        // Nivel 2: Fallback por href de capítulo con resolución O(1) sin linear scan
-        if (fallbackHref != null) {
-            try {
-                val fastIndex = cache?.get(fallbackHref)
-                    ?: cache?.get(fallbackHref.substringBefore('#'))
-                    ?: cache?.get(fallbackHref.substringAfterLast('/'))
-                    ?: cache?.get(fallbackHref.substringAfterLast('/').substringBefore('#'))
-
-                if (fastIndex != null && fastIndex in publication.readingOrder.indices) {
-                    val link = publication.readingOrder[fastIndex]
-                    val total = publication.readingOrder.size.coerceAtLeast(1)
-                    val locator = Locator(
-                        href = link.url(),
-                        mediaType = link.mediaType ?: org.readium.r2.shared.util.mediatype.MediaType.XHTML,
-                        title = link.title,
-                        locations = Locator.Locations(
-                            progression = 0.0,
-                            position = fastIndex + 1,
-                            totalProgression = fastIndex.toDouble() / total.toDouble()
-                        )
-                    )
-                    Log.d(TAG, "Locator restored via fallback href (Level 2): $fallbackHref (index $fastIndex)")
-                    return locator
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Fallback href restoration failed: ${e.message}")
-            }
-        }
-
-        // Nivel 3: Primera posición del libro (nunca falla)
-        Log.w(TAG, "All locator restoration failed. Starting from beginning (Level 3).")
-        return null // null = Readium usa firstLocator automáticamente
     }
 
     fun goToLocator(nav: Navigator?, locator: Locator) {
@@ -2515,31 +2252,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun resolveChapterTitle(pub: Publication, resourceHref: String): String? {
-        val normalized = EpubPackageSanitizer.normalizeResourcePath(resourceHref)
-        val fileName = normalized.substringAfterLast('/')
-
-        fun findInLinks(links: List<Link>): String? {
-            for (link in links) {
-                val linkNorm = EpubPackageSanitizer.normalizeResourcePath(link.href.toString())
-                if (linkNorm == normalized ||
-                    linkNorm.endsWith("/$normalized") ||
-                    normalized.endsWith("/$linkNorm") ||
-                    fileName.equals(linkNorm.substringAfterLast('/'), ignoreCase = true)
-                ) {
-                    val title = link.title?.trim()?.takeIf { it.isNotEmpty() }
-                    if (title != null) return title
-                }
-                val child = findInLinks(link.children)
-                if (child != null) return child
-            }
-            return null
-        }
-
-        return findInLinks(pub.tableOfContents)
-            ?: findInLinks(pub.readingOrder)
-            ?: pub.readingOrder.indexOfFirst { it.href.toString() == resourceHref }
-                .takeIf { it >= 0 }
-                ?.let { idx -> pub.tableOfContents.getOrNull(idx)?.title?.trim()?.takeIf { it.isNotEmpty() } }
+        return loadBookFastUseCase.resolveChapterTitle(pub, resourceHref)
     }
 
     // ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Misc ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬
