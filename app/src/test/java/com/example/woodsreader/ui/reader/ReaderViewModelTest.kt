@@ -1,16 +1,188 @@
 
 package com.example.woodsreader.ui.reader
 
+import android.app.Application
+import androidx.lifecycle.SavedStateHandle
+import com.example.woodsreader.core.license.ProLicenseManager
+import com.example.woodsreader.core.managers.PdfReflowManager
+import com.example.woodsreader.core.managers.ReadingProgressManager
+import com.example.woodsreader.core.managers.ReadingSessionManager
+import com.example.woodsreader.service.CoverExtractor
+import com.example.woodsreader.core.pipeline.PdfBookViewSynchronizer
+import com.example.woodsreader.core.search.FastInBookSearchHit
+import com.example.woodsreader.core.search.FastSearchProgress
+import com.example.woodsreader.core.share.QuoteVideoClipExporter
+import com.example.woodsreader.core.system.WoodsKeepAliveManager
+import com.example.woodsreader.core.tts.AudioExportState
+import com.example.woodsreader.core.tts.SleepTimerPreset
+import com.example.woodsreader.core.tts.SmartSleepTimerManager
+import com.example.woodsreader.core.tts.TtsManager
+import com.example.woodsreader.data.datastore.UserPreferences
+import com.example.woodsreader.data.datastore.UserPreferencesRepository
+import com.example.woodsreader.data.repository.BookRepository
+import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
+import com.example.woodsreader.domain.reader.LoadBookFastUseCase
+import com.example.woodsreader.domain.reader.ManageReaderAnnotationsUseCase
+import com.example.woodsreader.domain.reader.ReaderChapterNavigationCoordinator
+import com.example.woodsreader.domain.reader.ReaderIntelligenceAndExportCoordinator
+import com.example.woodsreader.domain.reader.ReaderVoiceAndAmbienceController
+import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
 import io.mockk.every
 import io.mockk.mockk
-import org.junit.Test
+import io.mockk.unmockkAll
+import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
 import org.readium.r2.shared.publication.Link
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModelTest {
+
+    private val testDispatcher = UnconfinedTestDispatcher()
+
+    @Before
+    fun setUpDispatcher() {
+        Dispatchers.setMain(testDispatcher)
+    }
+
+    @After
+    fun tearDownDispatcher() {
+        Dispatchers.resetMain()
+        unmockkAll()
+    }
+
+    private fun createViewModel(
+        savedStateHandle: SavedStateHandle = SavedStateHandle(),
+        coordinator: ReaderIntelligenceAndExportCoordinator = mockk(relaxed = true)
+    ): ReaderViewModel {
+        val app: Application = mockk(relaxed = true)
+        val bookRepo: BookRepository = mockk(relaxed = true) {
+            every { getTtsRules() } returns MutableStateFlow(emptyList())
+        }
+        val userPrefsRepo: UserPreferencesRepository = mockk(relaxed = true) {
+            every { userPreferencesFlow } returns MutableStateFlow(UserPreferences())
+        }
+        val loadBookFastUseCase: LoadBookFastUseCase = mockk(relaxed = true)
+        val smartSleep: SmartSleepTimerManager = mockk(relaxed = true) {
+            every { activePreset } returns MutableStateFlow(SleepTimerPreset.OFF)
+        }
+        val ttsManager: TtsManager = mockk(relaxed = true) {
+            every { smartSleepTimerManager } returns smartSleep
+        }
+        val pdfReflowManager: PdfReflowManager = mockk(relaxed = true) {
+            every { isReflowMode } returns MutableStateFlow(false)
+            every { currentTtsSentence } returns MutableStateFlow("")
+            every { currentTtsPage } returns MutableStateFlow(0)
+            every { ttsState } returns MutableStateFlow(TtsState.IDLE)
+            every { reflowState } returns MutableStateFlow(com.example.woodsreader.data.model.ReflowState())
+            every { isLoadingMoreReflow } returns MutableStateFlow(false)
+        }
+        val epubFormatManager: EpubFormatManager = mockk(relaxed = true) {
+            every { ttsState } returns MutableStateFlow(TtsState.IDLE)
+        }
+        val readingSessionManager: ReadingSessionManager = mockk(relaxed = true)
+        val readingProgressManager: ReadingProgressManager = mockk(relaxed = true)
+        val pdfBookViewSynchronizer: PdfBookViewSynchronizer = mockk(relaxed = true)
+        val coverExtractor: CoverExtractor = mockk(relaxed = true)
+        val voiceAndAmbienceController: ReaderVoiceAndAmbienceController = mockk(relaxed = true)
+        val proLicenseManager: ProLicenseManager = mockk(relaxed = true)
+        val woodsKeepAliveManager: WoodsKeepAliveManager = mockk(relaxed = true)
+        val quoteVideoClipExporter: QuoteVideoClipExporter = mockk(relaxed = true)
+        val saveReadingProgressUseCase: SaveReadingProgressUseCase = mockk(relaxed = true)
+        val calculateReadingStatsUseCase: CalculateReadingStatsUseCase = mockk(relaxed = true)
+        val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase = mockk(relaxed = true) {
+            every { getBookmarks(any()) } returns MutableStateFlow(emptyList())
+        }
+        val chapterNavigationCoordinator: ReaderChapterNavigationCoordinator = mockk(relaxed = true)
+
+        return ReaderViewModel(
+            context = app,
+            savedStateHandle = savedStateHandle,
+            bookRepository = bookRepo,
+            userPreferencesRepository = userPrefsRepo,
+            loadBookFastUseCase = loadBookFastUseCase,
+            ttsManager = ttsManager,
+            pdfReflowManager = pdfReflowManager,
+            epubFormatManager = epubFormatManager,
+            readingSessionManager = readingSessionManager,
+            readingProgressManager = readingProgressManager,
+            pdfBookViewSynchronizer = pdfBookViewSynchronizer,
+            coverExtractor = coverExtractor,
+            readerIntelligenceAndExportCoordinator = coordinator,
+            voiceAndAmbienceController = voiceAndAmbienceController,
+            proLicenseManager = proLicenseManager,
+            woodsKeepAliveManager = woodsKeepAliveManager,
+            quoteVideoClipExporter = quoteVideoClipExporter,
+            saveReadingProgressUseCase = saveReadingProgressUseCase,
+            calculateReadingStatsUseCase = calculateReadingStatsUseCase,
+            manageReaderAnnotationsUseCase = manageReaderAnnotationsUseCase,
+            chapterNavigationCoordinator = chapterNavigationCoordinator
+        )
+    }
+
+    @Test
+    fun `test empty bookId emits ReaderUiState Error`() = runTest(testDispatcher) {
+        val viewModel = createViewModel(savedStateHandle = SavedStateHandle())
+        assertEquals(
+            ReaderUiState.Error("ID de libro no válido o no proporcionado"),
+            viewModel.uiState.value
+        )
+    }
+
+    @Test
+    fun `test public StateFlows and methods reflect ReaderIntelligenceAndExportCoordinator`() = runTest(testDispatcher) {
+        val audioStateFlow = MutableStateFlow<AudioExportState>(AudioExportState.Idle)
+        val searchHitsFlow = MutableStateFlow<List<FastInBookSearchHit>>(emptyList())
+        val searchProgressFlow = MutableStateFlow<FastSearchProgress?>(null)
+
+        val coordinator = mockk<ReaderIntelligenceAndExportCoordinator>(relaxed = true) {
+            every { audioExportState } returns audioStateFlow
+            every { inBookSearchResults } returns searchHitsFlow
+            every { inBookSearchProgress } returns searchProgressFlow
+        }
+
+        val viewModel = createViewModel(coordinator = coordinator)
+
+        // 1. Verificar audioExportState
+        assertEquals(AudioExportState.Idle, viewModel.audioExportState.value)
+        audioStateFlow.value = AudioExportState.Completed("cap1.m4a", 2048L, hasLyrics = true)
+        assertEquals(AudioExportState.Completed("cap1.m4a", 2048L, hasLyrics = true), viewModel.audioExportState.value)
+
+        // 2. Delegaciones de audio export
+        viewModel.resetAudioExportState()
+        verify(exactly = 1) { coordinator.resetAudioExportState() }
+
+        viewModel.cancelAudioExport()
+        verify(exactly = 1) { coordinator.cancelAudioExport() }
+
+        // 3. Verificar inBookSearchResults e inBookSearchProgress
+        assertEquals(emptyList<FastInBookSearchHit>(), viewModel.inBookSearchResults.value)
+        assertNull(viewModel.inBookSearchProgress.value)
+
+        val mockHit = mockk<FastInBookSearchHit>()
+        searchHitsFlow.value = listOf(mockHit)
+        assertEquals(listOf(mockHit), viewModel.inBookSearchResults.value)
+
+        val mockProgress = mockk<FastSearchProgress>()
+        searchProgressFlow.value = mockProgress
+        assertEquals(mockProgress, viewModel.inBookSearchProgress.value)
+
+        // 4. Delegación de cancelación de búsqueda
+        viewModel.cancelInBookSearch()
+        verify(exactly = 1) { coordinator.cancelInBookSearch() }
+    }
 
     @Test
     fun `test findNextWordRange with standard sentence`() {
