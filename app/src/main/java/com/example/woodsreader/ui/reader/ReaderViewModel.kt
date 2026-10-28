@@ -163,6 +163,35 @@ class ReaderViewModel @Inject constructor(
         private const val INACTIVITY_THRESHOLD = 5 * 60 * 1000L
         private const val MAX_CACHED_REFLOW_PAGES = 50
         private const val MAX_CACHED_CHAPTERS = 5
+
+        fun extractPdfPagesFromToc(toc: List<Link>): List<Int> {
+            val pages = mutableListOf<Int>()
+            fun traverse(links: List<Link>) {
+                for (link in links) {
+                    val href = link.href.toString()
+                    val page = Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: Regex("""(?i)/page[_-]?(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: Regex("""#(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                        ?: Regex("""^/?(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
+                    if (page != null && page > 0) {
+                        pages.add(page)
+                    }
+                    if (link.children.isNotEmpty()) {
+                        traverse(link.children)
+                    }
+                }
+            }
+            traverse(toc)
+            return pages.distinct().sorted()
+        }
+
+        fun resolveNextPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? {
+            return extractPdfPagesFromToc(toc).firstOrNull { it > currentPage }
+        }
+
+        fun resolvePreviousPdfPageFromToc(toc: List<Link>, currentPage: Int): Int? {
+            return extractPdfPagesFromToc(toc).lastOrNull { it < currentPage }
+        }
     }
 
     val chapterLruCache = LruCache<Int, ParsedChapterData>(MAX_CACHED_CHAPTERS)
@@ -1319,51 +1348,48 @@ class ReaderViewModel @Inject constructor(
 
     fun goToNextChapter(navigator: Navigator?) {
         val pub = publication ?: return
-        val nav = navigator as? VisualNavigator ?: return
 
-        if (isPdfBook) {
+        if (isPdfBook || isReflowMode.value) {
             val toc = pub.tableOfContents
             if (toc.isNotEmpty()) {
                 val currentPage = if (isReflowMode.value) {
-                    lastKnownReflowPage.takeIf { it > 0 } ?: 1
+                    lastKnownReflowPage.takeIf { it > 0 } 
+                        ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
+                        ?: 1
                 } else {
-                    val visualPage = (nav.currentLocator.value.locations.position ?: lastKnownReflowPage)
+                    val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
                     lastKnownReflowPage = visualPage
                     visualPage.takeIf { it > 0 } ?: 1
                 }
-                val nextLink = toc.mapNotNull { link ->
-                    val page = link.href.toString().let { href ->
-                        Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                            ?: Regex("""^/?(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    }
-                    if (page != null) link to page else null
-                }.firstOrNull { it.second > currentPage }
+                val targetPage = resolveNextPdfPageFromToc(toc, currentPage)
 
-                if (nextLink != null) {
-                    val targetPage = nextLink.second
+                if (targetPage != null) {
                     if (isReflowMode.value) {
                         jumpToReflowPage(targetPage)
                         if (ttsState.value == TtsState.PLAYING) {
                             getLocatorForPdfPage(targetPage)?.let(::playTts)
                         }
                     } else {
+                        val nav = (navigator ?: this.navigator) as? VisualNavigator
                         val readingOrderLink = pub.readingOrder.firstOrNull()
-                        if (readingOrderLink != null) {
-                            pub.locatorFromLink(readingOrderLink)?.let { base ->
-                                val targetLoc = base.copy(locations = Locator.Locations(position = targetPage))
-                                nav.go(targetLoc, animated = false)
-                                if (ttsState.value == TtsState.PLAYING) {
-                                    playTts(targetLoc)
-                                } else {
-                                    _lastTtsLocator.value = targetLoc
-                                }
+                        val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
+                            ?.copy(locations = Locator.Locations(position = targetPage))
+                        if (targetLoc != null) {
+                            nav?.go(targetLoc, animated = false)
+                            if (ttsState.value == TtsState.PLAYING) {
+                                playTts(targetLoc)
+                            } else {
+                                _lastTtsLocator.value = targetLoc
                             }
                         }
                     }
                     return
                 }
             }
+            return
         }
+
+        val nav = (navigator ?: this.navigator) as? VisualNavigator ?: return
 
         val href = nav.currentLocator.value.href.toString()
         val order = pub.readingOrder
@@ -1436,51 +1462,48 @@ class ReaderViewModel @Inject constructor(
 
     fun goToPreviousChapter(navigator: Navigator?) {
         val pub = publication ?: return
-        val nav = navigator as? VisualNavigator ?: return
 
-        if (isPdfBook) {
+        if (isPdfBook || isReflowMode.value) {
             val toc = pub.tableOfContents
             if (toc.isNotEmpty()) {
                 val currentPage = if (isReflowMode.value) {
-                    lastKnownReflowPage.takeIf { it > 0 } ?: 1
+                    lastKnownReflowPage.takeIf { it > 0 } 
+                        ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
+                        ?: 1
                 } else {
-                    val visualPage = (nav.currentLocator.value.locations.position ?: lastKnownReflowPage)
+                    val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
                     lastKnownReflowPage = visualPage
                     visualPage.takeIf { it > 0 } ?: 1
                 }
-                val prevLink = toc.mapNotNull { link ->
-                    val page = link.href.toString().let { href ->
-                        Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                            ?: Regex("""^/?(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()
-                    }
-                    if (page != null) link to page else null
-                }.lastOrNull { it.second < currentPage }
+                val targetPage = resolvePreviousPdfPageFromToc(toc, currentPage)
 
-                if (prevLink != null) {
-                    val targetPage = prevLink.second
+                if (targetPage != null) {
                     if (isReflowMode.value) {
                         jumpToReflowPage(targetPage)
                         if (ttsState.value == TtsState.PLAYING) {
                             getLocatorForPdfPage(targetPage)?.let(::playTts)
                         }
                     } else {
+                        val nav = (navigator ?: this.navigator) as? VisualNavigator
                         val readingOrderLink = pub.readingOrder.firstOrNull()
-                        if (readingOrderLink != null) {
-                            pub.locatorFromLink(readingOrderLink)?.let { base ->
-                                val targetLoc = base.copy(locations = Locator.Locations(position = targetPage))
-                                nav.go(targetLoc, animated = false)
-                                if (ttsState.value == TtsState.PLAYING) {
-                                    playTts(targetLoc)
-                                } else {
-                                    _lastTtsLocator.value = targetLoc
-                                }
+                        val targetLoc = readingOrderLink?.let { pub.locatorFromLink(it) }
+                            ?.copy(locations = Locator.Locations(position = targetPage))
+                        if (targetLoc != null) {
+                            nav?.go(targetLoc, animated = false)
+                            if (ttsState.value == TtsState.PLAYING) {
+                                playTts(targetLoc)
+                            } else {
+                                _lastTtsLocator.value = targetLoc
                             }
                         }
                     }
                     return
                 }
             }
+            return
         }
+
+        val nav = (navigator ?: this.navigator) as? VisualNavigator ?: return
 
         val href = nav.currentLocator.value.href.toString()
         val order = pub.readingOrder
