@@ -700,28 +700,28 @@
 - **Hallazgos:** Operación 100% offline y determinista con impacto mínimo en CPU (~5-15 ms por capítulo).
 
 #### `core/share/QuoteVideoClipExporter.kt`
-- **Propósito:** Exportador de clips de video con citas (MP4 con texto sincronizado, MediaCodec/MediaMuxer).
-- **Clases:** `QuoteVideoClipExporter` (@Singleton), `WordTiming`
-- **Depende_de:** TtsManager, MediaCodec, MediaMuxer, Dispatchers.Default
-- **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** MediaCodec en Dispatchers.Default (M19).
+- **Propósito:** Exportador de clips de video verticales MP4 con citas y fragmentos de texto. Renderiza texto animado sobre lienzo gráfico y multiplexa pistas de video H.264/AVC con audio AAC sintetizado mediante MediaCodec y MediaMuxer en corrutinas.
+- **Clases:** `QuoteVideoClipExporter` (@Singleton), `WordTiming`, `ExportProgress`
+- **Depende_de:** TtsManager, MediaCodec, MediaMuxer, Surface, Paint, Dispatchers.Default
+- **Usado_por:** ReaderViewModel, ReaderScreen
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 429 líneas)
+- **Hallazgos:** El pipeline de codificación MediaCodec opera fuera del hilo principal para prevenir congelamientos en UI durante la rasterización de cuadros.
 
 #### `core/backup/WoodsBackupManager.kt`
-- **Propósito:** Gestor de respaldo de la app (JSON con kotlinx.serialization).
-- **Clases:** `WoodsBackupManager` (@Singleton), `BookProgressBackup`, `HighlightBackup`, `BookmarkBackup`, `PhoneticRuleBackup`, `TtsRuleBackup`
-- **Depende_de:** Room DAOs, UserPreferencesRepository, Dispatchers
+- **Propósito:** Gestor integral de exportación e importación de copias de seguridad de la aplicación (Woods Vault JSON). Exporta e importa progreso de lectura, historial de sesiones, citas, subrayados, notas, reglas fonéticas de TTS y preferencias de usuario mediante serialización kotlinx.serialization con esquema versionado.
+- **Clases:** `WoodsBackupManager` (@Singleton), `WoodsBackupData`, `BookProgressBackup`, `HighlightBackup`, `BookmarkBackup`, `PhoneticRuleBackup`, `TtsRuleBackup`
+- **Depende_de:** AppDatabase, BookDao, HighlightDao, BookmarkDao, TtsRuleDao, UserPreferencesRepository, Dispatchers.IO
 - **Usado_por:** SettingsViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** Ninguno crítico.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 602 líneas)
+- **Hallazgos:** Las operaciones de restauración aplican transacciones atómicas Room para prevenir corrupciones parciales si el proceso es interrumpido.
 
 #### `core/license/ProLicenseManager.kt`
-- **Propósito:** Gestor de licencias Pro (firma ECDSA SHA256withECDSA, verificación de licencia guardada).
-- **Clases:** `ProLicenseManager` (@Singleton)
-- **Depende_de:** Security/Crypto, SharedPreferences, Settings.Secure.ANDROID_ID
-- **Usado_por:** LibraryViewModel, WoodsProUnlockDialog, SettingsViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** `ANDROID_ID` inestable (M20).
+- **Propósito:** Verificador y gestor de estado de licencias de Woods Reader PRO. Comprueba firmas criptográficas asimétricas ECDSA (secp256r1 con algoritmo SHA256withECDSA) emitidas por Keymaker contra una clave pública incrustada, validando el identificador único de instalación.
+- **Clases:** `ProLicenseManager` (@Singleton), `LicenseStatus`
+- **Depende_de:** Java Security (KeyFactory, Signature, X509EncodedKeySpec), SharedPreferences, Context
+- **Usado_por:** ReaderViewModel, LibraryViewModel, WoodsProUnlockDialog, SettingsViewModel
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 144 líneas)
+- **Hallazgos:** Si ANDROID_ID no está disponible, utiliza un identificador pseudoaleatorio de instalación persistido en SharedPreferences para garantizar portabilidad offline.
 
 ### 5.5 Web-to-EPUB y Traducción
 
@@ -1125,12 +1125,12 @@
   - **M3:** CFI como JSON plano frágil.
 
 #### `ui/reader/ReaderContract.kt`
-- **Propósito:** Contrato del lector: tabs, estados UI, narración, estado PDF.
-- **Clases:** `ReaderTab`, `ReaderUiState` (sealed), `NarrationHighlight`, `ReaderState`
-- **Depende_de:** Compose Icons, Readium Locator/Publication
-- **Usado_por:** ReaderViewModel, ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-42)
-- **Hallazgos:** Ninguno.
+- **Propósito:** Definición de contratos y modelos de navegación para la interfaz del lector: pestañas del panel lateral (TOC, Marcadores, Subrayados, Notas, Configuración) y modelos inmutables de resaltado de texto para la narración de TTS.
+- **Clases:** `ReaderTab` (enum), `NarrationHighlight` (data class), `ReaderState`
+- **Depende_de:** Readium Locator
+- **Usado_por:** ReaderViewModel, ReaderScreen, ReaderSideMenu, ReaderTopBar
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 42 líneas)
+- **Hallazgos:** Contrato estricto y desacoplado de Compose que previene dependencias cíclicas entre vistas del lector.
 
 #### `ui/reader/TtsState.kt`
 - **Propósito:** Estados de TTS.
@@ -1141,12 +1141,12 @@
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/EpubFormatManager.kt`
-- **Propósito:** Gestor de formato EPUB. Readium Publication, caché LRU de documentos, servicio TTS binding.
-- **Clases:** `EpubFormatManager` (@Singleton), `NoOpTtsRuleDao`
-- **Depende_de:** ReadingPipeline, EpubContentExtractor, TtsRuleDao, Readium Navigator, ReaderTtsService
+- **Propósito:** Gestor de formato EPUB y puente de configuración visual para Readium VisualNavigator. Aplica temas de color (Hidden Forest, Sunset, Sepia, Dark), estilos de tipografía, tamaño de fuente, interlineado, márgenes de página y opciones de justificación mediante inyección de CSS y cálculo de preferencias Readium.
+- **Clases:** `EpubFormatManager` (@Inject constructor)
+- **Depende_de:** Readium Navigator (VisualNavigator, EpubPreferences), UserPreferences, ReaderTheme
 - **Usado_por:** ReaderViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-100)
-- **Hallazgos:** `NoOpTtsRuleDao` para tests sin DAO real.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 588 líneas)
+- **Hallazgos:** Aplica debouncing de 150 ms en actualizaciones de preferencias visuales para no saturar el motor WebView de Readium.
 
 #### `ui/reader/ReaderUIComponents.kt`
 - **Propósito:** Componentes visuales comunes del lector (diseño glass, botones, tarjetas).
