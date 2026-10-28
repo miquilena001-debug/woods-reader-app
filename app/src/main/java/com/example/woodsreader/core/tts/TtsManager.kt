@@ -218,6 +218,7 @@ class TtsManager @Inject constructor(
 
     @Volatile
     private var cachedUseSherpaTts: Boolean = false
+    private val utteranceCounter = java.util.concurrent.atomic.AtomicLong(0)
     @Volatile
     private var activeUtteranceContinuation: Pair<String, kotlinx.coroutines.CancellableContinuation<Unit>>? = null
 
@@ -226,7 +227,11 @@ class TtsManager @Inject constructor(
         override fun onDone(utteranceId: String?) {
             completeUtterance(utteranceId, cancelled = false)
         }
+        @Deprecated("Deprecated in Java")
         override fun onError(utteranceId: String?) {
+            completeUtterance(utteranceId, cancelled = false)
+        }
+        override fun onError(utteranceId: String?, errorCode: Int) {
             completeUtterance(utteranceId, cancelled = false)
         }
         override fun onStop(utteranceId: String?, interrupted: Boolean) {
@@ -235,7 +240,7 @@ class TtsManager @Inject constructor(
 
         private fun completeUtterance(utteranceId: String?, cancelled: Boolean) {
             val pair = activeUtteranceContinuation ?: return
-            if (utteranceId == null || utteranceId == pair.first) {
+            if (utteranceId != null && utteranceId == pair.first) {
                 activeUtteranceContinuation = null
                 if (pair.second.isActive) {
                     if (cancelled) pair.second.cancel() else pair.second.resume(Unit)
@@ -469,7 +474,7 @@ class TtsManager @Inject constructor(
                 tts?.setPitch((basePitch * rolePitchModifier).coerceIn(0.5f, 2.0f))
                 tts?.setSpeechRate((baseRate * speechRateMultiplier).coerceIn(0.1f, 3.0f))
 
-                val id = "utterance_${System.currentTimeMillis()}"
+                val id = "utterance_${System.currentTimeMillis()}_${utteranceCounter.incrementAndGet()}"
 
                 suspendCancellableCoroutine<Unit> { cont ->
                     activeUtteranceContinuation = id to cont
@@ -1367,11 +1372,7 @@ class TtsManager @Inject constructor(
 
         var completedNormally = true
         try {
-            val useSherpa = try {
-                userPreferencesRepository.userPreferencesFlow.first().useSherpaTts
-            } catch (_: Exception) {
-                false
-            } || (sherpaModelManager.isModelReady() && !isReady)
+            val useSherpa = cachedUseSherpaTts || (sherpaModelManager.isModelReady() && !isReady)
 
             if (useSherpa && initSherpaIfNeeded()) {
                 requestAudioFocus()
