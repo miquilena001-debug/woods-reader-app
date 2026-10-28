@@ -6,18 +6,18 @@
 
 ## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
 - **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `fc4319a` (rama `master`).
+- **Commit hash de referencia:** `bc5d134` (rama `master`).
 - **Resumen Ejecutivo:**
   1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
-  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 182 casos de test en verde (0 fallos, 0 errores).
+  2. **Pruebas Unitarias al 100%:** 42 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 47 archivos de test y utilidades) ejecutan 185 casos de test en verde (0 fallos, 0 errores).
   3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
   4. **Descompresión Parcial del Lector:** Extracción inicial de 5 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator); `ReaderViewModel.kt` conserva 24 dependencias inyectadas directas (25 con Application) y orquesta TTS, teleprompter, sueño, ambientes, preferencias y navegación (C3 activo como deuda técnica).
   5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
 
 - **Resumen de Auditoría de Hallazgos (Sección 14):**
   - ✅ **Verificado / Resuelto:** 10 hallazgos (C1, C2, C5, C9, C12, C13, A1, A12, M4, SEC-1).
-  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 2 hallazgos (C6, C7).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 25 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M25, M26, M27, M28, M29).
+  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 3 hallazgos (C6, C7, M25).
+  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 24 hallazgos (C3, C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M26, M27, M28, M29).
   - ⚪ **No verificado:** 0.
 
 ---
@@ -883,12 +883,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** `appScope` es un scope global sin método de cierre ordenado (M15).
 
 #### `core/managers/SleepTimerManager.kt`
-- **Propósito:** Temporizador de sueño (interfaz SleepTimer + implementación con rampa de velocidad).
+- **Propósito:** Temporizador de sueño unificado (interfaz SleepTimer + implementación con rampa de velocidad, soporte de fin de capítulo y minutos arbitrarios).
 - **Clases:** `SleepTimer` (interface), `SleepTimerManager` (@Singleton)
 - **Depende_de:** TimeProvider, kotlinx.coroutines
 - **Usado_por:** ReaderViewModel
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 87 líneas)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 94 líneas)
+- **Hallazgos:** M25 resuelto en código. Actúa como autoridad única para cuentas regresivas continuas y fin de capítulo (-1), asegurando restauración de velocidad y parada de ambientes sonoros.
 
 #### `core/managers/PdfReflowManager.kt`
 - **Propósito:** Gestor de extracción semántica y reflujo dinámico de documentos PDF. Transforma páginas PDF fijas en bloques continuos `ReflowItem` (párrafos, títulos, listas, imágenes), deduplica encabezados y pies de página mediante `NoiseClassifier` y genera `NarrationUnit` para TTS sincronizado.
@@ -1555,14 +1555,14 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `ParsedChapterData`, `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
 - **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, SherpaModelManager, PronunciationLexiconManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, ForestAmbienceEngine, AmbientSoundscapePlayer, SleepTimer, PdfBookViewSynchronizer, CoverExtractor, TtsPresetCatalog, EdgeNeuralTtsClient, QuoteVideoClipExporter
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.476 líneas)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.487 líneas)
 - **Hallazgos:**
   - **C3 [PENDIENTE]:** God Class con 24 dependencias inyectadas en constructor (25 con Application), frente a 22 (23 con Application) en `4de4bd7^`. Se extrajeron 3 dependencias (`assetRetriever`, `publicationOpener`, `chapterAudioExporter`) a 5 casos de uso/coordinadores, pero persisten dentro responsabilidades críticas: orquestación de TTS, teleprompter WPM y auto-scroll, temporizador de sueño (`SleepTimer`), ambientes/soundscapes (`ForestAmbienceEngine`, `AmbientSoundscapePlayer`), preferencias de usuario (`UserPreferencesRepository`) y navegación multidocumento (EPUB/PDF/Reflow/TOC).
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
   - **C2 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Emite `ReaderUiState.Error` seguro si falta el parámetro.
   - **C8/C10 [PENDIENTE]:** Caracteres corruptos (mojibake) confirmados en comentarios de líneas 355, 502, 748, 754, 755, 1026, 1293, 1662, 2012, 2147, 2205, 2245.
   - **M3 [PENDIENTE]:** Locator CFI persistido como JSON plano propenso a desincronización si cambian esquemas de Readium.
-  - **M25 [PENDIENTE]:** Dos temporizadores de sueño en paralelo (`SleepTimer` y `ttsManager.smartSleepTimerManager`) en L304–314 y L2149–2164, con preset `MIN_15` forzado por defecto ante minutos no exactos.
+  - **M25 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Unificada la autoridad del temporizador de sueño en `SleepTimerManager` en L304, L582 y L2149. Se eliminó la doble corrutina y el fallback forzado a `MIN_15`, sincronizando fin de capítulo y parada de ambientes sonoros.
   - **M26 [PENDIENTE]:** `goToNextChapter` (L1324) y `goToPreviousChapter` (L1441) retornan prematuramente (`val nav = navigator as? VisualNavigator ?: return`) antes de evaluar la rama PDF en modo Reflow.
   - **M27 [PENDIENTE]:** `ReaderViewState` (L2461) tiene 10 de 14 campos nunca actualizados, y `ReaderState` en `ReaderContract.kt:39` duplica sus únicos campos activos de PDF.
   - **M28 [PENDIENTE]:** Lógica de cálculo de tiempo restante y progreso de capítulo duplicada entre `onTtsLocatorChanged` (L1034–1061) y `saveProgress` (L1160–1193).
@@ -2286,7 +2286,7 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 | **M22** | Media | `ReaderUIComponents.kt:1530-1536` | Generación de Bitmap (1080x1350 px, 5.8 MB) síncrona en el hilo principal de UI al pulsar "Imagen" | `ReaderUIComponents` → Canvas Android → Hilo Main | 🔴 **Pendiente** | Inspeccionar L1530: `renderThemedQuoteBitmap` corre en hilo UI antes de insertar en MediaStore. | Mover la generación y compresión del Bitmap a `Dispatchers.Default` o `Dispatchers.IO`. |
 | **M23** | Baja | `SettingsScreen.kt:1171-1184` | Ficha técnica contiene cadenas de versión hardcodeadas ("v1.0.0-ALPHA", "Build 2026.10") | `SettingsScreen` → Ficha Técnica | 🔴 **Pendiente** | Inspeccionar L1175: valores estáticos en texto multilínea. | Sustituir cadenas fijas por interpolación de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`. |
 | **M24** | Media | `SettingsScreen.kt:940, 1356` | Exposición directa de instancias de dominio (`viewModel.woodsKeepAliveManager`, `viewModel.proLicenseManager`) a vistas Compose | `SettingsScreen` → Gestores de Dominio | 🔴 **Pendiente** | Inspeccionar L940 y L1356: la UI invoca métodos de los gestores directamente. | Delegar las acciones a través de métodos públicos del `SettingsViewModel`. |
-| **M25** | Media | `ReaderViewModel.kt:304-314, 2149-2164` | Dos temporizadores de sueño ejecutando en paralelo (`SleepTimer` y `SmartSleepTimerManager`) con preset forzado `MIN_15` | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🔴 **Pendiente** | Iniciar temporizador con minutos personalizados (ej. 20 min): L2156 fuerza `MIN_15` en `smartSleepTimerManager` mientras `sleepTimer` corre a 20 min. | Unificar la gestión de temporizador en un único motor o sincronizar los presets continuos. |
+| **M25** | Media | `ReaderViewModel.kt:304, 582, 2149` / `SleepTimerManager.kt:37-43` | Dos temporizadores en paralelo con preset forzado `MIN_15` unificados en `SleepTimerManager` como autoridad única | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🟡 **Validar en tlf.** | Probar en teléfono TECNO-LH7n: temporizador de 20 min (cuenta regresiva real), fin de capítulo (-1, detiene TTS y ambiente) y cancelación (restaura velocidad). | Unificada la autoridad en `SleepTimerManager` con soporte de minutos arbitrarios y fin de capítulo (-1). En `ReaderViewModel` se eliminó la corrutina concurrente de `smartSleepTimerManager`, sincronizando parada de narración y ambientes sonoros. |
 | **M26** | Media | `ReaderViewModel.kt:1324, 1441` | `goToNextChapter` y `goToPreviousChapter` retornan tempranamente si `navigator` no es `VisualNavigator` antes de la rama PDF | `ReaderViewModel` → Navegación PDF Reflow | 🔴 **Pendiente** | En PDF modo Reflow, invocar `goToNextChapter` con navegador nulo: retorna en L1324 sin ejecutar `jumpToReflowPage(targetPage)`. | Mover la validación `isPdfBook` y `isReflowMode` antes de la aserción de `VisualNavigator`. |
 | **M27** | Media | `ReaderViewModel.kt:2461`, `ReaderContract.kt:39` | `ReaderViewState` contiene 10 de 14 campos obsoletos/nunca actualizados, y `ReaderState` duplica sus campos activos | `ReaderViewModel` ↔ `ReaderContract` ↔ `ReaderViewState` | 🔴 **Pendiente** | Inspeccionar `_viewState`: solo actualiza bloques de narración y PDF; el resto de campos nunca se mutan y la UI no observa `viewState`. | Eliminar campos muertos de `ReaderViewState` o fusionarlo con `ReaderState` en `ReaderContract.kt`. |
 | **M28** | Media | `ReaderViewModel.kt:1034-1061, 1160-1193` | Bloques duplicados de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` | `ReaderViewModel` ↔ `CalculateReadingStatsUseCase` | 🔴 **Pendiente** | Comparar L1034-1061 con L1160-1193: 28 líneas idénticas de cálculo WPM, tiempo de libro y progreso de capítulo. | Extraer a método privado reutilizable `updateReadingEstimatesAndMetadata(locator, activeWpm)`. |
@@ -2317,6 +2317,12 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
 6. **Apertura de Libros Masivos (>80 Capítulos / Spines) y Prevención de ANR**:
    - *Riesgo:* El cálculo pesado de posiciones de Readium en libros con cientos de divisiones (`readingOrder.size > 80`) puede saturar el hilo principal y disparar diálogo de ANR.
    - *Verificación física:* Abrir un libro voluminoso (>1.000 páginas) en el teléfono y cronometrar que el fast-path sintético $O(1)$ abra la pantalla instantáneamente en memoria (tiempo objetivo estimado <200 ms).
+7. **Temporizador de Sueño Inteligente, Fin de Capítulo y Cancelación (M25)**:
+   - *Riesgo:* Desincronización en la cuenta regresiva, doble parada de audio o falta de restauración de velocidad del motor TTS al cancelar o expirar.
+   - *Verificación física:* En el teléfono TECNO-LH7n:
+     - Configurar temporizador personalizado de 20 min y verificar que el contador descienda con precisión.
+     - Activar modo "Fin del Cap." (-1) y verificar que la narración y los sonidos de ambiente se detengan al culminar el capítulo actual.
+     - Cancelar el temporizador durante la rampa de frenado final y verificar que la velocidad del audio retorne a su valor original sin artefactos.
 
 ---
 
@@ -2345,7 +2351,7 @@ Todos los tests unitarios de `app/src/test/` han sido revisados atomicamente:
 | `EpubContentExtractorTest.kt` | EpubContentExtractor | ✅ REVISADO | HTML vacío, headings con tamaños, imágenes, figuras con figcaption |
 | `EpubHtmlSanitizerTest.kt` | EpubHtmlSanitizer | ✅ REVISADO | xmlns, head tag, wrapping, charset detection, chapter title injection |
 | `EpubPackageSanitizerTest.kt` | EpubPackageSanitizer | ✅ REVISADO | NCX reference repair, cover property repair |
-| `SleepTimerManagerTest.kt` | SleepTimerManager | ✅ REVISADO | Countdown, expiración, cancelación restaura velocidad |
+| `SleepTimerManagerTest.kt` | SleepTimerManager | ✅ REVISADO | 5 tests: countdown, expiración, fin de capítulo (-1), duración personalizada (20 min) y cancelación con restauración de velocidad |
 | `ReadingSessionManagerTest.kt` | ReadingSessionManager | ✅ REVISADO | Sesión nueva, palabras/páginas, sesión fantasma descartada |
 | `ReadingProgressManagerTest.kt` | ReadingProgressManager | ✅ REVISADO | ETF manual y TTS, fecha de finalización |
 | `ProLicenseManagerTest.kt` | ProLicenseManager | ✅ REVISADO | ID de dispositivo, activación con clave válida, mismatching |
