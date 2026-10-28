@@ -25,6 +25,9 @@ class LocalEpubBuilder(
     private val bookUuid = UUID.randomUUID().toString()
     private val zipOut = ZipOutputStream(BufferedOutputStream(FileOutputStream(outputFile)))
     private val chapters = ArrayList<ScrapedChapterMeta>()
+    private var hasCoverImage = false
+    private val images = ArrayList<Pair<String, String>>()
+    private var imageCounter = 0
     private var isClosed = false
 
     init {
@@ -64,8 +67,26 @@ class LocalEpubBuilder(
     private fun writeStylesheet() {
         val css = "body { line-height: 1.6; margin: 1em; font-family: serif; }\n" +
             "h1, h2 { text-align: center; margin-bottom: 1.2em; font-weight: bold; }\n" +
-            "p { margin-top: 0; margin-bottom: 0.9em; text-align: justify; }"
+            "p { margin-top: 0; margin-bottom: 0.9em; text-align: justify; }\n" +
+            ".illust-box { text-align: center; margin: 1.2em 0; page-break-inside: avoid; }\n" +
+            ".illust-box img { max-width: 100%; height: auto; border-radius: 6px; }"
         putTextEntry("OEBPS/style.css", css)
+    }
+
+    fun setCoverImage(jpegBytes: ByteArray) {
+        if (hasCoverImage || jpegBytes.isEmpty()) return
+        putBinaryEntry("OEBPS/images/cover.jpg", jpegBytes)
+        hasCoverImage = true
+    }
+
+    fun registerChapterImage(jpegBytes: ByteArray): String {
+        if (jpegBytes.isEmpty()) return ""
+        val idx = ++imageCounter
+        val id = "img_${"%04d".format(java.util.Locale.ROOT, idx)}"
+        val relPath = "images/illust_${"%04d".format(java.util.Locale.ROOT, idx)}.jpg"
+        putBinaryEntry("OEBPS/$relPath", jpegBytes)
+        images.add(id to relPath)
+        return "[WOODS_IMG:$relPath]"
     }
 
     fun appendChapter(rawTitle: String, paragraphs: List<String>, sourceUrl: String) {
@@ -75,10 +96,17 @@ class LocalEpubBuilder(
         val cleanTitle = rawTitle.trim().ifBlank { "Capítulo $idx" }
 
         val bodyBuilder = StringBuilder(paragraphs.sumOf { it.length + 16 })
+        val imgTagRegex = Regex("""^\[WOODS_IMG:(.+)\]$""")
         for (p in paragraphs) {
             val trimmed = p.trim()
             if (trimmed.isNotEmpty()) {
-                bodyBuilder.append("    <p>").append(escapeXml(trimmed)).append("</p>\n")
+                val imgMatch = imgTagRegex.find(trimmed)
+                if (imgMatch != null) {
+                    val imgPath = escapeXml(imgMatch.groupValues[1])
+                    bodyBuilder.append("    <div class=\"illust-box\"><img src=\"").append(imgPath).append("\" alt=\"Ilustración\"/></div>\n")
+                } else {
+                    bodyBuilder.append("    <p>").append(escapeXml(trimmed)).append("</p>\n")
+                }
             }
         }
 
@@ -127,6 +155,14 @@ class LocalEpubBuilder(
         manifestItems.append("        <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n")
         manifestItems.append("        <item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n")
 
+        if (hasCoverImage) {
+            manifestItems.append("        <item id=\"cover-image\" href=\"images/cover.jpg\" media-type=\"image/jpeg\" properties=\"cover-image\"/>\n")
+        }
+
+        for ((id, path) in images) {
+            manifestItems.append("        <item id=\"$id\" href=\"$path\" media-type=\"image/jpeg\"/>\n")
+        }
+
         for (ch in chapters) {
             val itemId = "ch_${ch.index}"
             manifestItems.append("        <item id=\"$itemId\" href=\"${ch.fileName}\" media-type=\"application/xhtml+xml\"/>\n")
@@ -141,6 +177,7 @@ class LocalEpubBuilder(
             "        <dc:creator opf:role=\"aut\">${escapeXml(bookAuthor)}</dc:creator>\n" +
             "        <dc:language>$languageCode</dc:language>\n" +
             "        <dc:identifier id=\"BookId\" opf:scheme=\"UUID\">urn:uuid:$bookUuid</dc:identifier>\n" +
+            (if (hasCoverImage) "        <meta name=\"cover\" content=\"cover-image\"/>\n" else "") +
             (if (lastUrl.isNotBlank()) "        <dc:source>${escapeXml(lastUrl)}</dc:source>\n" else "") +
             "    </metadata>\n" +
             "    <manifest>\n" +
@@ -184,6 +221,13 @@ class LocalEpubBuilder(
         val entry = ZipEntry(path)
         zipOut.putNextEntry(entry)
         zipOut.write(content.toByteArray(Charsets.UTF_8))
+        zipOut.closeEntry()
+    }
+
+    private fun putBinaryEntry(path: String, bytes: ByteArray) {
+        val entry = ZipEntry(path)
+        zipOut.putNextEntry(entry)
+        zipOut.write(bytes)
         zipOut.closeEntry()
     }
 
