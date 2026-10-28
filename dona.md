@@ -1165,44 +1165,44 @@
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTopBar.kt`
-- **Propósito:** Barra superior del lector (título, controles reflujo, TTS, menú).
-- **Clases:** `ReaderTopBar`
-- **Depende_de:** Compose, Haze
+- **Propósito:** Barra superior del lector con soporte de glassmorphism (Haze). Muestra botón de retroceso a biblioteca, título del libro y capítulo actual, alternador de modo Reflow (en PDFs), acceso rápido a TTS y menú maestro.
+- **Clases:** `ReaderTopBar` (@Composable)
+- **Depende_de:** Compose, Material3, HazeState
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 234 líneas)
+- **Hallazgos:** Altura y espaciado adaptativo para evitar solapamientos con la barra de estado del sistema (Insets).
 
 #### `ui/reader/ReaderSideMenu.kt`
-- **Propósito:** Menú lateral del lector (opciones narrar, índice, buscar, X-Ray, teleprompter, reflujo, ajustes, marcador).
-- **Clases:** `ReaderSideMenu`, `MasterMenuOption`, `MasterMenuOptionType`
-- **Depende_de:** Compose, Haze
+- **Propósito:** Menú modal lateral de acceso rápido para el lector. Organiza las acciones principales: Narrador de voz, Tabla de Contenidos (TOC), Búsqueda en texto, Rayos-X de entidades, Modo Teleprompter WPM, Reflujo PDF, Ajustes de lectura y Marcador de página.
+- **Clases:** `ReaderSideMenu` (@Composable), `MasterMenuOption`, `MasterMenuOptionType`
+- **Depende_de:** Compose, Material3, HazeState
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 236 líneas)
+- **Hallazgos:** Cierra de forma reactiva al despachar cualquier navegación para no bloquear la superficie de lectura.
 
 #### `ui/reader/ReaderAudioBottomSheet.kt`
-- **Propósito:** Bottom sheet de audio y controles de lectura (diseño, notas, TTS).
-- **Clases:** `ReaderControlBottomSheet`
-- **Depende_de:** Compose, Haze
+- **Propósito:** Panel inferior modal para configuración de audio y TTS avanzado. Incluye selector de motor (Sherpa ONNX vs TTS del sistema), control de velocidad continua (0.5x - 3.5x), tono de voz, temporizador de sueño con desvanecimiento gradual, selector de ambientes sonoros y panel de voces instaladas.
+- **Clases:** `ReaderAudioBottomSheet` (@Composable), `AudioTab`
+- **Depende_de:** Compose, Material3, HazeState, TtsManager, SherpaModelManager, SmartSleepTimerManager
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** `TabRow` solo tiene TEXT y NOTES (Audio tab ausente).
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 790 líneas)
+- **Hallazgos:** Los controles de velocidad y tono actualizan las preferencias en DataStore con debouncing para no interrumpir el flujo de audio.
 
 #### `ui/reader/ReaderTtsBar.kt`
-- **Propósito:** Barra de controles TTS (mini-ticker, transportes, velocidad, gestos swipe).
-- **Clases:** `ReaderTtsBar`
-- **Depende_de:** Compose, Haze
+- **Propósito:** Barra flotante de transporte de TTS en la parte inferior de la pantalla de lectura. Expone botones de reproducción/pausa, salto de oración anterior/siguiente, mini-ticker con el texto actual de la oración narrada, velocidad de lectura rápida y control de bloqueo táctil de pantalla.
+- **Clases:** `ReaderTtsBar` (@Composable)
+- **Depende_de:** Compose, Material3, HazeState, TtsState
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 336 líneas)
+- **Hallazgos:** El mini-ticker de texto trunca elegantemente con elipsis para evitar expansiones verticales de layout en oraciones largas.
 
 #### `ui/reader/ReaderNotesTab.kt`
-- **Propósito:** Pestaña de notas (resaltados y marcadores unificados, filtros, exportar cita).
-- **Clases:** `ReaderNotesTab`, `UnifiedNote`, `NoteType`, `NotesFilter`
-- **Depende_de:** Compose, HighlightExporter, QuoteCardGenerator
-- **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (parcial, líneas 1-150)
-- **Hallazgos:** Ninguno.
+- **Propósito:** Pestaña de notas, marcadores y citas textuales dentro del menú de anotaciones. Lista subrayados y marcadores ordenados por progreso, permite editar notas asociadas, filtrar por color/tipo y exportar citas a texto Markdown o imagen de tarjeta para compartir.
+- **Clases:** `ReaderNotesTab` (@Composable), `UnifiedNote`, `NoteType`, `NotesFilter`
+- **Depende_de:** Compose, Material3, HighlightEntity, BookmarkEntity, HighlightExporter, QuoteCardGenerator
+- **Usado_por:** ReaderScreen, ReaderMasterMenuBottomSheet
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 574 líneas)
+- **Hallazgos:** Utiliza ManageReaderAnnotationsUseCase para la exportación y borrado atómico de apuntes.
 
 #### `ui/reader/ReaderBottomSlider.kt`
 - **Propósito:** Slider inferior del lector (progreso, navegación capítulos).
