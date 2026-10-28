@@ -1,6 +1,10 @@
 package com.example.woodsreader.core.search
 
 import android.util.LruCache
+import com.example.woodsreader.core.pdf.PdfParagraphHealer
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -107,6 +111,114 @@ object FastEpubSearchEngine {
         startFromChapterIndex = startFromChapterIndex,
         maxResults = maxResults
     )
+
+    fun searchPdfStreaming(
+        bookId: String,
+        pdfFile: File,
+        publication: Publication?,
+        rawQuery: String,
+        startFromPage: Int = 1,
+        maxResults: Int = 250,
+        pageTextExtractor: ((doc: PDDocument, page: Int) -> String)? = null
+    ): Flow<FastSearchProgress> = flow {
+        val query = rawQuery.trim()
+        if (query.length < 2 || !pdfFile.exists()) {
+            emit(FastSearchProgress(emptyList(), 0, 0, true))
+            return@flow
+        }
+
+        val accumulatedHits = ArrayList<FastInBookSearchHit>(64)
+
+        try {
+            PDDocument.load(pdfFile).use { doc ->
+                val totalPages = doc.numberOfPages
+                if (totalPages == 0) {
+                    emit(FastSearchProgress(emptyList(), 0, 0, true))
+                    return@use
+                }
+
+                val safeStartPage = startFromPage.coerceIn(1, totalPages)
+                val searchOrder = buildSearchOrder(totalPages, safeStartPage - 1).map { it + 1 }
+                val stripper = if (pageTextExtractor == null) runCatching { PDFTextStripper() }.getOrNull() else null
+                var scanned = 0
+
+                val tocLinks = publication?.tableOfContents.orEmpty()
+
+                for (pageIdx in searchOrder) {
+                    currentCoroutineContext().ensureActive()
+
+                    val cacheKey = "${bookId}_pdf_page_$pageIdx"
+                    val cleanText = chapterPlainTextCache.get(cacheKey) ?: run {
+                        val rawPage = if (pageTextExtractor != null) {
+                            pageTextExtractor(doc, pageIdx)
+                        } else if (stripper != null) {
+                            stripper.startPage = pageIdx
+                            stripper.endPage = pageIdx
+                            try { stripper.getText(doc) } catch (_: Throwable) { "" }
+                        } else {
+                            ""
+                        }
+                        val healed = PdfParagraphHealer
+                            .healParagraphs(rawPage.lines())
+                            .joinToString("\n")
+                        if (healed.isNotBlank()) {
+                            chapterPlainTextCache.put(cacheKey, healed)
+                        }
+                        healed
+                    }
+
+                    if (cleanText.isNotBlank()) {
+                        val chapterTitle = tocLinks
+                            .mapNotNull { link ->
+                                val p = extractPageFromHref(link.href.toString())
+                                if (p != null) p to link.title else null
+                            }
+                            .filter { it.first <= pageIdx }
+                            .maxByOrNull { it.first }
+                            ?.second?.trim()?.takeIf { it.isNotBlank() }
+                            ?: "Página $pageIdx"
+
+                        findMatchesInChapter(
+                            plainText = cleanText,
+                            query = query,
+                            chapterIndex = pageIdx,
+                            chapterTitle = chapterTitle,
+                            chapterHref = "/page_${pageIdx}#page=${pageIdx}",
+                            outList = accumulatedHits,
+                            maxTotalResults = maxResults
+                        )
+                    }
+
+                    scanned++
+                    if (scanned % 15 == 0 || accumulatedHits.size >= maxResults || scanned == totalPages) {
+                        emit(
+                            FastSearchProgress(
+                                hits = ArrayList(accumulatedHits),
+                                scannedChapters = scanned,
+                                totalChapters = totalPages,
+                                isFinished = scanned == totalPages || accumulatedHits.size >= maxResults
+                            )
+                        )
+                    }
+
+                    if (accumulatedHits.size >= maxResults) break
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            t.printStackTrace()
+            emit(FastSearchProgress(accumulatedHits, scannedChapters = accumulatedHits.size, totalChapters = accumulatedHits.size, isFinished = true))
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private fun extractPageFromHref(href: String): Int? {
+        Regex("""(?i)[#?&]page=(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""(?i)/page[_-]?(\d+)""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""#(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        Regex("""^/?(\d+)$""").find(href)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        return null
+    }
 
     private fun buildSearchOrder(total: Int, current: Int): IntArray {
         val safeCurrent = current.coerceIn(0, (total - 1).coerceAtLeast(0))

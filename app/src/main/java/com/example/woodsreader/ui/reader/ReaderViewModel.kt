@@ -424,8 +424,21 @@ class ReaderViewModel @Inject constructor(
         val pub = publication ?: return
         val startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
         val coverFile = readerIntelligenceAndExportCoordinator.resolveCoverFile(book, context)
+        val pdfFile = if (isPdfBook) java.io.File(book.filePath).takeIf { it.exists() } else null
 
-        if (isReflowMode.value || isPdfBook) {
+        if (pdfFile != null) {
+            val startPage = pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } ?: 1
+            readerIntelligenceAndExportCoordinator.exportPdfChapters(
+                scope = viewModelScope,
+                book = book,
+                pdfFile = pdfFile,
+                startPage = startPage,
+                maxChaptersOrPagesToExport = maxChaptersToExport,
+                speed = currentSpeed.value,
+                coverFile = coverFile,
+                publication = pub
+            )
+        } else if (isReflowMode.value || isPdfBook) {
             readerIntelligenceAndExportCoordinator.exportReflowChapter(
                 scope = viewModelScope,
                 book = book,
@@ -2070,12 +2083,19 @@ class ReaderViewModel @Inject constructor(
 
     fun searchInBook(query: String, startFromChapterIndex: Int? = null) {
         val startIndex = startFromChapterIndex ?: getCurrentChapterIndex()
+        val successBook = (_uiState.value as? ReaderUiState.Success)?.book
+        val pdfFile = if (isPdfBook && successBook != null) {
+            java.io.File(successBook.filePath).takeIf { it.exists() }
+        } else null
+
         readerIntelligenceAndExportCoordinator.searchInBook(
             scope = viewModelScope,
             bookId = bookId,
             publication = publication,
             query = query,
-            startIndex = startIndex
+            startIndex = startIndex,
+            isPdf = isPdfBook,
+            pdfFile = pdfFile
         )
     }
 

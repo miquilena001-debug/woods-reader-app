@@ -165,23 +165,34 @@ object PdfParagraphHealer {
     /**
      * Escanea las páginas de un [PDDocument] detectando capítulos de novela web para construir la TOC virtual.
      */
-    fun scanChapters(document: PDDocument, maxPagesToScan: Int = Int.MAX_VALUE): List<PdfChapter> {
+    fun scanChapters(
+        document: PDDocument,
+        maxPagesToScan: Int = Int.MAX_VALUE,
+        pageTextExtractor: ((doc: PDDocument, page: Int) -> String)? = null
+    ): List<PdfChapter> {
         val totalPages = minOf(document.numberOfPages, maxPagesToScan)
         val chapters = mutableListOf<PdfChapter>()
         var chapterCounter = 1
 
-        val stripper = PDFTextStripper().apply {
-            sortByPosition = true
-        }
+        val stripper = if (pageTextExtractor == null) {
+            runCatching {
+                PDFTextStripper().apply { sortByPosition = true }
+            }.getOrNull()
+        } else null
 
         for (pageIdx in 1..totalPages) {
-            stripper.startPage = pageIdx
-            stripper.endPage = pageIdx
-
-            val writer = StringWriter()
             try {
-                stripper.writeText(document, writer)
-                val pageText = writer.toString()
+                val pageText = if (pageTextExtractor != null) {
+                    pageTextExtractor(document, pageIdx)
+                } else if (stripper != null) {
+                    stripper.startPage = pageIdx
+                    stripper.endPage = pageIdx
+                    val writer = StringWriter()
+                    stripper.writeText(document, writer)
+                    writer.toString()
+                } else {
+                    ""
+                }
                 val lines = pageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
                 // Buscar encabezado de capítulo en las primeras 15 líneas de la página

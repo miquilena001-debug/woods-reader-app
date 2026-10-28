@@ -13,8 +13,10 @@ import com.example.woodsreader.core.xray.BookXRayEngine
 import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.model.ReflowItem
+import com.tom_roush.pdfbox.pdmodel.PDDocument
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,7 +61,9 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
         bookId: String,
         publication: Publication?,
         query: String,
-        startIndex: Int
+        startIndex: Int,
+        isPdf: Boolean = false,
+        pdfFile: File? = null
     ) {
         val pub = publication ?: return
         if (query.isBlank()) {
@@ -74,12 +78,23 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
             _inBookSearchProgress.value = null
 
             try {
-                FastEpubSearchEngine.searchPublicationStreaming(
-                    bookId = bookId,
-                    publication = pub,
-                    rawQuery = query,
-                    startFromChapterIndex = startIndex
-                ).collect { progress ->
+                val flow = if (isPdf && pdfFile != null && pdfFile.exists()) {
+                    FastEpubSearchEngine.searchPdfStreaming(
+                        bookId = bookId,
+                        pdfFile = pdfFile,
+                        publication = pub,
+                        rawQuery = query,
+                        startFromPage = startIndex.coerceAtLeast(1)
+                    )
+                } else {
+                    FastEpubSearchEngine.searchPublicationStreaming(
+                        bookId = bookId,
+                        publication = pub,
+                        rawQuery = query,
+                        startFromChapterIndex = startIndex
+                    )
+                }
+                flow.collect { progress ->
                     _inBookSearchResults.value = progress.hits
                     _inBookSearchProgress.value = progress
                     if (progress.isFinished) {
@@ -246,6 +261,114 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
                 coverImageFile = coverFile,
                 bookAuthor = book.author
             )
+        }
+        chapterAudioExporter.setActiveJob(job)
+    }
+
+    fun exportPdfChapters(
+        scope: CoroutineScope,
+        book: BookEntity,
+        pdfFile: File,
+        startPage: Int,
+        maxChaptersOrPagesToExport: Int,
+        speed: Float,
+        coverFile: File?,
+        publication: Publication? = null,
+        pdfPageExtractor: ((doc: PDDocument, pageFrom: Int, pageTo: Int) -> String)? = null
+    ) {
+        val job = scope.launch {
+            try {
+                com.tom_roush.pdfbox.pdmodel.PDDocument.load(pdfFile).use { doc ->
+                    val totalPages = doc.numberOfPages
+                    if (totalPages == 0) return@use
+
+                    val scannedChapters = com.example.woodsreader.core.pdf.PdfParagraphHealer.scanChapters(
+                        document = doc,
+                        pageTextExtractor = pdfPageExtractor?.let { extractor ->
+                            { d, p -> extractor(d, p, p) }
+                        }
+                    )
+                    val stripper = if (pdfPageExtractor == null) runCatching { com.tom_roush.pdfbox.text.PDFTextStripper() }.getOrNull() else null
+
+                    if (scannedChapters.isNotEmpty()) {
+                        val safeStartPage = startPage.coerceIn(1, totalPages)
+                        val startChapIdx = scannedChapters.indexOfFirst { it.pageNumber >= safeStartPage }
+                            .takeIf { it >= 0 } ?: 0
+                        val countToExport = minOf(maxChaptersOrPagesToExport, scannedChapters.size - startChapIdx).coerceAtLeast(1)
+                        val label = when {
+                            countToExport == 1 -> scannedChapters[startChapIdx].title
+                            countToExport >= scannedChapters.size -> "Libro_Completo"
+                            else -> "Caps_${startChapIdx + 1}_a_${startChapIdx + countToExport}"
+                        }
+
+                        chapterAudioExporter.exportChaptersToM4a(
+                            bookTitle = book.title,
+                            exportLabel = label,
+                            totalChaptersCount = countToExport,
+                            chapterProvider = { offset ->
+                                val chIdx = startChapIdx + offset
+                                val currentChap = scannedChapters.getOrNull(chIdx) ?: return@exportChaptersToM4a null
+                                val nextChap = scannedChapters.getOrNull(chIdx + 1)
+                                val pageFrom = currentChap.pageNumber
+                                val pageTo = nextChap?.let { (it.pageNumber - 1).coerceAtLeast(pageFrom) } ?: totalPages
+
+                                val rawText = if (pdfPageExtractor != null) {
+                                    pdfPageExtractor(doc, pageFrom, pageTo)
+                                } else if (stripper != null) {
+                                    stripper.startPage = pageFrom
+                                    stripper.endPage = pageTo
+                                    try { stripper.getText(doc) } catch (_: Throwable) { "" }
+                                } else {
+                                    ""
+                                }
+                                val healed = com.example.woodsreader.core.pdf.PdfParagraphHealer
+                                    .healParagraphs(rawText.lines())
+                                ChapterTextChunk(currentChap.title, healed)
+                            },
+                            speed = speed,
+                            coverImageFile = coverFile,
+                            bookAuthor = book.author
+                        )
+                    } else {
+                        val safeStart = startPage.coerceIn(1, totalPages)
+                        val countToExport = minOf(maxChaptersOrPagesToExport, totalPages - safeStart + 1).coerceAtLeast(1)
+                        val label = when {
+                            countToExport == 1 -> "Pagina_$safeStart"
+                            countToExport >= totalPages -> "Libro_Completo"
+                            else -> "Pags_${safeStart}_a_${safeStart + countToExport - 1}"
+                        }
+
+                        chapterAudioExporter.exportChaptersToM4a(
+                            bookTitle = book.title,
+                            exportLabel = label,
+                            totalChaptersCount = countToExport,
+                            chapterProvider = { offset ->
+                                val targetPage = safeStart + offset
+                                if (targetPage > totalPages) return@exportChaptersToM4a null
+                                val rawText = if (pdfPageExtractor != null) {
+                                    pdfPageExtractor(doc, targetPage, targetPage)
+                                } else if (stripper != null) {
+                                    stripper.startPage = targetPage
+                                    stripper.endPage = targetPage
+                                    try { stripper.getText(doc) } catch (_: Throwable) { "" }
+                                } else {
+                                    ""
+                                }
+                                val healed = com.example.woodsreader.core.pdf.PdfParagraphHealer
+                                    .healParagraphs(rawText.lines())
+                                ChapterTextChunk("Página $targetPage", healed)
+                            },
+                            speed = speed,
+                            coverImageFile = coverFile,
+                            bookAuthor = book.author
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Error exportando audio PDF: ${e.message}", e)
+            }
         }
         chapterAudioExporter.setActiveJob(job)
     }
