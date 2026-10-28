@@ -8,6 +8,7 @@ import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
 import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
 import com.example.woodsreader.domain.reader.LoadBookFastUseCase
 import com.example.woodsreader.domain.reader.LoadBookResult
+import com.example.woodsreader.domain.reader.ManageReaderAnnotationsUseCase
 import android.content.Context
 import java.util.Locale
 
@@ -154,7 +155,8 @@ class ReaderViewModel @Inject constructor(
     val woodsKeepAliveManager: WoodsKeepAliveManager,
     val quoteVideoClipExporter: QuoteVideoClipExporter,
     private val saveReadingProgressUseCase: SaveReadingProgressUseCase,
-    private val calculateReadingStatsUseCase: CalculateReadingStatsUseCase
+    private val calculateReadingStatsUseCase: CalculateReadingStatsUseCase,
+    private val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase
 ) : ViewModel() {
 
     companion object {
@@ -363,8 +365,8 @@ class ReaderViewModel @Inject constructor(
     private val _isCurrentPageBookmarked = MutableStateFlow(false)
     val isCurrentPageBookmarked = _isCurrentPageBookmarked.asStateFlow()
 
-        val highlights = bookRepository.getHighlights(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-    val bookmarks = bookRepository.getBookmarks(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val highlights = manageReaderAnnotationsUseCase.getHighlights(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val bookmarks = manageReaderAnnotationsUseCase.getBookmarks(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val ttsRules = bookRepository.getTtsRules().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     private val _availableVoices = MutableStateFlow<List<String>>(emptyList())
@@ -902,23 +904,23 @@ class ReaderViewModel @Inject constructor(
 
     fun updateTtsHighlightStyle(style: com.example.woodsreader.model.TtsHighlightStyle) = viewModelScope.launch { userPreferencesRepository.updateTtsHighlightStyle(style) }
 
-    // Ã¢â€â‚¬Ã¢â€â‚¬ Highlights & Bookmarks Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // ── Highlights & Bookmarks ──────────────────────────────────────────────
 
-    fun deleteHighlight(highlight: HighlightEntity) = viewModelScope.launch { bookRepository.deleteHighlight(highlight) }
+    fun deleteHighlight(highlight: HighlightEntity) = viewModelScope.launch {
+        manageReaderAnnotationsUseCase.deleteHighlight(highlight)
+    }
 
     fun addHighlight(locator: Locator, color: HighlightColor, text: String, note: String = "") {
         viewModelScope.launch {
             val chapter = locator.title ?: _chapterInfo.value.title ?: ""
-            val entity = HighlightEntity(
+            manageReaderAnnotationsUseCase.saveHighlight(
                 bookId = bookId,
-                locatorJson = locator.toJSON().toString(),
-                highlightedText = text,
+                locator = locator,
                 color = color,
+                text = text,
                 note = note,
-                chapterTitle = chapter,
-                createdAt = System.currentTimeMillis()
+                chapterTitle = chapter
             )
-            bookRepository.saveHighlight(entity)
         }
     }
 
@@ -943,7 +945,6 @@ class ReaderViewModel @Inject constructor(
         val chapter = _chapterInfo.value.title?.takeIf { it.isNotBlank() }
             ?: bookmarkLocator.title?.takeIf { it.isNotBlank() }
             ?: ""
-        val progressPct = String.format(Locale.US, "%.1f%%", (_globalProgress.value * 100f).coerceIn(0f, 100f))
         val snippet = bookmarkLocator.text.highlight?.trim()?.takeIf { it.isNotBlank() }
             ?: bookmarkLocator.text.after?.trim()?.take(120)?.takeIf { it.isNotBlank() }
             ?: if (isReflowMode.value || isPdfBook) {
@@ -960,32 +961,55 @@ class ReaderViewModel @Inject constructor(
                 null
             }
 
-        val autoLabel = buildString {
-            if (chapter.isNotBlank()) append(chapter)
-            if (page > 0) {
-                if (isNotEmpty()) append(" · ")
-                append("Página $page")
-            }
-            if (progressPct.isNotBlank()) {
-                if (isNotEmpty()) append(" ")
-                append("($progressPct)")
-            }
-            if (!snippet.isNullOrBlank()) {
-                if (isNotEmpty()) append("\n")
-                append("\"${snippet.take(110).trim()}\"")
-            }
-        }.ifBlank { "Página ${page.coerceAtLeast(1)} ($progressPct)" }
-
-        bookRepository.saveBookmark(
-            BookmarkEntity(
-                bookId = bookId,
-                locatorJson = bookmarkLocator.toJSON().toString(),
-                label = label?.takeIf { it.isNotBlank() } ?: autoLabel
-            )
+        manageReaderAnnotationsUseCase.createBookmark(
+            bookId = bookId,
+            locator = bookmarkLocator,
+            label = label,
+            chapterTitle = chapter,
+            page = page,
+            progress = _globalProgress.value,
+            snippet = snippet
         )
     }
 
-    fun deleteBookmark(bookmark: BookmarkEntity) = viewModelScope.launch { bookRepository.deleteBookmark(bookmark) }
+    fun deleteBookmark(bookmark: BookmarkEntity) = viewModelScope.launch {
+        manageReaderAnnotationsUseCase.deleteBookmark(bookmark)
+    }
+
+    fun toggleBookmark(locator: Locator?, label: String? = null) = viewModelScope.launch {
+        val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value ?: locator ?: return@launch
+        val page = if (isReflowMode.value || isPdfBook) lastKnownReflowPage else currentLocator.locations.position ?: 1
+        val bookmarkLocator = if (isReflowMode.value || isPdfBook) {
+            currentLocator.copy(locations = currentLocator.locations.copy(position = page))
+        } else {
+            currentLocator
+        }
+        currentBookmarkLocator = bookmarkLocator
+        val existing = manageReaderAnnotationsUseCase.findMatchingBookmark(
+            bookmarks = bookmarks.value,
+            currentLocator = bookmarkLocator,
+            isPdfOrReflow = isReflowMode.value || isPdfBook,
+            reflowPage = page
+        )
+        if (existing != null) {
+            manageReaderAnnotationsUseCase.deleteBookmark(existing)
+        } else {
+            addBookmark(bookmarkLocator, label)
+        }
+        refreshCurrentBookmarkState()
+    }
+
+    fun exportNotesToMarkdown(bookTitle: String, bookAuthor: String): String {
+        return manageReaderAnnotationsUseCase.exportToMarkdown(bookTitle, bookAuthor, highlights.value)
+    }
+
+    fun exportNotesToPlainText(bookTitle: String, bookAuthor: String): String {
+        return manageReaderAnnotationsUseCase.exportToPlainText(bookTitle, bookAuthor, highlights.value)
+    }
+
+    fun formatCitation(text: String, bookTitle: String, author: String, chapterTitle: String? = null): String {
+        return manageReaderAnnotationsUseCase.formatCitation(text, bookTitle, author, chapterTitle)
+    }
 
     fun saveTtsRule(rule: TtsRuleEntity) = viewModelScope.launch {
         bookRepository.saveTtsRule(rule)
@@ -2109,23 +2133,12 @@ class ReaderViewModel @Inject constructor(
 
     private fun refreshCurrentBookmarkState() {
         val locator = currentBookmarkLocator ?: return
-        val position = if (isReflowMode.value || isPdfBook) lastKnownReflowPage else locator.locations.position ?: 0
-        _isCurrentPageBookmarked.value = bookmarks.value.any { bookmark ->
-            val savedLocator = runCatching {
-                Locator.fromJSON(JSONObject(bookmark.locatorJson))
-            }.getOrNull() ?: return@any false
-            if (savedLocator.href.toString() != locator.href.toString()) {
-                return@any false
-            }
-            val savedPosition = savedLocator.locations.position ?: 0
-            if (position > 0 && savedPosition > 0) {
-                savedPosition == position
-            } else {
-                val currentProgress = locator.locations.totalProgression
-                val savedProgress = savedLocator.locations.totalProgression
-                currentProgress != null && savedProgress != null && abs(currentProgress - savedProgress) < 0.002
-            }
-        }
+        _isCurrentPageBookmarked.value = manageReaderAnnotationsUseCase.isPageBookmarked(
+            bookmarks = bookmarks.value,
+            currentLocator = locator,
+            isPdfOrReflow = isReflowMode.value || isPdfBook,
+            reflowPage = lastKnownReflowPage
+        )
     }
 
     fun loadNextPage() {
