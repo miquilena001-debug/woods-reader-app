@@ -1,5 +1,8 @@
 # Plan: Flujo de Conversión de Primer Uso y Verificación Release
 
+> **Estado: EJECUTADO**
+> - **Evidencia:** Implementado en `app/src/main/java/com/example/woodsreader/ui/reader/ReaderTtsMacroWindow.kt` (Hero Banner y descarga primera voz), `app/src/main/java/com/example/woodsreader/ui/common/WoodsProUnlockDialog.kt` (botones directos de compra WhatsApp y Telegram con `deviceInstallCode`), y `app/src/main/java/com/example/woodsreader/ui/onboarding/OnboardingScreen.kt` (commits `868dc2a`, `6f70865` y `afd675d`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implementar la guía automática de primera voz IA (para evitar que el usuario escuche la voz robótica nativa sin saber que existen voces VITS HD offline), dotar a `WoodsProUnlockDialog.kt` de botones de compra directa con mensaje pre-llenado para WhatsApp y Telegram enviando el ID de instalación, y verificar la compilación release.

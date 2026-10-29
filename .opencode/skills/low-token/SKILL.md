@@ -17,7 +17,7 @@ Tácticas para minimizar el consumo de tokens en cada interacción con el agente
 - NUNCA arrastrar carpetas enteras ni pegar archivos de 1,000 líneas al chat.
 - Usar el servidor MCP Filesystem para leer únicamente las funciones o clases estrictamente necesarias.
 - Especificar `file_path:line_range` para lecturas focalizadas.
-- Consultar `FILE_INDEX.md` para localizar archivos `.kt` sin escanear el repositorio.
+- Consultar `dona.md` para localizar archivos `.kt` sin escanear el repositorio.
 
 ### 2. Patrón de Edición por Diff (Patching / Unified Diffs)
 - NUNCA reescribir archivos completos.

@@ -46,8 +46,8 @@ COMMIT → Commit atómico con mensaje convencional
 .\gradlew.bat :app:testDebugUnitTest
 ```
 - Código de salida debe ser 0.
-- Meta: >80 pruebas unitarias con 0 fallos.
-- Si falla: revertir con `git checkout -- .` y proponer cambio atómico alternativo.
+- Reportar el resultado y el recuento que indique la ejecución; no asumir una meta fija.
+- Si falla: conservar el trabajo existente, diagnosticar el error y revertir únicamente los cambios propios y acotados si hace falta.
 
 ### 6. Salida de Cobertura
 ```

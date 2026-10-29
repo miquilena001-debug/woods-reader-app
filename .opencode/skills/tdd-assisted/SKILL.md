@@ -51,6 +51,6 @@ Ejemplos de pruebas a escribir primero:
 - `ReaderViewModelTest` → estado del lector y narración TTS.
 
 ### 7. Guardrails
-- No borrar métodos existentes de `ReaderViewModel` o `TtsManager`.
+- No eliminar APIs publicas usadas; retirar codigo sin referencias solo con busqueda completa y validacion.
 - No bloquear Main thread en pruebas de I/O.
 - Usar `inMemoryDatabaseBuilder` para tests de Room.

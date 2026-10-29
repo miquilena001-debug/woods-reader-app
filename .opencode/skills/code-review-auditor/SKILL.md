@@ -31,7 +31,7 @@ Antes de aprobar cualquier commit o fusión, verificar:
 #### Guardrails del Proyecto (.cursorrules)
 - [ ] No se agregaron dependencias nuevas a build.gradle.kts / settings.gradle.kts
 - [ ] No se tocó @Entity/@Dao sin migración + regenerar esquema JSON (app/schemas/)
-- [ ] Edición atómica: máx 2 archivos prod + 1 test por iteración
+- [ ] Edición atómica: un cambio logico por commit; modificar los archivos necesarios y validar
 - [ ] No se borraron métodos de ReaderViewModel o TtsManager (sustitución quirúrgica)
 - [ ] Solo formatos EPUB y PDF (no CBR/CBZ/MOBI/FB2)
 

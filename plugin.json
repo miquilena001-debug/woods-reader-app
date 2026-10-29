@@ -98,7 +98,7 @@
     {
       "id": "build-apk-optimizer",
       "name": "Build & APK Optimizer",
-      "description": "Optimiza Gradle, reduce tamaño APK (<235 MB), R8/ProGuard y firma.",
+      "description": "Optimiza Gradle, mide el tamaño real del APK, R8/ProGuard y firma.",
       "path": ".opencode/skills/build-apk-optimizer/SKILL.md",
       "progressive_disclosure": true
     },
@@ -114,9 +114,9 @@
   "guardrails": {
     "no_new_dependencies": true,
     "no_main_thread_blocking": true,
-    "atomic_edit_max_files": 3,
     "mandatory_test_command": ".\\gradlew.bat :app:testDebugUnitTest",
-    "commit_per_step": true,
+    "one_logical_change_per_commit": true,
+    "delete_unreferenced_code_only_after_full_reference_search": true,
     "supported_formats": ["EPUB", "PDF"],
     "forbidden_formats": ["CBR", "CBZ", "MOBI", "FB2"]
   },

@@ -32,15 +32,15 @@ Implementar SOLO el paso 1 del plan mediante cambios limpios y localizados:
 ### 4. Fase de Revisión Rápida
 Validar el resultado antes de pasar al siguiente paso:
 - Ejecutar `.\gradlew.bat :app:testDebugUnitTest` (código de salida debe ser 0).
-- Si falla, revertir con `git checkout -- .` y proponer un cambio atómico alternativo.
-- Commit atómico por paso verificado.
+- Si falla, conservar los cambios existentes, diagnosticar el error y revertir solo los cambios propios y acotados si es necesario.
+- Un cambio lógico por commit; no crear commits automáticamente salvo solicitud explícita.
 
 ### 5. Guardrails del Proyecto Woods Reader
 - No agregar dependencias a `build.gradle.kts` / `settings.gradle.kts`.
 - No tocar `@Entity`/`@Dao` sin migración + regenerar esquema JSON.
 - Solo formatos EPUB y PDF (no CBR/CBZ/MOBI/FB2).
-- No borrar métodos de `ReaderViewModel` o `TtsManager`; sustitución quirúrgica.
-- Consulta `FILE_INDEX.md` para localizar archivos `.kt` sin escanear el repo.
+- No eliminar APIs publicas usadas; retirar codigo sin referencias solo con busqueda completa y validacion.
+- Consulta `dona.md` para localizar archivos `.kt` sin escanear el repo.
 
 ### 6. Ejemplo de Salida Esperada (Plan)
 ```
@@ -49,5 +49,5 @@ Validar el resultado antes de pasar al siguiente paso:
 1. Crear `core/pipeline/EpubContentExtractor.kt` con clase `@Singleton` y método `extractBlocks()`.
 2. Crear `core/pipeline/EpubContentExtractorTest.kt` con tests unitarios.
 3. Ejecutar `.\gradlew.bat :app:testDebugUnitTest --tests "..."`.
-4. Commit: `feat(pipeline): add EpubContentExtractor`.
+4. Proponer un mensaje de commit; no crear commits salvo que se solicite.
 ```

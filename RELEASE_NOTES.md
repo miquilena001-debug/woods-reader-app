@@ -4,6 +4,20 @@ Registro detallado de cambios, correcciones de errores, arquitectura y mejoras d
 
 ---
 
+## 🚀 Versión 1.0.10 (Build 11) — Octubre 2026
+
+### Cambios documentados en el código
+- Limpieza de párrafos PDF y detección de encabezados/capítulos (`PdfParagraphHealer`), con integración de TOC virtual.
+- Búsqueda dentro de PDF y exportación de audio por lotes coordinadas desde `ReaderIntelligenceAndExportCoordinator`.
+- Mejoras de lectura PDF reflow: teleprompter, auto-scroll y presentación del párrafo narrado.
+- Conversión PDF → EPUB mediante `PdfCleanExtractorAndConverter`, con flujo de progreso e importación desde la biblioteca.
+- `LocalEpubBuilder` admite portada e ilustraciones internas.
+- El build define `versionCode = 11` y `versionName = "1.0.10"`.
+
+**Verificación de esta actualización documental:** no se ejecutaron build ni pruebas; los elementos anteriores se corroboraron en el historial Git/código de HEAD `9953374`. Las afirmaciones de validación de versiones anteriores pertenecen a esas versiones.
+
+---
+
 ## 🚀 Versión 1.0.9 (Build 10) — Octubre 2026
 
 ### 📌 Resumen de la Versión

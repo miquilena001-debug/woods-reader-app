@@ -1,5 +1,8 @@
 # Blindaje Asimétrico ECDSA y Robustecimiento de ProLicenseManager
 
+> **Estado: EJECUTADO**
+> - **Evidencia:** Implementado en `app/src/main/java/com/example/woodsreader/domain/license/ProLicenseManager.kt` y verificado por 4 tests unitarios TDD en `app/src/test/java/com/example/woodsreader/core/license/ProLicenseManagerTest.kt` (commits `868dc2a` y `6f70865`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development and superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Blindar completamente `ProLicenseManager.kt` contra ingeniería inversa (reemplazo de secreto simétrico por firma asimétrica ECDSA P-256), eliminar colisiones en dispositivos sin ANDROID_ID, desacoplar I/O síncrono del constructor, y validar su comportamiento con pruebas unitarias TDD.

@@ -4,23 +4,15 @@
 
 ---
 
-## 0.0 Estado Actual del Proyecto (Al 28/10/2026)
-- **Fecha de última auditoría:** 28 de octubre de 2026.
-- **Commit hash de referencia:** `fe11ed7` (rama `master`).
-- **Resumen Ejecutivo:**
-  1. **Compilación Limpia:** `:app:compileDebugKotlin` compila con 0 errores y 0 advertencias bloqueantes.
-  2. **Pruebas Unitarias al 100%:** 48 suites de pruebas unitarias ejecutables en `app/src/test/` (distribuidas en 53 archivos de test y utilidades) ejecutan 250 casos de test en verde (0 fallos, 0 errores).
-  3. **Verificación en Dispositivo Real:** APK generado (`app-debug.apk`, 104.7 MB) instalado y corriendo de forma estable en `TECNO-LH7n` (Android 14, PID verificado).
-  4. **Descompresión Parcial del Lector:** Extracción de 7 Casos de Uso y Coordinadores de dominio en `domain/reader/` (LoadBookFastUseCase, SaveReadingProgressUseCase, CalculateReadingStatsUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController); `ReaderViewModel.kt` pasó de 2.905 líneas a 2.476 (casos de uso) y a 2.158 líneas en HEAD (135.4 KB, con objetivo de diseño de ~600 líneas), reduciendo sus parámetros de constructor de 24 (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 22 dependencias de dominio/servicios, y no 17 ni 27) a 21 (2 de framework + 19 dependencias inyectadas).
-  5. **Exportación de Audio Unificada:** Generación de un único archivo contenedor `.m4a` con portada en alta resolución (`covr`) y subtítulos sincronizados LRC (`©lyr`) incrustados directamente a nivel binario vía `M4aMetadataEmbedder`, eliminando por completo residuos de archivos sueltos.
+## 0.0 Estado Actual del Proyecto (29/10/2026)
+- **Base verificada:** HEAD `9953374` (`master`); árbol limpio antes de esta limpieza documental.
+- **Build configurado:** `versionName = "1.0.10"`, `versionCode = 11` en `app/build.gradle.kts`.
+- **Inventario estático:** 263 archivos Kotlin seguidos por Git (producción y tests); 58 archivos Kotlin en `app/src/test/`; 269 coincidencias `@Test` por búsqueda textual. Estas cifras no representan tests ejecutados.
+- **ReaderViewModel:** 2.181 líneas y 136.506 bytes en el árbol base. La cantidad de parámetros documentada previamente requiere recontarse antes de citarse; no se presenta aquí como métrica vigente.
+- **Validación de esta limpieza:** solo documentación. No se ejecutaron build, suite unitaria ni pruebas en dispositivo.
+- **Alcance:** este archivo es el índice de código y mapa técnico; el estado de pendientes está en `ROADMAP.md`, la arquitectura resumida en `ARCHITECTURE.md` y los documentos anteriores en `docs/archive/README.md`.
 
-- **Resumen de Auditoría de Hallazgos (Sección 14):**
-  - ✅ **Verificado / Resuelto:** 10 hallazgos (C1, C2, C9, C12, C13, A1, A12, M4, M28, SEC-1).
-  - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** 5 hallazgos (C3, C6, C7, M25, M26).
-  - ⚪ **Falso positivo / No aplica:** 1 hallazgo (C5 - logging debug atado a BuildConfig.DEBUG, inactivo en release).
-  - 🔴 **Pendiente (Error conocido / Deuda técnica):** 21 hallazgos (C4, C8, C10, C11, A9, A10, M2, M3, M13, M15, M16, M17, M18, M19, M20, M21, M22, M23, M24, M27, M29).
-  - **Total hallazgos catalogados:** 37 hallazgos.
-
+Los resultados de compilación o pruebas mencionados en secciones históricas deben interpretarse en su fecha original, no como resultados de HEAD actual.
 ---
 
 ## 0.1 Mapa de Capas de la Arquitectura
@@ -316,7 +308,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** —
 - **Usado_por:** Asistentes de IA
 - **Estado:** ✅ REVISADO_ATOMICAMENTE
-- **Hallazgos:** 8 guardrails definidos.
+- **Hallazgos:** 10 reglas de mantenimiento vigentes.
 
 ### `ARCHITECTURE.md`
 - **Propósito:** Mapa de arquitectura con tablas Responsabilidad → Archivo.
@@ -326,8 +318,8 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Estado:** ✅ REVISADO_ATOMICAMENTE
 - **Hallazgos:** Ninguno.
 
-### `FILE_INDEX.md`
-- **Propósito:** Índice maestro de todos los archivos .kt con propósito, clases, dependencias y dependientes.
+### Índice histórico archivado
+- **Propósito:** Copia histórica del índice de archivos, archivada; consultar este `dona.md` para el inventario actual.
 - **Clases:** —
 - **Depende_de:** —
 - **Usado_por:** Asistentes de IA
@@ -335,12 +327,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno.
 
 ### `dona.md` (este archivo)
-- **Propósito:** Índice atómico completo, mapa de arquitectura y documento ancla de ingeniería de todos los archivos fuente del proyecto.
+- **Propósito:** Índice de archivos fuente y documento ancla técnico del proyecto.
 - **Clases:** —
 - **Depende_de:** —
 - **Usado_por:** Asistentes de IA y desarrolladores
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 100% sincronizado al commit de referencia con verificación estricta de disco)
-- **Hallazgos:** Documento maestro inmutable sin dependencias circulares.
+- **Estado:** ✅ Índice sincronizado con el árbol verificado el 29/10/2026 mediante `tools/check_dona.ps1`.
+- **Hallazgos:** Mantener actualizado con cada cambio de archivos fuente.
 
 ---
 
@@ -2022,7 +2014,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Depende_de:** GraphRepository, BookRepository, SavedStateHandle, ForceLayout, WorkManager, GraphExtractionWorker, GraphPositionsCache, GraphJsonHelper, Readium Locator/Url/MediaType
 - **Usado_por:** GraphScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 250+ líneas)
-- **Hallazgos:** **C13 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Aborta de forma segura sin crashear. Uso correcto de combines anidados de 2 (regla 6 de GRAPH_PLAN.md). Loop de física en viewModelScope/Dispatchers.Default con `tick` para forzar redibujo.
+- **Hallazgos:** **C13 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Aborta de forma segura sin crashear. Uso correcto de combines anidados de 2 (regla histórica del plan de grafo (archivado)). Loop de física en viewModelScope/Dispatchers.Default con `tick` para forzar redibujo.
 
 #### `ui/graph/GraphCanvas.kt`
 - **Propósito:** Canvas de grafo con zoom/pan/tap, selección por distancia, texto medido solo si zoom > 0.7.

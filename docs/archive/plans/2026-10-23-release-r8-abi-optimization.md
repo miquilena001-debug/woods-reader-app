@@ -1,5 +1,8 @@
 # Configuración y Optimización de Release con R8 y ABI Splits
 
+> **Estado: EJECUTADO**
+> - **Evidencia:** Configuración `release` optimizada con R8, `minifyEnabled = true`, `shrinkResources = true`, `abiFilters` y reglas consolidadas en `app/proguard-rules.pro` y `app/build.gradle.kts` (commits `fb8740e`, `7cd879c` y `6f70865`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Configurar la variante de compilación `release` en [app/build.gradle.kts](file:///c:/Users/Orbit/Downloads/woods%20reader/app/build.gradle.kts) y endurecer [app/proguard-rules.pro](file:///c:/Users/Orbit/Downloads/woods%20reader/app/proguard-rules.pro) para ofuscación y reducción de tamaño (`minifyEnabled`, `shrinkResources`), optimizar la distribución para arquitecturas móviles reales (`arm64-v8a` y `armeabi-v7a` opcional) excluyendo `x86`/`x86_64`, y verificar con `assembleRelease` que R8 no rompa JNI de Sherpa-ONNX, Readium ni Room.

@@ -4,7 +4,7 @@
 build-apk-optimizer
 
 ## Descripción
-Optimiza el proceso de compilación Gradle, reduce el tamaño del APK, configura R8/ProGuard, firma con keystore y asegura que `assembleDebug` compile en <30 segundos y el APK se mantenga bajo 235 MB.
+Optimiza el proceso de compilación Gradle, reduce el tamaño del APK, configura R8/ProGuard, firma con keystore y ejecuta las verificaciones relevantes y reporta tiempos y tamaños medidos, sin umbrales no confirmados.
 
 ## Divulgación Progresiva
 - **Nivel 1 (nombre):** Build & APK Optimizer
@@ -15,17 +15,17 @@ Optimiza el proceso de compilación Gradle, reduce el tamaño del APK, configura
 
 ### 1. Gradle y Compilación
 - Comando obligatorio: `.\gradlew.bat :app:testDebugUnitTest` (salida 0).
-- Comando de build: `.\gradlew.bat :app:assembleDebug` (< 30 segundos).
+- Comando de build: `.\gradlew.bat :app:assembleDebug` (reportar el tiempo medido, sin umbral fijo).
 - Usar KSP para Room (generación de esquemas y DAOs).
 - No agregar dependencias nuevas (guardrail inviolable del proyecto).
 - Revisar `gradle/libs.versions.toml` para versiones actualizadas sin romper compatibilidad.
 
-### 2. Tamaño del APK (< 235 MB)
+### 2. Tamaño del APK (medicion real sin umbral fijo)
 - `minifyEnabled true` en release con R8/ProGuard.
 - Revisar recursos no utilizados (imágenes, idiomas, vectores).
 - Comprimir assets de audio/modelos ONNX si es posible.
 - Verificar que `icon.png` y otros assets estén optimizados.
-- Analizar APK con Android Studio APK Analyzer si supera el umbral.
+- Analizar el APK con Android Studio APK Analyzer para entender su composición; acordar cualquier umbral con el usuario.
 
 ### 3. Firma y Keystore
 - Usar `keystore/woodsreader.jks` y `keystore.properties` para firmar.
@@ -42,11 +42,11 @@ Optimiza el proceso de compilación Gradle, reduce el tamaño del APK, configura
 ## Optimización de Build — [Versión]
 
 ### Tiempos
-- Compilación debug: X segundos (meta: <30s)
+- Compilación debug: registrar el tiempo medido, sin meta fija.
 - Pruebas unitarias: X segundos
 
 ### Tamaño APK
-- APK debug: X MB (meta: <235 MB)
+- APK debug: reportar el tamaño medido; no hay umbral de tamaño vigente verificado.
 - APK release: X MB
 
 ### Acciones Tomadas

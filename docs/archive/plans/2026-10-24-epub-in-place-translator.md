@@ -1,5 +1,8 @@
 # Plan de Implementación: Traductor In-Place de EPUBs y Resiliencia en Segundo Plano
 
+> **Estado: EJECUTADO**
+> - **Evidencia:** Pipeline in-place implementado en `core/translation/calibre/inplace/` (`EpubInPlaceTranslator.kt`, `EpubPackage.kt`, `EpubPackageParser.kt`, `EpubZipWriter.kt`, `TextTranslator.kt`, `XhtmlTranslatorDoc.kt`) y validado con 13 tests unitarios en `app/src/test/java/com/example/woodsreader/core/translation/calibre/inplace/` (commits `c808cd9` y `35255cb`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Sustituir la reconstrucción destructiva de EPUBs (`CalibreStyleEpubTranslator` con regex y `LocalEpubBuilder`) por una arquitectura no destructiva *in-place* (`EpubInPlaceTranslator`), con parsing XML estricto (jsoup), protección de elementos inline (imágenes, svg, br, notas, glosario), ensamblado ZIP fiel preservando portadas y CSS, persistencia en disco de estado y caché para reanudación, y ejecución en segundo plano con `WorkManager` (Foreground Service `dataSync`).

@@ -21,7 +21,7 @@ Optimiza memoria, batería, tiempo de inicio, tamaño de APK, renderizado de Com
 
 ### 2. Tiempo de Inicio y APK
 - Habilitar R8/ProGuard en build de release (`minifyEnabled true`).
-- Mantener APK < 235 MB (criterio del proyecto).
+- Medir y reportar el tamaño real del APK, sin umbral fijo.
 - Revisar dependencias transitivas de Readium 3.x y Media3 para no incluir código muerto.
 - No agregar nuevas dependencias sin justificación (guardrail inviolable).
 
@@ -37,10 +37,10 @@ Optimiza memoria, batería, tiempo de inicio, tamaño de APK, renderizado de Com
 - TTS: cola `List<TtsNarrationUnit>` pre-procesada, no re-filtrar strings grandes en tiempo de narración.
 
 ### 5. Métricas de Éxito
-- `.\gradlew.bat :app:testDebugUnitTest` → >80 pruebas, 0 fallos.
-- `.\gradlew.bat :app:assembleDebug` → < 30 segundos, salida 0.
-- Tamaño APK debug < 235 MB.
-- Tiempo de apertura del libro < 2 segundos en dispositivo medio.
+- `.\gradlew.bat :app:testDebugUnitTest` → informar el resultado y recuento reportados por Gradle.
+- `.\gradlew.bat :app:assembleDebug` → salida 0; informar el tiempo medido sin umbral fijo.
+- Tamaño del APK medido y reportado, sin umbral arbitrario.
+- Medir el tiempo de apertura en un dispositivo representativo y registrar el resultado, sin meta fija.
 
 ### 6. Salida de Optimización
 ```
