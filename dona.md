@@ -169,7 +169,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 [DatabaseModule]
   ├─ provideAppDatabase() ──────────────► AppDatabase (Room v11, WAL)
   ├─ provideAppTypeConverters() ────────► AppTypeConverters
-  ├─ provideBookDao() ──────────────────► BookRepository, ReadingProgressManager, BookScannerService
+  ├─ provideBookDao() ──────────────────► BookRepository, BookScannerService
   ├─ provideHighlightDao() ─────────────► BookRepository, ManageReaderAnnotationsUseCase
   ├─ provideBookmarkDao() ──────────────► BookRepository, ManageReaderAnnotationsUseCase
   ├─ provideReadingSessionDao() ────────► ReadingSessionManager
@@ -477,7 +477,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 #### `domain/reader/SaveReadingProgressUseCase.kt`
 - **Propósito:** Persistencia atómica y resiliente del progreso de lectura (`Locator`), cálculo de sesiones y estadísticas en Room, debouncing de 800 ms (10.000 ms para TTS) y flush inmediato (`flushReadingProgressImmediately`).
 - **Clases:** `SaveReadingProgressUseCase` (@Inject constructor)
-- **Depende_de:** BookRepository, ReadingSessionManager, TimeProvider, ReadingProgressManager, Locator
+- **Depende_de:** BookRepository, ReadingSessionManager, TimeProvider, Locator
 - **Usado_por:** ReaderViewModel
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 145 líneas)
 - **Hallazgos:** Ninguno. **A12 [RESUELTO]**: Unifica la persistencia de progreso manual y de TTS eliminando divergencias de posición.
@@ -958,15 +958,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 330 líneas)
 - **Hallazgos:** Ninguno.
-
-#### `core/managers/WoodsSupporterManager.kt`
-- **Propósito:** Gestor de soporte/Pro (pase de recompensa temporal o vitalicio).
-- **Clases:** `WoodsSupporterManager` (@Singleton)
-- **Depende_de:** android.content.SharedPreferences, Hilt @Inject/@Singleton, kotlinx.coroutines.flow
-- **Usado_por:** UI Pro
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 42 líneas)
-- **Hallazgos:** Ninguno crítico. Lógica simple de recompensa temporal (horas) o vitalicio (booleano).
-
 
 #### `core/system/WoodsKeepAliveManager.kt`
 - **Propósito:** Gestor de keep-alive del sistema (WakeLock PARTIAL, exclusión de optimización de batería Doze).
@@ -1655,11 +1646,11 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderViewModel.kt`
-- **Propósito:** Orquestador principal de UI del lector (~2.158 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 7 casos de uso y coordinadores especializados.
+- **Propósito:** Orquestador principal de UI del lector (~2.167 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 7 casos de uso y coordinadores especializados.
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
-- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController, BookRepository, UserPreferencesRepository, ReadingSessionManager, ReadingProgressManager, TtsManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, PdfBookViewSynchronizer, CoverExtractor, QuoteVideoClipExporter
+- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController, BookRepository, UserPreferencesRepository, ReadingSessionManager, TtsManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, PdfBookViewSynchronizer, CoverExtractor, QuoteVideoClipExporter
 - **Usado_por:** ReaderScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.158 líneas, 135.4 KB)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.167 líneas, 135.5 KB)
 - **Hallazgos:**
   - **C3 [MITIGADO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Descompresión de God Class en curso. Evolución de líneas: pasó de 2.905 líneas (original `4de4bd7^`) a 2.476 líneas (tras extracción de Casos de Uso) y actualmente a 2.158 líneas en HEAD (tras P5 y P6), con objetivo de diseño de ~600 líneas. Constructor verificado por script: el original contenía 24 parámetros totales (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 22 dependencias de dominio/servicios, y no 17 ni 27 como se había indicado erróneamente en notas previas); en HEAD se redujo a 21 parámetros totales (2 de framework + 19 dependencias inyectadas) tras extraer `ReaderVoiceAndAmbienceController` (255 líneas, P6) y `ReaderChapterNavigationCoordinator` (444 líneas, P5). Pendiente validación en `TECNO-LH7n` del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer.
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
@@ -1670,7 +1661,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **M26 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Estado 🟡 hasta la P4. Separado lo confirmado en código (el retorno anticipado `val nav = navigator ?: return` antes de evaluar la rama PDF en `goToNextChapter` y `goToPreviousChapter` impedía ejecutar navegación PDF si navigator era null) de lo no confirmado (que `navigator` sea efectivamente `null` en vista libro en runtime). Desacoplada la navegación PDF/Reflow vía `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` delegando en `ReaderChapterNavigationCoordinator`.
   - **M27 [PENDIENTE]:** `ReaderViewState` (L2143) contiene exactamente 10 de 14 campos inmutables/nunca actualizados (`isTtsPlaying`, `currentSpeed`, `ttsHighlightStyle`, `sleepTimerMinutes`, `readingMode`, `fontSize`, `lineSpacing`, `isBookmarked`, `globalProgress`, `chapterProgress`), actualizándose únicamente 4 (`activeNarrationBlockId`, `activeNarrationWordRange`, `isPdfBookViewActive`, `pdfBookViewBlockIndex`). A su vez, `ReaderState` en `ReaderContract.kt:39` duplica sus únicos campos activos de PDF.
   - **M28 [RESUELTO]:** Unificada la lógica duplicada de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` en la función privada `updateReadingStats(locator, activeWpm)`.
-  - **M29 [PENDIENTE]:** `readingProgressManager` inyectado en el constructor (L141) sin ningún uso en todo el archivo.
+  - **M29 [RESUELTO]:** `readingProgressManager` eliminado del constructor y `positionsJob` inerte purgado de `ReaderViewModel.kt`.
 
 #### `ui/reader/ReaderContract.kt`
 - **Propósito:** Definición de contratos y modelos de navegación para la interfaz del lector: pestañas del panel lateral (TOC, Marcadores, Subrayados, Notas, Configuración) y modelos inmutables de resaltado de texto para la narración de TTS.
@@ -1791,7 +1782,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Propósito:** Pestaña de notas, marcadores y citas textuales dentro del menú de anotaciones. Lista subrayados y marcadores ordenados por progreso, permite editar notas asociadas, filtrar por color/tipo y exportar citas a texto Markdown o imagen de tarjeta para compartir.
 - **Clases:** `ReaderNotesTab` (@Composable), `UnifiedNote`, `NoteType`, `NotesFilter`
 - **Depende_de:** Compose, Material3, HighlightEntity, BookmarkEntity, HighlightExporter, QuoteCardGenerator
-- **Usado_por:** ReaderScreen, ReaderMasterMenuBottomSheet
+- **Usado_por:** ReaderScreen, ReaderSideMenu
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 574 líneas)
 - **Hallazgos:** Utiliza ManageReaderAnnotationsUseCase para la exportación y borrado atómico de apuntes.
 
@@ -1802,14 +1793,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 197 líneas)
 - **Hallazgos:** Ninguno.
-
-#### `ui/reader/ReaderMasterMenuBottomSheet.kt`
-- **Propósito:** Bottom sheet de menú maestro (obsoleto, reemplazado por ReaderSideMenu).
-- **Clases:** — (archivo obsoleto, 3 líneas)
-- **Depende_de:** —
-- **Usado_por:** —
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (archivo obsoleto)
-- **Hallazgos:** Archivo obsoleto, contenido eliminado.
 
 #### `ui/reader/ReaderHeroSplash.kt`
 - **Propósito:** Pantalla de splash del lector (portada, progreso, carga).

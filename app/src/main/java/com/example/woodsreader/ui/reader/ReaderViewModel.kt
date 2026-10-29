@@ -104,13 +104,6 @@ import java.io.File
 import javax.inject.Inject
 import kotlin.math.abs
 
-data class ParsedChapterData(
-    val index: Int,
-    val href: String,
-    val title: String,
-    val document: ProcessedDocument
-)
-
 data class AutoScrollTeleprompterState(
     val isActive: Boolean = false,
     val wpm: Int = 220,
@@ -135,7 +128,6 @@ class ReaderViewModel @Inject constructor(
     private val epubFormatManager: EpubFormatManager,
 
     private val readingSessionManager: ReadingSessionManager,
-    private val readingProgressManager: ReadingProgressManager,
     private val pdfBookViewSynchronizer: PdfBookViewSynchronizer,
     private val coverExtractor: CoverExtractor,
     private val readerIntelligenceAndExportCoordinator: ReaderIntelligenceAndExportCoordinator,
@@ -209,7 +201,6 @@ class ReaderViewModel @Inject constructor(
 
     private var totalPositions = 0
     private var resourceIndexCache: Map<String, Int>? = null
-    private var positionsJob: Job? = null
 
     private val _bookTimeRemaining = MutableStateFlow<String?>(null)
     val bookTimeRemaining = _bookTimeRemaining.asStateFlow()
@@ -602,9 +593,7 @@ class ReaderViewModel @Inject constructor(
             _uiState.value = ReaderUiState.Loading
             try {
                 stopTts()
-                // Liberar inmediatamente cualquier publicación previa y cancelar cálculo de posiciones
-                positionsJob?.cancel()
-                positionsJob = null
+                // Liberar inmediatamente cualquier publicación previa
                 publication?.close()
                 publication = null
 
@@ -2117,8 +2106,6 @@ class ReaderViewModel @Inject constructor(
         ttsManager.stop()
         ttsManager.setCurrentBookId(null)
 
-        positionsJob?.cancel()
-        positionsJob = null
         navigatorLocatorJob?.cancel()
         navigatorLocatorJob = null
         publication?.close()

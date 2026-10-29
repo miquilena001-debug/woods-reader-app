@@ -10,16 +10,7 @@ import org.readium.r2.shared.util.asset.AssetRetriever
 import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
 import org.readium.adapter.pdfium.document.PdfiumDocumentFactory
-import org.readium.r2.shared.ExperimentalReadiumApi
-import org.readium.r2.shared.publication.services.content.DefaultContentService
-import org.readium.r2.shared.publication.services.content.contentServiceFactory
-import org.readium.r2.shared.publication.services.content.iterators.HtmlResourceContentIterator
-import com.example.woodsreader.core.pipeline.EpubHtmlSanitizer
 import com.example.woodsreader.core.pipeline.EpubPackageSanitizer
-import org.readium.r2.shared.publication.Link
-import org.readium.r2.shared.util.Try
-import org.readium.r2.shared.util.resource.TransformingContainer
-import org.readium.r2.shared.util.resource.map
 import dagger.Lazy
 import org.readium.r2.shared.util.http.DefaultHttpClient
 import javax.inject.Singleton

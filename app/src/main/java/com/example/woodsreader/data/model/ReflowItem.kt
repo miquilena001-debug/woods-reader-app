@@ -82,10 +82,3 @@ data class ReflowState(
     val currentLoadingPage: Int = 0,
     val error: String? = null
 )
-
-/**
- * Elemento de texto simple para compatibilidad con extracción básica
- */
-data class SimpleTextElement(
-    val locator: Locator
-)

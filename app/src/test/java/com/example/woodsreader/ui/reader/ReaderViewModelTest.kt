@@ -93,7 +93,6 @@ class ReaderViewModelTest {
             every { ttsState } returns MutableStateFlow(TtsState.IDLE)
         }
         val readingSessionManager: ReadingSessionManager = mockk(relaxed = true)
-        val readingProgressManager: ReadingProgressManager = mockk(relaxed = true)
         val pdfBookViewSynchronizer: PdfBookViewSynchronizer = mockk(relaxed = true)
         val coverExtractor: CoverExtractor = mockk(relaxed = true)
         val voiceAndAmbienceController: ReaderVoiceAndAmbienceController = mockk(relaxed = true)
@@ -117,7 +116,6 @@ class ReaderViewModelTest {
             pdfReflowManager = pdfReflowManager,
             epubFormatManager = epubFormatManager,
             readingSessionManager = readingSessionManager,
-            readingProgressManager = readingProgressManager,
             pdfBookViewSynchronizer = pdfBookViewSynchronizer,
             coverExtractor = coverExtractor,
             readerIntelligenceAndExportCoordinator = coordinator,
