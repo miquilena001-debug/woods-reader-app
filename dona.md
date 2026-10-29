@@ -250,7 +250,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 | `SystemForegroundService` | `Service` (WorkManager) | `FOREGROUND_SERVICE_DATA_SYNC` | Ejecutor de tareas diferidas de WorkManager | Sistema Android / WorkManager |
 | `LibrarySyncWorker` | `CoroutineWorker` | Acceso a almacenamiento | Sincronización diferencial y verificación de integridad de archivos | Programado por WorkManager |
 | `GraphExtractionWorker` | `CoroutineWorker` | Acceso a Room | Minería de entidades, aliases y menciones a partir del texto del libro | Disparado desde `GraphViewModel` |
-| `WebNovelImportWorker` | `CoroutineWorker` | `INTERNET` | Descarga de capítulos web, sanitización y empaquetado a EPUB | Disparado desde `LegacyWebToEpubImporterDialog` |
+| `WebNovelImportWorker` | `CoroutineWorker` | `INTERNET` | Descarga de capítulos web, sanitización y empaquetado a EPUB | Disparado desde `WebToEpubImporterDialog` |
 
 ---
 
@@ -1172,14 +1172,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Usado_por:** EpubInPlaceTranslator
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 132 líneas)
 - **Hallazgos:** Evita que los motores de traducción automática rompan etiquetas HTML internas.
-
-#### `core/web2epub/LegacyWebToEpubImporterDialog.kt`
-- **Propósito:** Diálogo de importación legacy con WebView interactivo para sitios web protegidos por Cloudflare o con autenticación.
-- **Clases:** `LegacyWebToEpubImporterDialog` (@Composable), `ScrapingStage`
-- **Depende_de:** Compose, Android WebView, CookieManager
-- **Usado_por:** LibraryScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 1.161 líneas)
-- **Hallazgos:** Mantenido como respaldo manual para fuentes web complejas.
 
 #### `core/web2epub/novel/EpubAssembler.kt`
 - **Propósito:** Ensamblador de novelas web en libros EPUB 3.0 estándar. Construye la estructura completa del libro (mimetype, META-INF, toc.ncx, nav.xhtml, content.opf y capítulos formateados con CSS de lectura).
