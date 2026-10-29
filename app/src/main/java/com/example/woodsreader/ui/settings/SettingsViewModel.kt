@@ -24,9 +24,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import com.example.woodsreader.core.tts.SherpaModelManager
 import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.SherpaVoiceOption
@@ -41,14 +38,6 @@ import com.example.woodsreader.core.backup.WoodsBackupManager
 import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import java.io.File
 import javax.inject.Inject
-
-@Serializable
-data class LibraryBackup(
-    val books: List<BookEntity>,
-    val highlights: List<HighlightEntity>,
-    val bookmarks: List<BookmarkEntity>,
-    val sessions: List<ReadingSessionEntity>
-)
 
 data class StorageSizes(
     val databaseBytes: Long = 0L,
@@ -126,22 +115,6 @@ class SettingsViewModel @Inject constructor(
                 .onFailure { err ->
                     _backupStatusMessage.value =
                         "Error al exportar: ${err.localizedMessage ?: "desconocido"}"
-                }
-        }
-    }
-
-    fun restoreFullBackup(uri: android.net.Uri) {
-        viewModelScope.launch {
-            _backupStatusMessage.value = "Restaurando biblioteca..."
-            backupManager.restoreFromUri(uri)
-                .onSuccess { summary ->
-                    _backupStatusMessage.value =
-                        "Restaurados: ${summary.booksRestored} libros, ${summary.highlightsRestored} citas, " +
-                            "${summary.bookmarksRestored} marcadores y ${summary.rulesRestored} reglas."
-                }
-                .onFailure { err ->
-                    _backupStatusMessage.value =
-                        "Error al restaurar: ${err.localizedMessage ?: "archivo inválido"}"
                 }
         }
     }
@@ -375,48 +348,6 @@ class SettingsViewModel @Inject constructor(
             bookDao.clearAllCovers()
 
             calculateStorageSizes(context)
-        }
-    }
-
-    // ── Export / Import Library ──────────────────────────────────────────────
-
-    fun exportLibrary(context: Context) {
-        viewModelScope.launch {
-            try {
-                val books = bookDao.getAllBooks()
-                val highlights = highlightDao.getAllHighlights()
-                val bookmarks = bookmarkDao.getAllBookmarks()
-                val sessions = readingSessionDao.getAllSessions()
-
-                val backup = LibraryBackup(books, highlights, bookmarks, sessions)
-                val jsonStr = Json.encodeToString(backup)
-
-                val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "Backup de Woods Reader")
-                    putExtra(Intent.EXTRA_TEXT, jsonStr)
-                }
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(Intent.createChooser(intent, "Exportar Biblioteca"))
-            } catch (_: Exception) {}
-        }
-    }
-
-    fun importLibrary(jsonStr: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
-        viewModelScope.launch {
-            try {
-                val backup = Json.decodeFromString<LibraryBackup>(jsonStr)
-
-                // Import into database
-                bookDao.upsertAll(backup.books)
-                highlightDao.upsertAll(backup.highlights)
-                bookmarkDao.upsertAll(backup.bookmarks)
-                readingSessionDao.upsertAll(backup.sessions)
-
-                onSuccess()
-            } catch (e: Exception) {
-                onError(e.localizedMessage ?: "Error al descodificar backup")
-            }
         }
     }
 }

@@ -1497,13 +1497,12 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 
 #### `ui/settings/SettingsViewModel.kt`
 - **Propósito:** ViewModel de ajustes. Backup/Restore, TTS engine mode, Sherpa voices, almacenamiento, preferencias.
-- **Clases:** `SettingsViewModel` (@HiltViewModel), `LibraryBackup`, `StorageSizes`, `TtsEngineMode`
+- **Clases:** `SettingsViewModel` (@HiltViewModel), `StorageSizes`, `TtsEngineMode`
 - **Depende_de:** UserPreferencesRepository, BookScannerService, BookDao, BackupManager, WoodsBackupManager, TtsManager, SherpaModelManager, EdgeNeuralTtsClient, ProLicenseManager, PronunciationLexiconManager, WoodsKeepAliveManager
 - **Usado_por:** SettingsScreen
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 422 líneas)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 353 líneas)
 - **Hallazgos:**
-  - **A10:** Export JSON por Intent puede exceder límite de Binder (~1 MB).
-  - **A11:** Import sin validación ni detección de duplicados, sin transacción atómica.
+  - **A10/A11 [RESUELTO]:** Métodos heredados de exportación/importación en texto plano (`exportLibrary`, `importLibrary`, `restoreFullBackup`, `LibraryBackup`) eliminados. La app utiliza exclusivamente `WoodsBackupManager` con vault comprimido y transacciones seguras.
 
 #### `ui/onboarding/OnboardingScreen.kt`
 - **Propósito:** Pantalla de bienvenida.
