@@ -5,11 +5,10 @@
 ---
 
 ## 0.0 Estado Actual del Proyecto (29/10/2026)
-- **Base verificada:** HEAD `9953374` (`master`); árbol limpio antes de esta limpieza documental.
+- **Base verificada tras Tarea P2:** HEAD `e721a31` (`master`).
 - **Build configurado:** `versionName = "1.0.10"`, `versionCode = 11` en `app/build.gradle.kts`.
-- **Inventario estático:** 263 archivos Kotlin seguidos por Git (producción y tests); 58 archivos Kotlin en `app/src/test/`; 269 coincidencias `@Test` por búsqueda textual. Estas cifras no representan tests ejecutados.
-- **ReaderViewModel:** 2.181 líneas y 136.506 bytes en el árbol base. La cantidad de parámetros documentada previamente requiere recontarse antes de citarse; no se presenta aquí como métrica vigente.
-- **Validación de esta limpieza:** solo documentación. No se ejecutaron build, suite unitaria ni pruebas en dispositivo.
+- **Inventario estático:** 259 archivos Kotlin seguidos por Git (producción y tests); 58 archivos Kotlin en `app/src/test/`; suite unitaria ejecutada: **269 casos de test en verde (0 fallos, 0 errores)**.
+- **ReaderViewModel:** 2.167 líneas y 119.062 bytes. Constructor verificado por script: **19 parámetros totales** (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 17 dependencias inyectadas).
 - **Alcance:** este archivo es el índice de código y mapa técnico; el estado de pendientes está en `ROADMAP.md`, la arquitectura resumida en `ARCHITECTURE.md` y los documentos anteriores en `docs/archive/README.md`.
 
 Los resultados de compilación o pruebas mencionados en secciones históricas deben interpretarse en su fecha original, no como resultados de HEAD actual.
