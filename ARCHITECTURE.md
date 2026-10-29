@@ -22,7 +22,7 @@ Room, DAOs y repositorios se encuentran en `data/database/` y `data/repository/`
 ## Audio, servicios y trabajo en segundo plano
 - `core/tts/TtsManager.kt` orquesta Sherpa ONNX y el TTS de Android; `service/ReaderTtsService.kt` integra reproducción de fondo y MediaSession.
 - `core/tts/ChapterAudioExporter.kt` exporta audio; `M4aMetadataEmbedder` integra metadatos de audio.
-- `worker/` y `work/` contienen tareas de WorkManager. `BookScannerForegroundService` permanece declarado en el manifest, pero no se encontró un punto de inicio desde código en esta revisión; tratarlo como ruta heredada hasta verificar todos sus consumidores, no como flujo activo confirmado.
+- `worker/` y `work/` contienen tareas de WorkManager (extracción de grafo y traducción). El escaneo de biblioteca opera directamente mediante corrutinas en `BookScannerService`.
 
 ## Flujos principales
 1. Apertura: intent/selección → metadatos y repositorio → Room → destino lector.

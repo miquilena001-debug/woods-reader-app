@@ -92,12 +92,6 @@
             </intent-filter>
         </activity>
 
-        <!-- ── Foreground Service para Escaneo de Libros ──────────────────────── -->
-        <service
-            android:name=".service.BookScannerForegroundService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
-
         <!-- ── Foreground Service para Narración (TTS) ────────────────────────── -->
         <!-- exported="true" + intent-filter son OBLIGATORIOS para que:
              1. La pantalla de bloqueo muestre controles de medios.

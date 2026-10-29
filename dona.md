@@ -50,7 +50,7 @@ Woods Reader sigue una arquitectura modular en capas orientada al dominio y alta
 ┌─────────────────────────────────────┴───────────────────────────────────────┐
 │                      SERVICIOS Y WORKERS EN BACKGROUND                      │
 │    ReaderTtsService (Foreground) · WoodsKeepAliveManager (WakeLock/LMKD)   │
-│    BookScannerForegroundService · WorkManager (Sync, Graph, WebNovel)       │
+│    WorkManager (Sync, Graph, WebNovel)                        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -208,7 +208,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **`SettingsViewModel`:** Inyecta `UserPreferencesRepository`, `SherpaModelManager`, `BackupManager`.
 - **`StatsViewModel`:** Inyecta `BookRepository`, `ReadingSessionManager`.
 - **`ReaderTtsService`:** Inyecta `TtsManager`, `UserPreferencesRepository`, `WoodsKeepAliveManager`.
-- **`BookScannerForegroundService`:** Inyecta `BookScannerService`, `BookRepository`.
 
 ---
 
@@ -245,7 +244,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 | Componente | Tipo Android | Permisos / Flags | Responsabilidad | Quién lo Inicia |
 |---|---|---|---|---|
 | `MainActivity` | `Activity` (SingleTop) | Permisos de almacenamiento, audio, bluetooth | Entrada principal, gestión de Deep Links, selector SAF e Intents de apertura (`VIEW` de archivos .epub/.pdf) | Sistema Android / Launcher |
-| `BookScannerForegroundService` | `Service` (Foreground) | `FOREGROUND_SERVICE_DATA_SYNC` | Escaneo en segundo plano de almacenamiento masivo y extracción de portadas | `MainActivity`, `LibraryViewModel` |
 | `ReaderTtsService` | `Service` (Foreground) | `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK` | Reproducción continua TTS con pantalla bloqueada, notificación MediaStyle y sesión AVRCP Bluetooth | `ReaderViewModel`, `TtsManager` |
 | `SystemForegroundService` | `Service` (WorkManager) | `FOREGROUND_SERVICE_DATA_SYNC` | Ejecutor de tareas diferidas de WorkManager | Sistema Android / WorkManager |
 | `LibrarySyncWorker` | `CoroutineWorker` | Acceso a almacenamiento | Sincronización diferencial y verificación de integridad de archivos | Programado por WorkManager |
@@ -1249,14 +1247,6 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **C11:** Mojibake residual en comentarios descriptivos y KDoc (L100, L180, L545, L566, L639).
   - **M6:** `deepEnrich` usa `HashSet` en memoria (se pierde al reiniciar).
   - **M7:** `cleanupOrphanedBooks` asume `content://` como accesible sin verificar.
-
-### `service/BookScannerForegroundService.kt`
-- **Propósito:** Servicio foreground de escaneo.
-- **Clases:** `BookScannerForegroundService`
-- **Depende_de:** Service foreground
-- **Usado_por:** BookScannerService
-- **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 96 líneas)
-- **Hallazgos:** Ninguno.
 
 ### `service/BookMetadataExtractor.kt`
 - **Propósito:** Extracción de metadatos de libros (título, autor, portada, idioma).
