@@ -1640,9 +1640,10 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - **M3 [PENDIENTE]:** Locator CFI persistido como JSON plano propenso a desincronización si cambian esquemas de Readium.
   - **M25 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Unificada la autoridad del temporizador de sueño en `SleepTimerManager` en L304, L582 y L2149. Se eliminó la doble corrutina y el fallback forzado a `MIN_15`, sincronizando fin de capítulo y parada de ambientes sonoros.
   - **M26 [RESUELTO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Estado 🟡 hasta la P4. Separado lo confirmado en código (el retorno anticipado `val nav = navigator ?: return` antes de evaluar la rama PDF en `goToNextChapter` y `goToPreviousChapter` impedía ejecutar navegación PDF si navigator era null) de lo no confirmado (que `navigator` sea efectivamente `null` en vista libro en runtime). Desacoplada la navegación PDF/Reflow vía `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` delegando en `ReaderChapterNavigationCoordinator`.
-  - **M27 [PENDIENTE]:** `ReaderViewState` (L2143) contiene exactamente 10 de 14 campos inmutables/nunca actualizados (`isTtsPlaying`, `currentSpeed`, `ttsHighlightStyle`, `sleepTimerMinutes`, `readingMode`, `fontSize`, `lineSpacing`, `isBookmarked`, `globalProgress`, `chapterProgress`), actualizándose únicamente 4 (`activeNarrationBlockId`, `activeNarrationWordRange`, `isPdfBookViewActive`, `pdfBookViewBlockIndex`). A su vez, `ReaderState` en `ReaderContract.kt:39` duplica sus únicos campos activos de PDF.
+  - **M27 [PENDIENTE - GANCHO P13]:** `ReaderViewState` contiene campos de vista libro PDF (`isPdfBookViewActive`, `pdfBookViewBlockIndex`) y método `togglePdfBookView()` que constituyen el gancho de la P13 (alternancia libro/original PDF con `PdfBookViewSynchronizer`). Se conservan intactos hasta su integración con la UI.
+  - **GANCHO P11 [PENDIENTE]:** `updateNarrationHighlight()` y `NarrationHighlight` son el punto de entrada para el resaltado palabra por palabra (P11). Hoy el resaltado opera a nivel de bloque/párrafo completo (`activeNarrationBlockId` en EPUB vía decoraciones Readium, y `activeNarrationUnitIndex` en PDF Reflow vía Emerald Liquid Glass en `ReaderReflowOverlay.kt`).
   - **M28 [RESUELTO]:** Unificada la lógica duplicada de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` en la función privada `updateReadingStats(locator, activeWpm)`.
-  - **M29 [RESUELTO]:** `readingProgressManager` eliminado del constructor y `positionsJob` inerte purgado de `ReaderViewModel.kt`.
+  - **M29 [RESUELTO]:** `readingProgressManager` y `quoteVideoClipExporter` eliminados del constructor, y `positionsJob` inerte purgado de `ReaderViewModel.kt`.
 
 #### `ui/reader/ReaderContract.kt`
 - **Propósito:** Definición de contratos y modelos de navegación para la interfaz del lector: pestañas del panel lateral (TOC, Marcadores, Subrayados, Notas, Configuración) y modelos inmutables de resaltado de texto para la narración de TTS.
@@ -2170,7 +2171,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 | `BookScannerServiceExtremeTest.kt` | `app/src/test/.../service/BookScannerServiceExtremeTest.kt` | Dedup y batches de escaneo | ✅ REVISADO |
 | `TextRankSummarizerTest.kt` | `app/src/test/.../service/TextRankSummarizerTest.kt` | Extracción de sinopsis por TextRank | ✅ REVISADO |
 | `CoverExtractorTest.kt` | `app/src/test/.../service/CoverExtractorTest.kt` | Extracción de portadas y migración de caché | ✅ REVISADO |
-| `LibraryViewModelExtremeTest.kt` | `app/src/test/.../ui/library/LibraryViewModelExtremeTest.kt` | Tests de biblioteca | ✅ REVISADO |
+| `LibraryViewModelExtremeTest.kt` | `app/src/test/.../ui/library/LibraryViewModelExtremeTest.kt` | Placeholder vacío (assertTrue(true)) a reemplazar con tests reales en P8 | 🟡 TEST_VACIO |
 | `WordExclusionEngineTest.kt` | `app/src/test/.../core/pipeline/WordExclusionEngineTest.kt` | Exclusión con fronteras `\b` (<200ms) | ✅ REVISADO |
 | `SpanishTextFormatterTest.kt` | `app/src/test/.../core/pipeline/SpanishTextFormatterTest.kt` | Tipografía en español (NBSP, comillas, guiones) | ✅ REVISADO |
 | `ReadingPipelineTest.kt` | `app/src/test/.../core/pipeline/ReadingPipelineTest.kt` | Limpieza semántica y exclusión de ruido | ✅ REVISADO |
