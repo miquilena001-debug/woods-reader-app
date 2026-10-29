@@ -550,7 +550,7 @@ fun ReaderScreen(
         }
     }
 
-    // << CHANGE: Auto-hide UI despuÃƒÂ©s de 5s de inactividad (Modo Inmersivo)
+    // << CHANGE: Auto-hide UI despues de 5s de inactividad (Modo Inmersivo)
     LaunchedEffect(isUserInteracting, showControls, ttsState) {
         if (showControls && !isUserInteracting && ttsState != TtsState.PLAYING) {
             delay(5000)
@@ -567,7 +567,7 @@ fun ReaderScreen(
         else -> null
     }
 
-    // Sin esto, cualquier recomposiciÃƒÂ³n dispara submitPreferences() innecesariamente.
+    // Sin esto, cualquier recomposicion dispara submitPreferences() innecesariamente.
     val isRtl by viewModel.isRtl.collectAsStateWithLifecycle()
     val epubPreferences = remember(userPreferences, isRtl) {
         userPreferences.toEpubPreferences().let { prefs ->
