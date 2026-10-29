@@ -134,7 +134,6 @@ class ReaderViewModel @Inject constructor(
     private val voiceAndAmbienceController: ReaderVoiceAndAmbienceController,
     val proLicenseManager: ProLicenseManager,
     val woodsKeepAliveManager: WoodsKeepAliveManager,
-    val quoteVideoClipExporter: QuoteVideoClipExporter,
     private val saveReadingProgressUseCase: SaveReadingProgressUseCase,
     private val calculateReadingStatsUseCase: CalculateReadingStatsUseCase,
     private val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase,

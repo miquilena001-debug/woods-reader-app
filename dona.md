@@ -1630,7 +1630,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 #### `ui/reader/ReaderViewModel.kt`
 - **Propósito:** Orquestador principal de UI del lector (~2.167 líneas). Coordina los flujos de lectura, TTS, panel de control, marcadores, navegación y exportación delegando la lógica a 7 casos de uso y coordinadores especializados.
 - **Clases:** `ReaderViewModel` (@HiltViewModel), `AutoScrollTeleprompterState`, `ChapterInfo`, `ReaderViewState`
-- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController, BookRepository, UserPreferencesRepository, ReadingSessionManager, TtsManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, PdfBookViewSynchronizer, CoverExtractor, QuoteVideoClipExporter
+- **Depende_de:** SaveReadingProgressUseCase, CalculateReadingStatsUseCase, LoadBookFastUseCase, ManageReaderAnnotationsUseCase, ReaderIntelligenceAndExportCoordinator, ReaderChapterNavigationCoordinator, ReaderVoiceAndAmbienceController, BookRepository, UserPreferencesRepository, ReadingSessionManager, TtsManager, ProLicenseManager, WoodsKeepAliveManager, EpubFormatManager, PdfReflowManager, PdfBookViewSynchronizer, CoverExtractor
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.167 líneas, 135.5 KB)
 - **Hallazgos:**

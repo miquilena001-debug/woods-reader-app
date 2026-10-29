@@ -98,7 +98,6 @@ class ReaderViewModelTest {
         val voiceAndAmbienceController: ReaderVoiceAndAmbienceController = mockk(relaxed = true)
         val proLicenseManager: ProLicenseManager = mockk(relaxed = true)
         val woodsKeepAliveManager: WoodsKeepAliveManager = mockk(relaxed = true)
-        val quoteVideoClipExporter: QuoteVideoClipExporter = mockk(relaxed = true)
         val saveReadingProgressUseCase: SaveReadingProgressUseCase = mockk(relaxed = true)
         val calculateReadingStatsUseCase: CalculateReadingStatsUseCase = mockk(relaxed = true)
         val manageReaderAnnotationsUseCase: ManageReaderAnnotationsUseCase = mockk(relaxed = true) {
@@ -122,7 +121,6 @@ class ReaderViewModelTest {
             voiceAndAmbienceController = voiceAndAmbienceController,
             proLicenseManager = proLicenseManager,
             woodsKeepAliveManager = woodsKeepAliveManager,
-            quoteVideoClipExporter = quoteVideoClipExporter,
             saveReadingProgressUseCase = saveReadingProgressUseCase,
             calculateReadingStatsUseCase = calculateReadingStatsUseCase,
             manageReaderAnnotationsUseCase = manageReaderAnnotationsUseCase,
