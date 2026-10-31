@@ -838,11 +838,8 @@ class ReaderViewModel @Inject constructor(
         if (isPdfBook && !isReflowMode.value) {
             val page = locator.locations.position ?: 1
             progressTracker.lastKnownReflowPage = page
-            val totalPages = totalPositions.takeIf { it > 0 }
-                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
-                ?: publication?.readingOrder?.size?.takeIf { it > 0 }
-                ?: 1
-            _globalProgress.value = (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
+            val totalPages = progressTracker.totalPdfPages(totalPositions, pdfReflowManager.reflowState.value.totalPages, publication?.readingOrder?.size)
+            _globalProgress.value = progressTracker.pageFraction(page, totalPages)
 
             saveReadingProgressUseCase.saveProgressDebounced(
                 scope = viewModelScope,
@@ -973,10 +970,7 @@ class ReaderViewModel @Inject constructor(
         if (isPdfBook && !isReflowMode.value) {
             val nav = navigator as? VisualNavigator
             val pub = publication
-            val totalPages = totalPositions.takeIf { it > 0 }
-                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
-                ?: pub?.readingOrder?.size?.takeIf { it > 0 }
-                ?: 1
+            val totalPages = progressTracker.totalPdfPages(totalPositions, pdfReflowManager.reflowState.value.totalPages, pub?.readingOrder?.size)
             val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
             progressTracker.lastKnownReflowPage = targetPage
             if (nav != null && pub != null) {
@@ -1693,57 +1687,20 @@ class ReaderViewModel @Inject constructor(
             ?: currentLoc?.locations?.progression?.toFloat()
             ?: _globalProgress.value
 
-        if (isReflowMode.value) {
-            val page = currentLoc?.locations?.position ?: progressTracker.lastKnownReflowPage.takeIf { it > 0 }
-                ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
-            val totalPages = pdfReflowManager.reflowState.value.totalPages
-            val progress = currentLoc?.locations?.totalProgression?.toFloat()
-                ?: currentLoc?.locations?.progression?.toFloat()
-                ?: if (totalPages > 0) (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f) else _globalProgress.value
-
-            saveReadingProgressUseCase.flushImmediately(
-                bookId = bookId,
-                chapterIndex = chapterIdx,
-                progress = progress,
-                currentLocator = currentLoc,
-                fallbackLocatorJson = locJson,
-                fallbackHref = href,
-                fallbackPosition = page
-            )
-        } else if (isPdfBook) {
-            val page = currentLoc?.locations?.position ?: progressTracker.lastKnownReflowPage.takeIf { it > 0 } ?: 1
-            progressTracker.lastKnownReflowPage = page
-            val totalPages = totalPositions.takeIf { it > 0 }
-                ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
-                ?: publication?.readingOrder?.size?.takeIf { it > 0 }
-                ?: 1
-            val progress = currentLoc?.locations?.totalProgression?.toFloat()
-                ?: currentLoc?.locations?.progression?.toFloat()
-                ?: (page.toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
-
-            saveReadingProgressUseCase.flushImmediately(
-                bookId = bookId,
-                chapterIndex = chapterIdx,
-                progress = progress,
-                currentLocator = currentLoc,
-                fallbackLocatorJson = locJson,
-                fallbackHref = href,
-                fallbackPosition = page
-            )
-        } else {
-            if (currentLoc != null) {
-                saveProgress(currentLoc)
-            }
-            saveReadingProgressUseCase.flushImmediately(
-                bookId = bookId,
-                chapterIndex = chapterIdx,
-                progress = prog,
-                currentLocator = currentLoc,
-                fallbackLocatorJson = locJson,
-                fallbackHref = href,
-                fallbackPosition = currentLoc?.locations?.position ?: 0
-            )
-        }
+        val plan = progressTracker.planFlush(
+            currentLoc = currentLoc, prog = prog, isReflowMode = isReflowMode.value, isPdfBook = isPdfBook,
+            reflowFirstElementPage = if (isReflowMode.value) pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber else null,
+            reflowTotalPages = if (isReflowMode.value || isPdfBook) pdfReflowManager.reflowState.value.totalPages else 0,
+            totalPositions = totalPositions,
+            readingOrderSize = if (isPdfBook) publication?.readingOrder?.size else null,
+            globalProgress = _globalProgress.value
+        )
+        plan.pageToRemember?.let { progressTracker.lastKnownReflowPage = it }
+        if (plan.saveProgressFirst) saveProgress(currentLoc!!)
+        saveReadingProgressUseCase.flushImmediately(
+            bookId = bookId, chapterIndex = chapterIdx, progress = plan.progress, currentLocator = currentLoc,
+            fallbackLocatorJson = locJson, fallbackHref = href, fallbackPosition = plan.fallbackPosition
+        )
     }
 
     fun saveCurrentProgressBeforeExit() {
