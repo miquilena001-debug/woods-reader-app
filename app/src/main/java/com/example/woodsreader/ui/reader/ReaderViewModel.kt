@@ -224,12 +224,9 @@ class ReaderViewModel @Inject constructor(
 
     val globalProgress = _globalProgress.asStateFlow()
     private val _showEpubCoverPage = MutableStateFlow(false)
-    val showEpubCoverPage = _showEpubCoverPage.asStateFlow()
-    val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
+        val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // ── Teleprompter / Auto-Scroll Controller ────────────────────────────────
-    val currentNarrationUnitIndex: StateFlow<Int> = ttsManager.currentNarrationUnitIndex
-
     private val autoScrollPrefs by lazy {
         context.getSharedPreferences("woods_teleprompter_prefs", Context.MODE_PRIVATE)
     }
@@ -243,22 +240,6 @@ class ReaderViewModel @Inject constructor(
         autoScrollPrefs.getInt("auto_scroll_wpm", 220).coerceIn(100, 450)
     )
     val autoScrollWpm: StateFlow<Int> = _autoScrollWpm.asStateFlow()
-
-    val teleprompterState: StateFlow<AutoScrollTeleprompterState> = combine(
-        _isAutoScrollActive,
-        _autoScrollWpm,
-        _isAutoScrollManuallyPaused
-    ) { active, wpm, paused ->
-        AutoScrollTeleprompterState(
-            isActive = active,
-            wpm = wpm,
-            isManuallyPaused = paused
-        )
-    }.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5000),
-        AutoScrollTeleprompterState()
-    )
 
     fun toggleAutoScroll() {
         val willBeActive = !_isAutoScrollActive.value
@@ -278,17 +259,6 @@ class ReaderViewModel @Inject constructor(
 
     fun setAutoScrollManuallyPaused(paused: Boolean) {
         _isAutoScrollManuallyPaused.value = paused
-    }
-
-    fun setAutoScrollActive(active: Boolean) {
-        _isAutoScrollActive.value = active
-        if (active) {
-            _isAutoScrollManuallyPaused.value = false
-            hideControls()
-            if (ttsState.value == TtsState.PLAYING) {
-                pauseTts()
-            }
-        }
     }
 
     fun setAutoScrollWpm(wpm: Int) {
@@ -463,9 +433,6 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun exportCurrentChapterToAudio() = exportAudioChapters(1)
-
-    val currentProcessedDocument: StateFlow<com.example.woodsreader.core.pipeline.ProcessedDocument?> =
-        epubFormatManager.currentProcessedDocument
 
     private val _activeNarrationBlockId = MutableStateFlow<String?>(null)
     val activeNarrationBlockId: StateFlow<String?> = _activeNarrationBlockId.asStateFlow()
@@ -920,51 +887,9 @@ class ReaderViewModel @Inject constructor(
         manageReaderAnnotationsUseCase.deleteBookmark(bookmark)
     }
 
-    fun toggleBookmark(locator: Locator?, label: String? = null) = viewModelScope.launch {
-        val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value ?: locator ?: return@launch
-        val page = if (isReflowMode.value || isPdfBook) lastKnownReflowPage else currentLocator.locations.position ?: 1
-        val bookmarkLocator = if (isReflowMode.value || isPdfBook) {
-            currentLocator.copy(locations = currentLocator.locations.copy(position = page))
-        } else {
-            currentLocator
-        }
-        currentBookmarkLocator = bookmarkLocator
-        val existing = manageReaderAnnotationsUseCase.findMatchingBookmark(
-            bookmarks = bookmarks.value,
-            currentLocator = bookmarkLocator,
-            isPdfOrReflow = isReflowMode.value || isPdfBook,
-            reflowPage = page
-        )
-        if (existing != null) {
-            manageReaderAnnotationsUseCase.deleteBookmark(existing)
-        } else {
-            addBookmark(bookmarkLocator, label)
-        }
-        refreshCurrentBookmarkState()
-    }
-
-    fun exportNotesToMarkdown(bookTitle: String, bookAuthor: String): String {
-        return manageReaderAnnotationsUseCase.exportToMarkdown(bookTitle, bookAuthor, highlights.value)
-    }
-
-    fun exportNotesToPlainText(bookTitle: String, bookAuthor: String): String {
-        return manageReaderAnnotationsUseCase.exportToPlainText(bookTitle, bookAuthor, highlights.value)
-    }
-
-    fun formatCitation(text: String, bookTitle: String, author: String, chapterTitle: String? = null): String {
-        return manageReaderAnnotationsUseCase.formatCitation(text, bookTitle, author, chapterTitle)
-    }
-
     fun saveTtsRule(rule: TtsRuleEntity) = viewModelScope.launch {
         bookRepository.saveTtsRule(rule)
         epubFormatManager.invalidateCache()
-    }
-
-    fun addTtsRule(pattern: String, replacement: String, isRegex: Boolean) = viewModelScope.launch {
-        if (pattern.isNotBlank()) {
-            bookRepository.saveTtsRule(TtsRuleEntity(pattern = pattern.trim(), replacement = replacement.trim(), isRegex = isRegex))
-            epubFormatManager.invalidateCache()
-        }
     }
 
     fun deleteTtsRule(rule: TtsRuleEntity) = viewModelScope.launch {
@@ -1251,19 +1176,6 @@ class ReaderViewModel @Inject constructor(
         val prefs = userPreferences.value
         val animated = prefs.pageTurnAnimation && prefs.pageTurnStyle == com.example.woodsreader.model.PageTurnStyle.NONE
         nav.goBackwardCompat(animated = animated)
-    }
-
-    /**
-     * Determina si el locator actual del TTS ha salido de la página visible en EPUB.
-     * Si la oración actual sigue estando dentro de los límites de la página mostrada,
-     * retorna null para evitar llamadas repetidas a nav.go() que provocan destellos y parpadeos.
-     */
-    fun getTtsPageTargetIfNeeded(currentLocator: Locator?, ttsLocator: Locator?): Locator? {
-        if (currentLocator == null || ttsLocator == null) return null
-        if (ttsLocator.href.toString() != currentLocator.href.toString()) {
-            return ttsLocator
-        }
-        return null
     }
 
     fun goToNextChapter(navigator: Navigator? = null) {
@@ -1824,12 +1736,6 @@ class ReaderViewModel @Inject constructor(
         pdfReflowManager.jumpToPage(viewModelScope, page)
     }
 
-    fun pauseReflowTts() {
-        pdfReflowManager.pauseReflowTts()
-
-        switchSessionMode(ReadingMode.MANUAL)
-    }
-
     fun skipReflowTtsForward()  {
         viewModelScope.launch { pdfReflowManager.playReflowTts(viewModelScope, currentSpeed.value, startIndex = ttsActiveBlockIndex.value + 1) }
 
@@ -1936,8 +1842,6 @@ class ReaderViewModel @Inject constructor(
     private var lastUserInteractionTime = 0L
 
     fun onUserInteraction()      { lastUserInteractionTime = System.currentTimeMillis() }
-
-    fun isInteractionLockActive() = (System.currentTimeMillis() - lastUserInteractionTime) < 3000L
 
     fun togglePdfBookView() {
         val currentState = _viewState.value
@@ -2049,14 +1953,9 @@ class ReaderViewModel @Inject constructor(
         flushReadingProgressImmediately()
     }
 
-    fun dismissEpubCoverPage() {
-        _showEpubCoverPage.value = false
-    }
-
     // ── Búsqueda En-Libro Streaming con Cero Bloqueo ─────────────────────────
     val inBookSearchResults: StateFlow<List<FastInBookSearchHit>> = readerIntelligenceAndExportCoordinator.inBookSearchResults
     val inBookSearchProgress: StateFlow<FastSearchProgress?> = readerIntelligenceAndExportCoordinator.inBookSearchProgress
-    val isInBookSearching: StateFlow<Boolean> = readerIntelligenceAndExportCoordinator.isInBookSearching
 
     fun getCurrentChapterIndex(): Int {
         val pub = publication ?: return 0
@@ -2067,24 +1966,6 @@ class ReaderViewModel @Inject constructor(
                 ?: findMatchingResourceIndex(currentHref, pub.readingOrder).takeIf { it != -1 }
                 ?: 0
         } else 0
-    }
-
-    fun searchInBook(query: String, startFromChapterIndex: Int? = null) {
-        val startIndex = startFromChapterIndex ?: getCurrentChapterIndex()
-        val successBook = (_uiState.value as? ReaderUiState.Success)?.book
-        val pdfFile = if (isPdfBook && successBook != null) {
-            java.io.File(successBook.filePath).takeIf { it.exists() }
-        } else null
-
-        readerIntelligenceAndExportCoordinator.searchInBook(
-            scope = viewModelScope,
-            bookId = bookId,
-            publication = publication,
-            query = query,
-            startIndex = startIndex,
-            isPdf = isPdfBook,
-            pdfFile = pdfFile
-        )
     }
 
     fun cancelInBookSearch() {
