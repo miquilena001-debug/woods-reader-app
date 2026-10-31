@@ -390,6 +390,13 @@ class ReaderViewModel @Inject constructor(
             )
         }
     }
+    private val sessionCoordinator = ReaderReadingSessionCoordinator(
+        sessionManager = readingSessionManager, bookId = bookId, scope = viewModelScope,
+        visibleLocator = { (navigator as? VisualNavigator)?.currentLocator?.value },
+        ttsLocator = { _currentTtsLocator.value },
+        isTtsPlaying = { ttsState.value == TtsState.PLAYING }
+    )
+
     // --- Init ------------------------------------------------------------------
 
     init {
@@ -607,36 +614,12 @@ class ReaderViewModel @Inject constructor(
     val isLoadingTtsModel: StateFlow<Boolean> = ttsManager.isLoadingModel
 
     private fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
-        val locator = (navigator as? VisualNavigator)?.currentLocator?.value ?: initialLocator
-        readingSessionManager.startNewSession(viewModelScope, bookId, mode, locator)
-        locator?.locations?.totalProgression?.let {
-            lastRecordedProgression = it
-        }
+        sessionCoordinator.start(mode, initialLocator)?.let { lastRecordedProgression = it }
         lastTtsSentence = null
     }
-
-    private fun stopActiveSession() {
-        val currentLocator = if (readingSessionManager.currentSessionMode == ReadingMode.TTS || ttsState.value == com.example.woodsreader.ui.reader.TtsState.PLAYING) {
-            _currentTtsLocator.value ?: (navigator as? VisualNavigator)?.currentLocator?.value
-        } else {
-            (navigator as? VisualNavigator)?.currentLocator?.value
-        }
-        readingSessionManager.stopActiveSession(bookId = bookId, currentLocator = currentLocator)
-    }
-
-    private fun switchSessionMode(newMode: ReadingMode) {
-        val currentLocator = if (readingSessionManager.currentSessionMode == ReadingMode.TTS || ttsState.value == com.example.woodsreader.ui.reader.TtsState.PLAYING) {
-            _currentTtsLocator.value ?: (navigator as? VisualNavigator)?.currentLocator?.value
-        } else {
-            (navigator as? VisualNavigator)?.currentLocator?.value
-        }
-        readingSessionManager.switchSessionMode(viewModelScope, bookId, newMode, currentLocator)
-    }
-
-    private fun recordActivity() {
-        val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value
-        readingSessionManager.recordActivity(viewModelScope, bookId, currentLocator)
-    }
+    private fun stopActiveSession() { sessionCoordinator.stop() }
+    private fun switchSessionMode(newMode: ReadingMode) { sessionCoordinator.switchMode(newMode) }
+    private fun recordActivity() { sessionCoordinator.recordActivity() }
 
     // --- UI controls -----------------------------------------------------------
 
