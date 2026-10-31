@@ -372,4 +372,42 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
         }
         chapterAudioExporter.setActiveJob(job)
     }
+
+    fun exportAudio(
+        scope: CoroutineScope,
+        book: BookEntity,
+        publication: Publication,
+        isPdfBook: Boolean,
+        isReflowMode: Boolean,
+        startChapTitle: String,
+        maxChaptersToExport: Int,
+        speed: Float,
+        coverFile: File?,
+        currentTtsPage: Int,
+        reflowItems: List<ReflowItem>,
+        currentHref: String,
+        resolveChapterChunk: suspend (targetIdx: Int, link: Link) -> ChapterTextChunk?
+    ) {
+        val pdfFile = if (isPdfBook) File(book.filePath).takeIf { it.exists() } else null
+        if (pdfFile != null) {
+            val startPage = currentTtsPage.takeIf { it > 0 } ?: 1
+            exportPdfChapters(
+                scope = scope, book = book, pdfFile = pdfFile, startPage = startPage,
+                maxChaptersOrPagesToExport = maxChaptersToExport, speed = speed,
+                coverFile = coverFile, publication = publication
+            )
+        } else if (isReflowMode || isPdfBook) {
+            exportReflowChapter(
+                scope = scope, book = book, chapterTitle = startChapTitle,
+                items = reflowItems, speed = speed, coverFile = coverFile
+            )
+        } else {
+            exportEpubChapters(
+                scope = scope, book = book, readingOrder = publication.readingOrder,
+                currentHref = currentHref, startChapTitle = startChapTitle,
+                maxChaptersToExport = maxChaptersToExport, speed = speed,
+                coverFile = coverFile, resolveChapterChunk = resolveChapterChunk
+            )
+        }
+    }
 }
