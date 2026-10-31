@@ -227,45 +227,24 @@ class ReaderViewModel @Inject constructor(
         val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // ── Teleprompter / Auto-Scroll Controller ────────────────────────────────
-    private val autoScrollPrefs by lazy {
+    private val autoScroll = ReaderAutoScrollController {
         context.getSharedPreferences("woods_teleprompter_prefs", Context.MODE_PRIVATE)
     }
-    private val _isAutoScrollActive = MutableStateFlow(false)
-    val isAutoScrollActive: StateFlow<Boolean> = _isAutoScrollActive.asStateFlow()
-
-    private val _isAutoScrollManuallyPaused = MutableStateFlow(false)
-    val isAutoScrollManuallyPaused: StateFlow<Boolean> = _isAutoScrollManuallyPaused.asStateFlow()
-
-    private val _autoScrollWpm = MutableStateFlow(
-        autoScrollPrefs.getInt("auto_scroll_wpm", 220).coerceIn(100, 450)
-    )
-    val autoScrollWpm: StateFlow<Int> = _autoScrollWpm.asStateFlow()
+    val isAutoScrollActive: StateFlow<Boolean> = autoScroll.isActive
+    val isAutoScrollManuallyPaused: StateFlow<Boolean> = autoScroll.isManuallyPaused
+    val autoScrollWpm: StateFlow<Int> = autoScroll.wpm
 
     fun toggleAutoScroll() {
-        val willBeActive = !_isAutoScrollActive.value
-        _isAutoScrollActive.value = willBeActive
-        if (willBeActive) {
-            _isAutoScrollManuallyPaused.value = false
+        if (autoScroll.toggle()) {
             hideControls()
             if (ttsState.value == TtsState.PLAYING) {
                 pauseTts()
             }
         }
     }
-
-    fun toggleAutoScrollPause() {
-        _isAutoScrollManuallyPaused.update { !it }
-    }
-
-    fun setAutoScrollManuallyPaused(paused: Boolean) {
-        _isAutoScrollManuallyPaused.value = paused
-    }
-
-    fun setAutoScrollWpm(wpm: Int) {
-        val clamped = wpm.coerceIn(100, 450)
-        _autoScrollWpm.value = clamped
-        autoScrollPrefs.edit().putInt("auto_scroll_wpm", clamped).apply()
-    }
+    fun toggleAutoScrollPause() = autoScroll.togglePause()
+    fun setAutoScrollManuallyPaused(paused: Boolean) = autoScroll.setManuallyPaused(paused)
+    fun setAutoScrollWpm(wpm: Int) = autoScroll.setWpm(wpm)
 
     val currentTtsPage = pdfReflowManager.currentTtsPage
     val sleepTimerRemaining = voiceAndAmbienceController.sleepTimerRemaining
@@ -496,8 +475,7 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             ttsState.collect { state ->
                 if (state == TtsState.PLAYING) {
-                    _isAutoScrollActive.value = false
-                    _isAutoScrollManuallyPaused.value = false
+                    autoScroll.reset()
                 }
             }
         }
@@ -1387,8 +1365,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun playTts(locator: Locator) {
-        _isAutoScrollActive.value = false
-        _isAutoScrollManuallyPaused.value = false
+        autoScroll.reset()
         _lastTtsLocator.value = null
         switchSessionMode(ReadingMode.TTS)
         if (isReflowMode.value || isPdfBook) {
@@ -1474,8 +1451,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun resumeTts() {
-        _isAutoScrollActive.value = false
-        _isAutoScrollManuallyPaused.value = false
+        autoScroll.reset()
         val locator = (navigator as? VisualNavigator)?.currentLocator?.value ?: getFallbackLocator()
 
         if (isPdfBook && !isReflowMode.value && locator != null) {
@@ -1879,7 +1855,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun saveCurrentProgressBeforeExit() {
-        _isAutoScrollActive.value = false
+        autoScroll.deactivate()
         if (_showEpubCoverPage.value) return
         flushReadingProgressImmediately()
     }
