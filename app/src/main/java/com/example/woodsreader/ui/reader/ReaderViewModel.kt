@@ -2,7 +2,6 @@ package com.example.woodsreader.ui.reader
 import android.app.Application
 import com.example.woodsreader.core.pipeline.PdfBookViewSynchronizer
 import com.example.woodsreader.core.managers.ReadingSessionManager
-import com.example.woodsreader.core.managers.ReadingProgressManager
 import com.example.woodsreader.domain.reader.SaveReadingProgressUseCase
 import com.example.woodsreader.domain.reader.CalculateReadingStatsUseCase
 import com.example.woodsreader.domain.reader.LoadBookFastUseCase
@@ -12,7 +11,6 @@ import com.example.woodsreader.domain.reader.ReaderIntelligenceAndExportCoordina
 import com.example.woodsreader.domain.reader.ReaderChapterNavigationCoordinator
 import com.example.woodsreader.domain.reader.ParsedChapterData
 import android.content.Context
-import java.util.Locale
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -25,9 +23,7 @@ import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.database.BookmarkEntity
 
 import com.example.woodsreader.data.database.HighlightEntity
-import com.example.woodsreader.data.database.ReadingSessionEntity
 import com.example.woodsreader.data.database.TtsRuleEntity
-import com.example.woodsreader.data.database.ReadingStatsEntity
 import com.example.woodsreader.data.datastore.UserPreferences
 
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
@@ -37,46 +33,31 @@ import com.example.woodsreader.data.model.ReadingMode
 import com.example.woodsreader.data.repository.BookRepository
 
 import com.example.woodsreader.core.tts.TtsManager
-import com.example.woodsreader.core.tts.AmbiencePreset
-import com.example.woodsreader.core.tts.SherpaDownloadState
 import com.example.woodsreader.core.tts.TtsPresetPack
 import com.example.woodsreader.core.tts.SherpaVoiceOption
-import com.example.woodsreader.core.tts.SupportedTtsLanguage
-import com.example.woodsreader.core.tts.SleepTimerPreset
 import com.example.woodsreader.core.tts.EdgeVoiceOption
-import com.example.woodsreader.core.tts.AmbientSoundscapePlayer
 import com.example.woodsreader.domain.reader.ReaderVoiceAndAmbienceController
 import com.example.woodsreader.core.search.FastInBookSearchHit
 import com.example.woodsreader.core.search.FastSearchProgress
 import com.example.woodsreader.core.managers.PdfReflowManager
 
-import com.example.woodsreader.data.model.ReflowItem
 import com.example.woodsreader.model.ReaderTheme
 import com.example.woodsreader.model.ScrollMode
 import com.example.woodsreader.model.PageTurnStyle
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
 
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-import kotlinx.coroutines.withContext
 import org.readium.r2.navigator.Navigator
 
 import org.readium.r2.navigator.VisualNavigator
-import org.readium.r2.navigator.preferences.Color
 
-import org.readium.r2.navigator.preferences.TextAlign
-import org.readium.r2.navigator.preferences.Theme
 
-import org.readium.r2.shared.util.AbsoluteUrl
-import com.example.woodsreader.core.pipeline.EpubPackageSanitizer
-import org.readium.r2.shared.util.mediatype.MediaType
 
 import org.readium.r2.shared.ExperimentalReadiumApi
 import org.readium.r2.shared.publication.Locator
@@ -85,24 +66,16 @@ import org.json.JSONObject
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.content.*
 
-import org.readium.r2.shared.publication.services.positions
-import org.readium.r2.shared.publication.services.positionsByReadingOrder
-import org.readium.r2.shared.util.asset.AssetRetriever
 import android.util.LruCache
-import com.example.woodsreader.core.pipeline.ProcessedDocument
-import com.example.woodsreader.core.pipeline.ReadingBlock
 import com.example.woodsreader.core.xray.ChapterXRayReport
 import com.example.woodsreader.core.license.ProLicenseManager
 
-import com.example.woodsreader.core.share.QuoteVideoClipExporter
 import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import com.example.woodsreader.service.CoverExtractor
 import org.readium.r2.shared.publication.Link
-import org.readium.r2.streamer.PublicationOpener
 import java.io.File
 
 import javax.inject.Inject
-import kotlin.math.abs
 
 data class AutoScrollTeleprompterState(
     val isActive: Boolean = false,
@@ -1699,25 +1672,3 @@ class ReaderViewModel @Inject constructor(
         )
     }
 }
-
-
-
-
-
-
-data class ReaderViewState(
-    val isTtsPlaying: Boolean = false,
-    val currentSpeed: Float = 1.0f,
-    val ttsHighlightStyle: com.example.woodsreader.model.TtsHighlightStyle = com.example.woodsreader.model.TtsHighlightStyle.BACKGROUND_YELLOW,
-    val sleepTimerMinutes: Int? = null,
-    val readingMode: com.example.woodsreader.data.model.ReadingMode = com.example.woodsreader.data.model.ReadingMode.MANUAL,
-    val fontSize: Float = 16f,
-    val lineSpacing: Float = 1.5f,
-    val isBookmarked: Boolean = false,
-    val globalProgress: Float = 0f,
-    val chapterProgress: Float = 0f,
-    val activeNarrationBlockId: String? = null,
-    val activeNarrationWordRange: IntRange? = null,
-    val isPdfBookViewActive: Boolean = false,
-    val pdfBookViewBlockIndex: Int = 0
-)
