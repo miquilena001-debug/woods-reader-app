@@ -1138,40 +1138,12 @@ class ReaderViewModel @Inject constructor(
 
     fun getLocatorForPdfPage(page: Int): Locator? {
         val pub = publication ?: return null
-        val totalPages = pdfReflowManager.reflowState.value.totalPages.takeIf { it > 1 }
-            ?: totalPositions.takeIf { it > 1 }
-            ?: pub.readingOrder.size.takeIf { it > 1 }
-            ?: 1
-        val prog = ((page - 1).toDouble() / totalPages.toDouble()).coerceIn(0.0, 1.0)
-
-        if (totalPositions > 1 && positionsByResource.isNotEmpty()) {
-            var count = 0
-            for (sublist in positionsByResource) {
-                if (page - 1 < count + sublist.size) {
-                    val loc = sublist.getOrNull(page - 1 - count)
-                    if (loc != null) {
-                        return loc.copy(
-                            locations = loc.locations.copy(
-                                fragments = listOf("page=$page"),
-                                position = page,
-                                progression = loc.locations.progression ?: prog,
-                                totalProgression = loc.locations.totalProgression ?: prog
-                            )
-                        )
-                    }
-                }
-                count += sublist.size
-            }
-        }
-        val targetIdx = (page - 1).coerceAtLeast(0)
-        val link = pub.readingOrder.getOrNull(targetIdx) ?: pub.readingOrder.firstOrNull() ?: return null
-        return pub.locatorFromLink(link)?.copy(
-            locations = Locator.Locations(
-                fragments = listOf("page=$page"),
-                position = page,
-                progression = prog,
-                totalProgression = prog
-            )
+        return ReaderReflowResolvers.locatorForPdfPage(
+            page = page,
+            publication = pub,
+            reflowTotalPages = pdfReflowManager.reflowState.value.totalPages,
+            totalPositions = totalPositions,
+            positionsByResource = positionsByResource
         )
     }
 
@@ -1201,31 +1173,12 @@ class ReaderViewModel @Inject constructor(
         return null
     }
 
-    private fun getReadableReflowItems(elements: List<ReflowItem>): List<ReflowItem> {
-        return elements.filter { it is ReflowItem.Header || it is ReflowItem.Paragraph || it is ReflowItem.Text }
-    }
-
-    private fun calculateReadableReflowIndex(
-        elements: List<ReflowItem>,
-        readableItems: List<ReflowItem>,
-        elementIndex: Int
-    ): Int {
-        val boundedIdx = elementIndex.coerceIn(0, (elements.size - 1).coerceAtLeast(0))
-        val visibleItem = elements.getOrNull(boundedIdx)
-        return if (visibleItem != null && visibleItem in readableItems) {
-            readableItems.indexOf(visibleItem)
-        } else {
-            elements.drop(boundedIdx).firstNotNullOfOrNull { item ->
-                readableItems.indexOf(item).takeIf { it >= 0 }
-            } ?: 0
-        }
-    }
 
     fun onPlay() {
         if (isReflowMode.value) {
             val elements = pdfReflowManager.reflowState.value.items
-            val readableItems = getReadableReflowItems(elements)
-            val startIndex = calculateReadableReflowIndex(elements, readableItems, lastReflowScrollIndex)
+            val readableItems = ReaderReflowResolvers.readableItems(elements)
+            val startIndex = ReaderReflowResolvers.readableIndex(elements, readableItems, lastReflowScrollIndex)
 
             viewModelScope.launch {
                 pdfReflowManager.playReflowTts(
@@ -1292,12 +1245,12 @@ class ReaderViewModel @Inject constructor(
             pdfReflowManager.stopReflowTts()
             viewModelScope.launch {
                 val targetPage = locator.locations.position ?: progressTracker.lastKnownReflowPage.coerceAtLeast(1)
-                var readable = getReadableReflowItems(pdfReflowManager.reflowState.value.items)
+                var readable = ReaderReflowResolvers.readableItems(pdfReflowManager.reflowState.value.items)
                 var targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }
 
                 if (targetIndex == -1) {
                     pdfReflowManager.loadReflowPages(fromPage = targetPage, isInitial = true)
-                    readable = getReadableReflowItems(pdfReflowManager.reflowState.value.items)
+                    readable = ReaderReflowResolvers.readableItems(pdfReflowManager.reflowState.value.items)
                     targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }.coerceAtLeast(0)
                 }
 
@@ -1386,8 +1339,8 @@ class ReaderViewModel @Inject constructor(
 
         if (isReflowMode.value || isPdfBook) {
             val elements = pdfReflowManager.reflowElements.value
-            val readableItems = getReadableReflowItems(elements)
-            val visibleReadableIdx = calculateReadableReflowIndex(elements, readableItems, lastReflowScrollIndex)
+            val readableItems = ReaderReflowResolvers.readableItems(elements)
+            val visibleReadableIdx = ReaderReflowResolvers.readableIndex(elements, readableItems, lastReflowScrollIndex)
 
             // Si el usuario se desplazó por la pantalla mientras estaba en pausa, reanudar desde lo que está viendo ahora
             val targetStartIndex = if (userScrolledSinceTtsPause || ttsPausedAtIndex == null) {
@@ -1518,8 +1471,8 @@ class ReaderViewModel @Inject constructor(
 
         // Solo actualizar el índice TTS pasivo cuando el scroll se detiene para evitar jank/congelamientos a 60-90fps
         if (!isScrolling && !pdfReflowManager.getIsReflowTtsRunning() && elements.isNotEmpty()) {
-            val readableItems = getReadableReflowItems(elements)
-            val readableIdx = calculateReadableReflowIndex(elements, readableItems, firstVisibleItemIndex)
+            val readableItems = ReaderReflowResolvers.readableItems(elements)
+            val readableIdx = ReaderReflowResolvers.readableIndex(elements, readableItems, firstVisibleItemIndex)
             if (readableIdx >= 0) {
                 pdfReflowManager.setTtsActiveBlockIndex(readableIdx)
             }
