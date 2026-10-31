@@ -270,19 +270,8 @@ class ReaderViewModel @Inject constructor(
     val currentTtsPage = pdfReflowManager.currentTtsPage
     val sleepTimerRemaining = voiceAndAmbienceController.sleepTimerRemaining
     val activeAmbiencePreset = voiceAndAmbienceController.activeAmbiencePreset
-    val ambienceVolume = voiceAndAmbienceController.ambienceVolume
-    val ambientSoundscapePlayer: AmbientSoundscapePlayer get() = voiceAndAmbienceController.ambientSoundscapePlayer
-
     fun toggleNextAmbience() {
         voiceAndAmbienceController.toggleNextAmbience()
-    }
-
-    fun setAmbiencePreset(preset: AmbiencePreset) {
-        voiceAndAmbienceController.setAmbiencePreset(preset)
-    }
-
-    fun setAmbienceVolume(volume: Float) {
-        voiceAndAmbienceController.setAmbienceVolume(volume)
     }
 
     fun installTtsPresetPack(pack: TtsPresetPack) = viewModelScope.launch {
@@ -369,10 +358,6 @@ class ReaderViewModel @Inject constructor(
 
     fun selectEdgeVoice(option: EdgeVoiceOption) {
         voiceAndAmbienceController.selectEdgeVoice(option)
-    }
-
-    fun switchSherpaVoice(option: com.example.woodsreader.core.tts.SherpaVoiceOption) {
-        voiceAndAmbienceController.switchSherpaVoice(viewModelScope, option)
     }
 
     fun cancelAudioExport() {
@@ -1765,36 +1750,6 @@ class ReaderViewModel @Inject constructor(
         voiceAndAmbienceController.cancelSleepTimer { speed -> updateActiveTtsSpeedOnly(speed) }
     }
 
-    val selectedLanguageFilter = voiceAndAmbienceController.selectedLanguageFilter
-    val autoDetectBookLanguage = voiceAndAmbienceController.autoDetectBookLanguage
-    val downloadedModelIds = voiceAndAmbienceController.downloadedModelIds
-
-    fun setSelectedLanguageFilter(language: SupportedTtsLanguage) {
-        voiceAndAmbienceController.setSelectedLanguageFilter(language)
-    }
-
-    fun setAutoDetectBookLanguage(enabled: Boolean) {
-        voiceAndAmbienceController.setAutoDetectBookLanguage(enabled)
-    }
-
-    fun deleteDownloadedModel(modelId: String) {
-        voiceAndAmbienceController.deleteDownloadedModel(viewModelScope, modelId)
-    }
-
-    val builtInLexiconEnabled = voiceAndAmbienceController.builtInLexiconEnabled
-    val customPhoneticRules = voiceAndAmbienceController.customPhoneticRules
-
-    fun setBuiltInLexiconEnabled(enabled: Boolean) {
-        voiceAndAmbienceController.setBuiltInLexiconEnabled(enabled)
-    }
-
-    fun addCustomPhoneticRule(original: String, phonetic: String, caseSensitive: Boolean = false) {
-        voiceAndAmbienceController.addCustomPhoneticRule(original, phonetic, caseSensitive)
-    }
-
-    fun removeCustomPhoneticRule(id: String) {
-        voiceAndAmbienceController.removeCustomPhoneticRule(id)
-    }
     // --- Optimized sleep timer with minimal wake-ups ---------------------------
 
     fun updateActiveTtsSpeedOnly(speed: Float) {
