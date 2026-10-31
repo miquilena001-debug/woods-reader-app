@@ -285,9 +285,8 @@ class ReaderViewModel @Inject constructor(
     val reflowState = pdfReflowManager.reflowState
     val isLoadingMoreReflow = pdfReflowManager.isLoadingMoreReflow
     private var lastKnownReflowPage: Int = 1
-    private var currentBookmarkLocator: Locator? = null
-    private val _isCurrentPageBookmarked = MutableStateFlow(false)
-    val isCurrentPageBookmarked = _isCurrentPageBookmarked.asStateFlow()
+    private val annotations = ReaderAnnotationsController(manageReaderAnnotationsUseCase, bookId)
+    val isCurrentPageBookmarked: StateFlow<Boolean> = annotations.isCurrentPageBookmarked
 
     val highlights = manageReaderAnnotationsUseCase.getHighlights(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val bookmarks = manageReaderAnnotationsUseCase.getBookmarks(bookId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -745,63 +744,21 @@ class ReaderViewModel @Inject constructor(
 
     fun addHighlight(locator: Locator, color: HighlightColor, text: String, note: String = "") {
         viewModelScope.launch {
-            val chapter = locator.title ?: _chapterInfo.value.title ?: ""
-            manageReaderAnnotationsUseCase.saveHighlight(
-                bookId = bookId,
-                locator = locator,
-                color = color,
-                text = text,
-                note = note,
-                chapterTitle = chapter
-            )
+            annotations.addHighlight(locator, color, text, note, _chapterInfo.value.title)
         }
     }
 
     fun addBookmark(locator: Locator?, label: String? = null) = viewModelScope.launch {
-        val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value ?: locator
-        val page = if (isReflowMode.value || isPdfBook) {
-            lastKnownReflowPage
-        } else {
-            currentLocator?.locations?.position ?: 1
-        }
-        val bookmarkLocator = currentLocator?.let {
-            if (isReflowMode.value || isPdfBook) {
-                it.copy(locations = it.locations.copy(position = page))
-            } else {
-                it
-            }
-        } ?: return@launch
-        currentBookmarkLocator = bookmarkLocator
-        refreshCurrentBookmarkState()
-        if (_isCurrentPageBookmarked.value) return@launch
-
-        val chapter = _chapterInfo.value.title?.takeIf { it.isNotBlank() }
-            ?: bookmarkLocator.title?.takeIf { it.isNotBlank() }
-            ?: ""
-        val snippet = bookmarkLocator.text.highlight?.trim()?.takeIf { it.isNotBlank() }
-            ?: bookmarkLocator.text.after?.trim()?.take(120)?.takeIf { it.isNotBlank() }
-            ?: if (isReflowMode.value || isPdfBook) {
-                pdfReflowManager.reflowState.value.items.firstOrNull { item ->
-                    item.pageNumber == page && (item is ReflowItem.Paragraph || item is ReflowItem.Header)
-                }?.let { item ->
-                    when (item) {
-                        is ReflowItem.Paragraph -> item.content
-                        is ReflowItem.Header -> item.content
-                        else -> null
-                    }?.trim()?.take(120)
-                }
-            } else {
-                null
-            }
-
-        manageReaderAnnotationsUseCase.createBookmark(
-            bookId = bookId,
-            locator = bookmarkLocator,
+        annotations.addBookmark(
+            navLocator = (navigator as? VisualNavigator)?.currentLocator?.value,
+            locator = locator,
             label = label,
-            chapterTitle = chapter,
-            page = page,
-            progress = _globalProgress.value,
-            snippet = snippet
+            bookmarks = bookmarks.value,
+            isPdfOrReflow = isReflowMode.value || isPdfBook,
+            lastKnownReflowPage = lastKnownReflowPage,
+            chapterInfoTitle = _chapterInfo.value.title,
+            reflowItems = pdfReflowManager.reflowState.value.items,
+            globalProgress = _globalProgress.value
         )
     }
 
@@ -873,7 +830,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun onTtsLocatorChanged(locator: Locator) {
         if (_showEpubCoverPage.value) return
-        currentBookmarkLocator = locator
+        annotations.currentLocator = locator
         val locJson = saveReadingProgressUseCase.serializeLocator(locator)
         lastSavedLocatorJson = locJson
         saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
@@ -888,7 +845,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun onLocatorChanged(locator: Locator) {
-        currentBookmarkLocator = locator
+        annotations.currentLocator = locator
         if (isPdfBook && !isReflowMode.value) {
             lastKnownReflowPage = locator.locations.position ?: 1
         }
@@ -1601,7 +1558,7 @@ class ReaderViewModel @Inject constructor(
                 lastKnownReflowPage = pageNumber
                 val locator = (navigator as? VisualNavigator)?.currentLocator?.value
                 if (locator != null) {
-                    currentBookmarkLocator = locator.copy(
+                    annotations.currentLocator = locator.copy(
                         locations = locator.locations.copy(position = pageNumber)
                     )
                     refreshCurrentBookmarkState()
@@ -1634,13 +1591,8 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun refreshCurrentBookmarkState() {
-        val locator = currentBookmarkLocator ?: return
-        _isCurrentPageBookmarked.value = manageReaderAnnotationsUseCase.isPageBookmarked(
-            bookmarks = bookmarks.value,
-            currentLocator = locator,
-            isPdfOrReflow = isReflowMode.value || isPdfBook,
-            reflowPage = lastKnownReflowPage
-        )
+        if (annotations.currentLocator == null) return
+        annotations.refresh(bookmarks.value, isReflowMode.value || isPdfBook, lastKnownReflowPage)
     }
 
     fun loadNextPage() {
@@ -1770,7 +1722,7 @@ class ReaderViewModel @Inject constructor(
         val ttsLocator = _currentTtsLocator.value.takeIf {
             ttsState.value == TtsState.PLAYING || ttsState.value == TtsState.PAUSED
         }
-        val currentLoc = ttsLocator ?: nav?.currentLocator?.value ?: currentBookmarkLocator
+        val currentLoc = ttsLocator ?: nav?.currentLocator?.value ?: annotations.currentLocator
             ?: lastSavedLocatorJson?.let { saved ->
                 runCatching { Locator.fromJSON(org.json.JSONObject(saved)) }.getOrNull()
             }
