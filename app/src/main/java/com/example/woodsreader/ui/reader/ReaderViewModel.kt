@@ -367,43 +367,20 @@ class ReaderViewModel @Inject constructor(
     fun exportAudioChapters(maxChaptersToExport: Int = 1) {
         val book = (_uiState.value as? ReaderUiState.Success)?.book ?: return
         val pub = publication ?: return
-        val startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" }
-        val coverFile = readerIntelligenceAndExportCoordinator.resolveCoverFile(book, context)
-        val pdfFile = if (isPdfBook) java.io.File(book.filePath).takeIf { it.exists() } else null
-
-        if (pdfFile != null) {
-            val startPage = pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } ?: 1
-            readerIntelligenceAndExportCoordinator.exportPdfChapters(
-                scope = viewModelScope,
-                book = book,
-                pdfFile = pdfFile,
-                startPage = startPage,
-                maxChaptersOrPagesToExport = maxChaptersToExport,
-                speed = currentSpeed.value,
-                coverFile = coverFile,
-                publication = pub
-            )
-        } else if (isReflowMode.value || isPdfBook) {
-            readerIntelligenceAndExportCoordinator.exportReflowChapter(
-                scope = viewModelScope,
-                book = book,
-                chapterTitle = startChapTitle,
-                items = pdfReflowManager.reflowState.value.items,
-                speed = currentSpeed.value,
-                coverFile = coverFile
-            )
-        } else {
-            val currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
-            readerIntelligenceAndExportCoordinator.exportEpubChapters(
-                scope = viewModelScope,
-                book = book,
-                readingOrder = pub.readingOrder,
-                currentHref = currentHref,
-                startChapTitle = startChapTitle,
-                maxChaptersToExport = maxChaptersToExport,
-                speed = currentSpeed.value,
-                coverFile = coverFile
-            ) { targetIdx, link ->
+        readerIntelligenceAndExportCoordinator.exportAudio(
+            scope = viewModelScope,
+            book = book,
+            publication = pub,
+            isPdfBook = isPdfBook,
+            isReflowMode = isReflowMode.value,
+            startChapTitle = currentChapterTitle.value.ifBlank { "Capitulo" },
+            maxChaptersToExport = maxChaptersToExport,
+            speed = currentSpeed.value,
+            coverFile = readerIntelligenceAndExportCoordinator.resolveCoverFile(book, context),
+            currentTtsPage = pdfReflowManager.currentTtsPage.value,
+            reflowItems = pdfReflowManager.reflowState.value.items,
+            currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
+        ) { targetIdx, link ->
                 val cached = chapterLruCache.get(targetIdx)
                 val doc = cached?.document ?: epubFormatManager.processResource(link.href.toString(), book.id)
                 if (doc != null && cached == null) {
@@ -413,7 +390,6 @@ class ReaderViewModel @Inject constructor(
                 val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
                 val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
                 com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
-            }
         }
     }
 
