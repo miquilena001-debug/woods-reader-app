@@ -167,7 +167,6 @@ class ReaderViewModel @Inject constructor(
     var publication: Publication? = null
 
     private var navigatorLocatorJob: Job? = null
-    private var lastSavedLocatorJson: String? = null
     private var lastProcessedChapterHref: String? = null
 
     var navigator: Navigator? = null
@@ -204,7 +203,6 @@ class ReaderViewModel @Inject constructor(
     val chapterTimeRemaining = _chapterTimeRemaining.asStateFlow()
     private var lastTtsSentence: String? = null
 
-    private var lastRecordedProgression = 0.0
     val userPreferences: StateFlow<com.example.woodsreader.data.datastore.UserPreferences> = userPreferencesRepository.userPreferencesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.woodsreader.data.datastore.UserPreferences())
 
     private val _currentSpeed = MutableStateFlow(1.0f)
@@ -281,7 +279,6 @@ class ReaderViewModel @Inject constructor(
 
     val reflowState = pdfReflowManager.reflowState
     val isLoadingMoreReflow = pdfReflowManager.isLoadingMoreReflow
-    private var lastKnownReflowPage: Int = 1
     private val annotations = ReaderAnnotationsController(manageReaderAnnotationsUseCase, bookId)
     val isCurrentPageBookmarked: StateFlow<Boolean> = annotations.isCurrentPageBookmarked
 
@@ -392,6 +389,7 @@ class ReaderViewModel @Inject constructor(
         ttsLocator = { _currentTtsLocator.value },
         isTtsPlaying = { ttsState.value == TtsState.PLAYING }
     )
+    private val progressTracker = ReaderProgressTracker()
 
     private val statsCalculator = ReaderReadingStatsCalculator(
         statsUseCase = calculateReadingStatsUseCase,
@@ -550,7 +548,7 @@ class ReaderViewModel @Inject constructor(
                         recordActivity()
                     }
                     val initialPage = sessionData.initialPdfPage ?: book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
-                    lastKnownReflowPage = initialPage
+                    progressTracker.lastKnownReflowPage = initialPage
                     pdfReflowManager.setReflowMode(enabled = true, scope = viewModelScope, initialPosition = initialPage)
                     null
                 } else {
@@ -562,7 +560,7 @@ class ReaderViewModel @Inject constructor(
                     loc
                 }
 
-                lastRecordedProgression = initialLocator?.locations?.totalProgression
+                progressTracker.lastRecordedProgression = initialLocator?.locations?.totalProgression
                     ?: book.readingProgressPercent.toDouble()
                 _globalProgress.value = book.readingProgressPercent.coerceIn(0f, 1f)
                 startNewSession(ReadingMode.MANUAL, initialLocator)
@@ -615,7 +613,7 @@ class ReaderViewModel @Inject constructor(
     val isLoadingTtsModel: StateFlow<Boolean> = ttsManager.isLoadingModel
 
     private fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
-        sessionCoordinator.start(mode, initialLocator)?.let { lastRecordedProgression = it }
+        sessionCoordinator.start(mode, initialLocator)?.let { progressTracker.lastRecordedProgression = it }
         lastTtsSentence = null
     }
     private fun stopActiveSession() { sessionCoordinator.stop() }
@@ -757,7 +755,7 @@ class ReaderViewModel @Inject constructor(
             label = label,
             bookmarks = bookmarks.value,
             isPdfOrReflow = isReflowMode.value || isPdfBook,
-            lastKnownReflowPage = lastKnownReflowPage,
+            lastKnownReflowPage = progressTracker.lastKnownReflowPage,
             chapterInfoTitle = _chapterInfo.value.title,
             reflowItems = pdfReflowManager.reflowState.value.items,
             globalProgress = _globalProgress.value
@@ -819,7 +817,7 @@ class ReaderViewModel @Inject constructor(
         if (_showEpubCoverPage.value) return
         annotations.currentLocator = locator
         val locJson = saveReadingProgressUseCase.serializeLocator(locator)
-        lastSavedLocatorJson = locJson
+        progressTracker.lastSavedLocatorJson = locJson
         saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
         updateChapterMetadata(locator)
         updateReadingStats(locator, DEFAULT_READING_WPM)
@@ -834,12 +832,12 @@ class ReaderViewModel @Inject constructor(
     fun onLocatorChanged(locator: Locator) {
         annotations.currentLocator = locator
         if (isPdfBook && !isReflowMode.value) {
-            lastKnownReflowPage = locator.locations.position ?: 1
+            progressTracker.lastKnownReflowPage = locator.locations.position ?: 1
         }
         refreshCurrentBookmarkState()
         if (isPdfBook && !isReflowMode.value) {
             val page = locator.locations.position ?: 1
-            lastKnownReflowPage = page
+            progressTracker.lastKnownReflowPage = page
             val totalPages = totalPositions.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
                 ?: publication?.readingOrder?.size?.takeIf { it > 0 }
@@ -858,8 +856,8 @@ class ReaderViewModel @Inject constructor(
 
         if (!isPdfBook) {
             val locJson = saveReadingProgressUseCase.serializeLocator(locator)
-            if (locJson != lastSavedLocatorJson) {
-                lastSavedLocatorJson = locJson
+            if (locJson != progressTracker.lastSavedLocatorJson) {
+                progressTracker.lastSavedLocatorJson = locJson
                 saveReadingProgressUseCase.setLastSavedLocatorJson(locJson)
                 saveProgress(locator)
             }
@@ -872,13 +870,13 @@ class ReaderViewModel @Inject constructor(
             val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
             val wordsRead = calculateReadingStatsUseCase.calculateWordsDelta(
                 currentProgression = currentProg,
-                lastRecordedProgression = lastRecordedProgression,
+                lastRecordedProgression = progressTracker.lastRecordedProgression,
                 estimatedWordCount = totalWords
             )
             if (wordsRead > 0) {
                 readingSessionManager.incrementWords(wordsRead)
             }
-            lastRecordedProgression = currentProg
+            progressTracker.lastRecordedProgression = currentProg
         }
 
         // Track unique pages read in this session
@@ -965,7 +963,7 @@ class ReaderViewModel @Inject constructor(
             val totalPages = pdfReflowManager.reflowState.value.totalPages
             if (totalPages > 0) {
                 val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
-                lastKnownReflowPage = targetPage
+                progressTracker.lastKnownReflowPage = targetPage
                 jumpToReflowPage(targetPage)
                 _globalProgress.value = percent
                 return
@@ -980,7 +978,7 @@ class ReaderViewModel @Inject constructor(
                 ?: pub?.readingOrder?.size?.takeIf { it > 0 }
                 ?: 1
             val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
-            lastKnownReflowPage = targetPage
+            progressTracker.lastKnownReflowPage = targetPage
             if (nav != null && pub != null) {
                 val readingOrderLink = pub.readingOrder.firstOrNull()
                 if (readingOrderLink != null) {
@@ -1054,12 +1052,12 @@ class ReaderViewModel @Inject constructor(
             isPdfBook = isPdfBook,
             isReflowMode = isReflowMode.value,
             currentPdfPage = if (isReflowMode.value) {
-                lastKnownReflowPage.takeIf { it > 0 } 
+                progressTracker.lastKnownReflowPage.takeIf { it > 0 } 
                     ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
                     ?: 1
             } else {
-                val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
-                lastKnownReflowPage = visualPage
+                val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: progressTracker.lastKnownReflowPage
+                progressTracker.lastKnownReflowPage = visualPage
                 visualPage.takeIf { it > 0 } ?: 1
             },
             ttsIsPlaying = ttsState.value == TtsState.PLAYING,
@@ -1086,12 +1084,12 @@ class ReaderViewModel @Inject constructor(
             isPdfBook = isPdfBook,
             isReflowMode = isReflowMode.value,
             currentPdfPage = if (isReflowMode.value) {
-                lastKnownReflowPage.takeIf { it > 0 } 
+                progressTracker.lastKnownReflowPage.takeIf { it > 0 } 
                     ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
                     ?: 1
             } else {
-                val visualPage = (nav as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: lastKnownReflowPage
-                lastKnownReflowPage = visualPage
+                val visualPage = (nav as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: progressTracker.lastKnownReflowPage
+                progressTracker.lastKnownReflowPage = visualPage
                 visualPage.takeIf { it > 0 } ?: 1
             },
             ttsIsPlaying = ttsState.value == TtsState.PLAYING,
@@ -1299,7 +1297,7 @@ class ReaderViewModel @Inject constructor(
             epubFormatManager.stopTts()
             pdfReflowManager.stopReflowTts()
             viewModelScope.launch {
-                val targetPage = locator.locations.position ?: lastKnownReflowPage.coerceAtLeast(1)
+                val targetPage = locator.locations.position ?: progressTracker.lastKnownReflowPage.coerceAtLeast(1)
                 var readable = getReadableReflowItems(pdfReflowManager.reflowState.value.items)
                 var targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }
 
@@ -1542,7 +1540,7 @@ class ReaderViewModel @Inject constructor(
                 _globalProgress.value = progress
             }
             if (pageNumber > 0) {
-                lastKnownReflowPage = pageNumber
+                progressTracker.lastKnownReflowPage = pageNumber
                 val locator = (navigator as? VisualNavigator)?.currentLocator?.value
                 if (locator != null) {
                     annotations.currentLocator = locator.copy(
@@ -1579,7 +1577,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun refreshCurrentBookmarkState() {
         if (annotations.currentLocator == null) return
-        annotations.refresh(bookmarks.value, isReflowMode.value || isPdfBook, lastKnownReflowPage)
+        annotations.refresh(bookmarks.value, isReflowMode.value || isPdfBook, progressTracker.lastKnownReflowPage)
     }
 
     fun loadNextPage() {
@@ -1591,7 +1589,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun jumpToReflowPage(page: Int) {
-        lastKnownReflowPage = page
+        progressTracker.lastKnownReflowPage = page
         pdfReflowManager.jumpToPage(viewModelScope, page)
     }
 
@@ -1682,21 +1680,21 @@ class ReaderViewModel @Inject constructor(
             ttsState.value == TtsState.PLAYING || ttsState.value == TtsState.PAUSED
         }
         val currentLoc = ttsLocator ?: nav?.currentLocator?.value ?: annotations.currentLocator
-            ?: lastSavedLocatorJson?.let { saved ->
+            ?: progressTracker.lastSavedLocatorJson?.let { saved ->
                 runCatching { Locator.fromJSON(org.json.JSONObject(saved)) }.getOrNull()
             }
         val chapterIdx = currentLoc?.let { locator ->
             val order = publication?.readingOrder.orEmpty()
             findMatchingResourceIndex(locator.href.toString(), order).takeIf { it >= 0 }
         } ?: getCurrentChapterIndex()
-        val locJson = currentLoc?.toJSON()?.toString() ?: lastSavedLocatorJson ?: ""
+        val locJson = currentLoc?.toJSON()?.toString() ?: progressTracker.lastSavedLocatorJson ?: ""
         val href = currentLoc?.href?.toString() ?: ""
         val prog = currentLoc?.locations?.totalProgression?.toFloat()
             ?: currentLoc?.locations?.progression?.toFloat()
             ?: _globalProgress.value
 
         if (isReflowMode.value) {
-            val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 }
+            val page = currentLoc?.locations?.position ?: progressTracker.lastKnownReflowPage.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowElements.value.firstOrNull()?.pageNumber ?: 1
             val totalPages = pdfReflowManager.reflowState.value.totalPages
             val progress = currentLoc?.locations?.totalProgression?.toFloat()
@@ -1713,8 +1711,8 @@ class ReaderViewModel @Inject constructor(
                 fallbackPosition = page
             )
         } else if (isPdfBook) {
-            val page = currentLoc?.locations?.position ?: lastKnownReflowPage.takeIf { it > 0 } ?: 1
-            lastKnownReflowPage = page
+            val page = currentLoc?.locations?.position ?: progressTracker.lastKnownReflowPage.takeIf { it > 0 } ?: 1
+            progressTracker.lastKnownReflowPage = page
             val totalPages = totalPositions.takeIf { it > 0 }
                 ?: pdfReflowManager.reflowState.value.totalPages.takeIf { it > 0 }
                 ?: publication?.readingOrder?.size?.takeIf { it > 0 }
