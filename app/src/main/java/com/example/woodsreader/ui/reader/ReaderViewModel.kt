@@ -258,8 +258,6 @@ class ReaderViewModel @Inject constructor(
         return addedRules
     }
 
-    private var progressListenerJob: Job? = null
-    private var reflowListenerJob: Job? = null
 
     private val _chapterInfo = MutableStateFlow(ChapterInfo())
     val chapterInfo = _chapterInfo.asStateFlow()
