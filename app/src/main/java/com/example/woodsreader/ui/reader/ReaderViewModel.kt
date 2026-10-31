@@ -395,6 +395,7 @@ class ReaderViewModel @Inject constructor(
         statsUseCase = calculateReadingStatsUseCase,
         resolveChapterTitle = { pub, href, page -> loadBookFastUseCase.resolveChapterTitle(pub, href, page) }
     )
+    private val ttsPlayback = ReaderTtsPlaybackCoordinator()
 
     // --- Init ------------------------------------------------------------------
 
@@ -1244,31 +1245,12 @@ class ReaderViewModel @Inject constructor(
             epubFormatManager.stopTts()
             pdfReflowManager.stopReflowTts()
             viewModelScope.launch {
-                val targetPage = locator.locations.position ?: progressTracker.lastKnownReflowPage.coerceAtLeast(1)
-                var readable = ReaderReflowResolvers.readableItems(pdfReflowManager.reflowState.value.items)
-                var targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }
-
-                if (targetIndex == -1) {
-                    pdfReflowManager.loadReflowPages(fromPage = targetPage, isInitial = true)
-                    readable = ReaderReflowResolvers.readableItems(pdfReflowManager.reflowState.value.items)
-                    targetIndex = readable.indexOfFirst { it.pageNumber == targetPage }.coerceAtLeast(0)
-                }
-
-                val snippet = locator.text.highlight?.trim()
-                if (!snippet.isNullOrBlank()) {
-                    val refinedIndex = readable.indexOfFirst { item ->
-                        val content = when (item) {
-                            is ReflowItem.Text -> item.element.locator.text.highlight ?: ""
-                            is ReflowItem.Header -> item.content
-                            is ReflowItem.Paragraph -> item.content
-                            else -> ""
-                        }
-                        content.contains(snippet, ignoreCase = true)
-                    }
-                    if (refinedIndex != -1) {
-                        targetIndex = refinedIndex
-                    }
-                }
+                val targetIndex = ttsPlayback.resolveReflowPlayStartIndex(
+                    locator = locator,
+                    fallbackPage = progressTracker.lastKnownReflowPage,
+                    items = { pdfReflowManager.reflowState.value.items },
+                    loadPages = { pdfReflowManager.loadReflowPages(fromPage = it, isInitial = true) }
+                )
 
                 pdfReflowManager.playReflowTts(
                     scope = viewModelScope,
@@ -1289,13 +1271,9 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private var ttsPausedAtIndex: Int? = null
-    private var userScrolledSinceTtsPause: Boolean = false
-
     fun pauseTts() {
         if (isReflowMode.value || isPdfBook) {
-            ttsPausedAtIndex = pdfReflowManager.ttsActiveBlockIndex.value
-            userScrolledSinceTtsPause = false
+            ttsPlayback.onPaused(pdfReflowManager.ttsActiveBlockIndex.value)
             pdfReflowManager.pauseReflowTts()
         } else {
             epubFormatManager.pauseTts()
@@ -1307,8 +1285,7 @@ class ReaderViewModel @Inject constructor(
     fun stopTts() {
         android.util.Log.d("TTS_STOP", "ReaderViewModel.stopTts() invoked")
         _lastTtsLocator.value = null
-        ttsPausedAtIndex = null
-        userScrolledSinceTtsPause = false
+        ttsPlayback.onStopped()
 
         pdfReflowManager.stopReflowTts()
         epubFormatManager.stopTts()
@@ -1342,16 +1319,11 @@ class ReaderViewModel @Inject constructor(
             val readableItems = ReaderReflowResolvers.readableItems(elements)
             val visibleReadableIdx = ReaderReflowResolvers.readableIndex(elements, readableItems, lastReflowScrollIndex)
 
-            // Si el usuario se desplazó por la pantalla mientras estaba en pausa, reanudar desde lo que está viendo ahora
-            val targetStartIndex = if (userScrolledSinceTtsPause || ttsPausedAtIndex == null) {
-                visibleReadableIdx
-            } else {
-                val pausedIdx = ttsPausedAtIndex ?: pdfReflowManager.ttsActiveBlockIndex.value
-                if (pausedIdx in readableItems.indices) pausedIdx else visibleReadableIdx
-            }
-
-            userScrolledSinceTtsPause = false
-            ttsPausedAtIndex = null
+            val targetStartIndex = ttsPlayback.consumeReflowResumeIndex(
+                visibleReadableIdx = visibleReadableIdx,
+                readableCount = readableItems.size,
+                activeBlockIndex = { pdfReflowManager.ttsActiveBlockIndex.value }
+            )
 
             viewModelScope.launch {
                 pdfReflowManager.playReflowTts(
@@ -1380,12 +1352,10 @@ class ReaderViewModel @Inject constructor(
                         (nav as? VisualNavigator)?.currentLocator?.value
                     }
                     val ttsLocator = epubFormatManager.currentTtsLocator.value
-                    val isSameHref = visualLoc?.href == ttsLocator?.href
-                    val progDiff = kotlin.math.abs((visualLoc?.locations?.progression ?: 0.0) - (ttsLocator?.locations?.progression ?: 0.0))
 
                     // Si el usuario se ha desplazado visualmente a otra página o cambió de capítulo durante la pausa
-                    if (visualLoc != null && (!isSameHref || progDiff > 0.005)) {
-                        playTts(visualLoc)
+                    if (ttsPlayback.shouldReplayFromVisual(visualLoc, ttsLocator)) {
+                        playTts(visualLoc!!)
                     } else {
                         epubFormatManager.resumeTts()
                         switchSessionMode(ReadingMode.TTS)
@@ -1461,9 +1431,7 @@ class ReaderViewModel @Inject constructor(
     private var lastReflowScrollIndex = 0
 
     fun onReflowScroll(firstVisibleItemIndex: Int, isScrolling: Boolean) {
-        if (lastReflowScrollIndex != firstVisibleItemIndex && ttsPausedAtIndex != null) {
-            userScrolledSinceTtsPause = true
-        }
+        ttsPlayback.onReflowScrolled(lastReflowScrollIndex, firstVisibleItemIndex)
         lastReflowScrollIndex = firstVisibleItemIndex
 
         val elements = pdfReflowManager.reflowElements.value
