@@ -163,7 +163,7 @@ class ReaderViewModel @Inject constructor(
             ReaderChapterNavigationCoordinator.resolvePreviousPdfPageFromToc(toc, currentPage)
     }
 
-    val chapterLruCache: LruCache<Int, ParsedChapterData>
+    private val chapterLruCache: LruCache<Int, ParsedChapterData>
         get() = chapterNavigationCoordinator.chapterLruCache
 
     val bookId: String = savedStateHandle.get<String>("bookId").orEmpty()
@@ -289,7 +289,7 @@ class ReaderViewModel @Inject constructor(
 
     private val _chapterInfo = MutableStateFlow(ChapterInfo())
     val chapterInfo = _chapterInfo.asStateFlow()
-    val currentChapterTitle: StateFlow<String> = _chapterInfo
+    private val currentChapterTitle: StateFlow<String> = _chapterInfo
         .map { it.title.orEmpty() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
@@ -652,7 +652,7 @@ class ReaderViewModel @Inject constructor(
     // â”€â”€ Session management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     val isLoadingTtsModel: StateFlow<Boolean> = ttsManager.isLoadingModel
 
-    fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
+    private fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
         val locator = (navigator as? VisualNavigator)?.currentLocator?.value ?: initialLocator
         readingSessionManager.startNewSession(viewModelScope, bookId, mode, locator)
         locator?.locations?.totalProgression?.let {
@@ -661,7 +661,7 @@ class ReaderViewModel @Inject constructor(
         lastTtsSentence = null
     }
 
-    fun stopActiveSession() {
+    private fun stopActiveSession() {
         val currentLocator = if (readingSessionManager.currentSessionMode == ReadingMode.TTS || ttsState.value == com.example.woodsreader.ui.reader.TtsState.PLAYING) {
             _currentTtsLocator.value ?: (navigator as? VisualNavigator)?.currentLocator?.value
         } else {
@@ -670,7 +670,7 @@ class ReaderViewModel @Inject constructor(
         readingSessionManager.stopActiveSession(bookId = bookId, currentLocator = currentLocator)
     }
 
-    fun switchSessionMode(newMode: ReadingMode) {
+    private fun switchSessionMode(newMode: ReadingMode) {
         val currentLocator = if (readingSessionManager.currentSessionMode == ReadingMode.TTS || ttsState.value == com.example.woodsreader.ui.reader.TtsState.PLAYING) {
             _currentTtsLocator.value ?: (navigator as? VisualNavigator)?.currentLocator?.value
         } else {
@@ -679,7 +679,7 @@ class ReaderViewModel @Inject constructor(
         readingSessionManager.switchSessionMode(viewModelScope, bookId, newMode, currentLocator)
     }
 
-    fun recordActivity() {
+    private fun recordActivity() {
         val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value
         readingSessionManager.recordActivity(viewModelScope, bookId, currentLocator)
     }
@@ -985,7 +985,7 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    fun saveProgress(locator: Locator) {
+    private fun saveProgress(locator: Locator) {
         if (readingSessionManager.currentSessionMode == ReadingMode.MANUAL) {
             val currentProg = locator.locations.totalProgression ?: 0.0
             val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
@@ -1190,7 +1190,7 @@ class ReaderViewModel @Inject constructor(
         )
     }
 
-    fun findMatchingResourceIndex(rawHref: String, order: List<Link>): Int {
+    private fun findMatchingResourceIndex(rawHref: String, order: List<Link>): Int {
         return chapterNavigationCoordinator.findMatchingResourceIndex(rawHref, order, resourceIndexCache)
     }
 
@@ -1229,7 +1229,7 @@ class ReaderViewModel @Inject constructor(
         )
     }
 
-    fun prefetchSurroundingChapters(currentIndex: Int) {
+    private fun prefetchSurroundingChapters(currentIndex: Int) {
         chapterNavigationCoordinator.prefetchSurroundingChapters(
             scope = viewModelScope,
             bookId = bookId,
@@ -1239,7 +1239,7 @@ class ReaderViewModel @Inject constructor(
         )
     }
 
-    fun advanceTtsToNextChapter() {
+    private fun advanceTtsToNextChapter() {
         val pub = publication ?: return
         val currentHref = epubFormatManager.currentTtsLocator.value?.href?.toString()
             ?: (navigator as? VisualNavigator)?.currentLocator?.value?.href?.toString()
@@ -1302,7 +1302,7 @@ class ReaderViewModel @Inject constructor(
         )
     }
 
-    fun getFallbackLocator(): Locator? {
+    private fun getFallbackLocator(): Locator? {
         val navLocator = (navigator as? VisualNavigator)?.currentLocator?.value
         if (navLocator != null) return navLocator
 
@@ -1383,7 +1383,7 @@ class ReaderViewModel @Inject constructor(
         playTtsFromVisualPosition()
     }
 
-    fun playTtsFromVisualPosition() {
+    private fun playTtsFromVisualPosition() {
         viewModelScope.launch {
             val nav = navigator
             val locator = if (nav is org.readium.r2.navigator.epub.EpubNavigatorFragment) {
@@ -1752,7 +1752,7 @@ class ReaderViewModel @Inject constructor(
 
     // --- Optimized sleep timer with minimal wake-ups ---------------------------
 
-    fun updateActiveTtsSpeedOnly(speed: Float) {
+    private fun updateActiveTtsSpeedOnly(speed: Float) {
         _currentSpeed.value = speed
         pdfReflowManager.onSpeedChange(speed, viewModelScope)
         epubFormatManager.syncPreferences(speed, userPreferences.value.ttsLanguage, _currentPitch.value)
