@@ -928,67 +928,43 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun seekToGlobalProgress(percent: Float, navigator: Navigator?) {
-        if (isReflowMode.value) {
-            val totalPages = pdfReflowManager.reflowState.value.totalPages
-            if (totalPages > 0) {
-                val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
-                progressTracker.lastKnownReflowPage = targetPage
-                jumpToReflowPage(targetPage)
+        val target = ReaderNavigationResolvers.resolveSeekTarget(
+            percent = percent,
+            isReflowMode = isReflowMode.value,
+            reflowTotalPages = pdfReflowManager.reflowState.value.totalPages,
+            isPdfBook = isPdfBook,
+            totalPositions = totalPositions,
+            publication = publication,
+            positionsByResource = positionsByResource,
+            totalPdfPages = { progressTracker.totalPdfPages(totalPositions, pdfReflowManager.reflowState.value.totalPages, it) }
+        )
+        when (target) {
+            is ReaderNavigationResolvers.SeekTarget.Reflow -> {
+                progressTracker.lastKnownReflowPage = target.page
+                jumpToReflowPage(target.page)
                 _globalProgress.value = percent
-                return
             }
-        }
-
-        if (isPdfBook && !isReflowMode.value) {
-            val nav = navigator as? VisualNavigator
-            val pub = publication
-            val totalPages = progressTracker.totalPdfPages(totalPositions, pdfReflowManager.reflowState.value.totalPages, pub?.readingOrder?.size)
-            val targetPage = (percent * totalPages).toInt().coerceIn(1, totalPages)
-            progressTracker.lastKnownReflowPage = targetPage
-            if (nav != null && pub != null) {
-                val readingOrderLink = pub.readingOrder.firstOrNull()
-                if (readingOrderLink != null) {
-                    pub.locatorFromLink(readingOrderLink)?.let { base ->
-                        nav.go(base.copy(locations = Locator.Locations(position = targetPage)), animated = false)
-                    }
-                }
-            }
-            _globalProgress.value = percent
-            return
-        }
-
-        val nav = navigator as? VisualNavigator ?: return
-        if (totalPositions <= 0 || positionsByResource.isEmpty()) {
-            val pub = publication
-            val links = pub?.readingOrder ?: emptyList()
-            if (pub != null && links.isNotEmpty()) {
-                val targetIdx = (percent * links.size).toInt().coerceIn(0, links.size - 1)
-                pub.locatorFromLink(links[targetIdx])?.let { loc ->
-                    nav.go(loc, animated = false)
+            is ReaderNavigationResolvers.SeekTarget.PdfOriginal -> {
+                val nav = navigator as? VisualNavigator
+                progressTracker.lastKnownReflowPage = target.page
+                if (nav != null && target.locator != null) {
+                    nav.go(target.locator, animated = false)
                 }
                 _globalProgress.value = percent
             }
-            return
-        }
-
-        val targetIdx = (percent * totalPositions).toInt().coerceIn(0, totalPositions - 1)
-        var accumulated = 0
-
-        var targetResourceIdx = 0
-        var targetPosInResource = 0
-
-        for ((idx, resourcePos) in positionsByResource.withIndex()) {
-            if (targetIdx < accumulated + resourcePos.size) {
-                targetResourceIdx = idx
-                targetPosInResource = targetIdx - accumulated
-                break
+            is ReaderNavigationResolvers.SeekTarget.EpubLink -> {
+                val nav = navigator as? VisualNavigator ?: return
+                if (target.locator != null) {
+                    nav.go(target.locator, animated = false)
+                }
+                _globalProgress.value = percent
             }
-            accumulated += resourcePos.size
-        }
-
-        if (targetResourceIdx in positionsByResource.indices && targetPosInResource in positionsByResource[targetResourceIdx].indices) {
-            nav.go(positionsByResource[targetResourceIdx][targetPosInResource], animated = false)
-            _globalProgress.value = percent
+            is ReaderNavigationResolvers.SeekTarget.EpubPosition -> {
+                val nav = navigator as? VisualNavigator ?: return
+                nav.go(target.locator, animated = false)
+                _globalProgress.value = percent
+            }
+            ReaderNavigationResolvers.SeekTarget.None -> Unit
         }
     }
 
@@ -1010,22 +986,25 @@ class ReaderViewModel @Inject constructor(
 
     fun goToNextChapter(navigator: Navigator? = null) {
         val pub = publication ?: return
+        val effectiveNav = navigator ?: this.navigator
+        val visualPosition = if (!isReflowMode.value) {
+            (effectiveNav as? VisualNavigator)?.currentLocator?.value?.locations?.position
+        } else null
+        val pageResolution = ReaderNavigationResolvers.resolveCurrentPdfPage(
+            isReflowMode = isReflowMode.value,
+            lastKnownReflowPage = progressTracker.lastKnownReflowPage,
+            currentTtsPage = pdfReflowManager.currentTtsPage.value,
+            visualPosition = visualPosition
+        )
+        pageResolution.newLastKnownReflowPage?.let { progressTracker.lastKnownReflowPage = it }
         chapterNavigationCoordinator.goToNextChapter(
             scope = viewModelScope,
             bookId = bookId,
             publication = pub,
-            navigator = navigator ?: this.navigator,
+            navigator = effectiveNav,
             isPdfBook = isPdfBook,
             isReflowMode = isReflowMode.value,
-            currentPdfPage = if (isReflowMode.value) {
-                progressTracker.lastKnownReflowPage.takeIf { it > 0 } 
-                    ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
-                    ?: 1
-            } else {
-                val visualPage = ((navigator ?: this.navigator) as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: progressTracker.lastKnownReflowPage
-                progressTracker.lastKnownReflowPage = visualPage
-                visualPage.takeIf { it > 0 } ?: 1
-            },
+            currentPdfPage = pageResolution.pageToUse,
             ttsIsPlaying = ttsState.value == TtsState.PLAYING,
             resourceIndexCache = resourceIndexCache,
             onJumpToReflowPage = ::jumpToReflowPage,
@@ -1042,6 +1021,16 @@ class ReaderViewModel @Inject constructor(
     fun goToPreviousChapter(navigator: Navigator? = null) {
         val pub = publication ?: return
         val nav = navigator ?: this.navigator
+        val visualPosition = if (!isReflowMode.value) {
+            (nav as? VisualNavigator)?.currentLocator?.value?.locations?.position
+        } else null
+        val pageResolution = ReaderNavigationResolvers.resolveCurrentPdfPage(
+            isReflowMode = isReflowMode.value,
+            lastKnownReflowPage = progressTracker.lastKnownReflowPage,
+            currentTtsPage = pdfReflowManager.currentTtsPage.value,
+            visualPosition = visualPosition
+        )
+        pageResolution.newLastKnownReflowPage?.let { progressTracker.lastKnownReflowPage = it }
         chapterNavigationCoordinator.goToPreviousChapter(
             scope = viewModelScope,
             bookId = bookId,
@@ -1049,15 +1038,7 @@ class ReaderViewModel @Inject constructor(
             navigator = nav,
             isPdfBook = isPdfBook,
             isReflowMode = isReflowMode.value,
-            currentPdfPage = if (isReflowMode.value) {
-                progressTracker.lastKnownReflowPage.takeIf { it > 0 } 
-                    ?: pdfReflowManager.currentTtsPage.value.takeIf { it > 0 } 
-                    ?: 1
-            } else {
-                val visualPage = (nav as? VisualNavigator)?.currentLocator?.value?.locations?.position ?: progressTracker.lastKnownReflowPage
-                progressTracker.lastKnownReflowPage = visualPage
-                visualPage.takeIf { it > 0 } ?: 1
-            },
+            currentPdfPage = pageResolution.pageToUse,
             ttsIsPlaying = ttsState.value == TtsState.PLAYING,
             resourceIndexCache = resourceIndexCache,
             onJumpToReflowPage = ::jumpToReflowPage,
