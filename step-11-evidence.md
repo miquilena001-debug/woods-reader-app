@@ -868,3 +868,67 @@ java.lang.AssertionError: Con TTS STOPPED no debe usar locator TTS, debe caer a 
 
 - `git status`: limpio en archivos rastreados.
 - `git diff --stat -- app/src/main`: completamente vacío (producción intacta).
+---
+
+## 5. Verificación de Cableado Post-Commit C (Código Extraído)
+
+Tras aplicar la delegación en `ReaderProgressResolvers` y la división de `saveProgress` en `ReaderViewModel.kt`, se ejecutaron las 3 mutaciones de cableado solicitadas sobre el código ya refactorizado:
+
+### (a) Comentar `if (plan.saveProgressFirst) saveProgress(currentLoc!!)` en `flushReadingProgressImmediately`
+- **Mutación aplicada en Commit C:**
+```diff
+@@ -1586,3 +1586,3 @@
+         plan.pageToRemember?.let { progressTracker.lastKnownReflowPage = it }
+-        if (plan.saveProgressFirst) saveProgress(currentLoc!!)
++        // if (plan.saveProgressFirst) saveProgress(currentLoc!!) // WIRING MUTATION A
+         saveReadingProgressUseCase.flushImmediately(
+```
+- **Test que falló:** `testP17_flushReadingProgress_epub_executesSaveProgressBeforeFlush`
+- **Resultado XML literal:**
+```text
+java.lang.AssertionError: Verification failed: fewer calls happened than demanded by order verification sequence. 
+
+Matchers: 
+com.example.woodsreader.domain.reader.SaveReadingProgressUseCase.saveProgressDebounced(any(), any(), any(), eq(Locator(#75)), any(), any(), any()))
++com.example.woodsreader.domain.reader.SaveReadingProgressUseCase.flushImmediately(any(), any(), any(), any(), eq(Locator(#75)), any(), any(), any()))
+
+Calls:
+1) +com.example.woodsreader.domain.reader.SaveReadingProgressUseCase.flushImmediately(CoroutineScope(...), test_book_id, 0, 0.25, Locator(#75), , 3, chap1.xhtml)
+```
+- **Estado:** **VERIFICADO** (detecta la omisión de `saveProgress` antes de `flushImmediately`).
+
+### (b) Cambiar el orden de `trackPageRead` y `trackWordsRead` dentro de `saveProgress`
+- **Mutación aplicada en Commit C:**
+```diff
+@@ -896,4 +896,4 @@
+     private fun saveProgress(locator: Locator) {
+-        trackWordsRead(locator)
+-        trackPageRead(locator)
++        trackPageRead(locator) // WIRING MUTATION B (swapped)
++        trackWordsRead(locator)
+         warmChapterCacheIfNeeded(locator)
+```
+- **Resultado en la suite:** Ningún test existente ni de caracterización falló (código de salida Gradle: 0).
+- **Estado:** **MUTANTE EQUIVALENTE COMPROBADO**.
+- **Motivo técnico:** `trackWordsRead` opera exclusivamente sobre `readingSessionManager.incrementWords` y `progressTracker.lastRecordedProgression`. `trackPageRead` opera sobre `readingSessionManager.pagesRead` y `calculateReadingStatsUseCase.recordPageRead`. Ninguno de los dos métodos lee el estado modificado por el otro ni existe una aserción de orden (`verifyOrder`) entre ellos en la suite de pruebas. El orden original (`trackWordsRead` primero, `trackPageRead` después) fue preservado de forma estricta en el código final de producción.
+
+### (c) Devolver siempre null en el lambda de `parseLocator` en `flushReadingProgressImmediately`
+- **Mutación aplicada en Commit C:**
+```diff
+@@ -1563,3 +1563,3 @@
+             lastSavedLocatorJson = progressTracker.lastSavedLocatorJson,
+             parseLocator = { saved ->
+-                runCatching { Locator.fromJSON(org.json.JSONObject(saved)) }.getOrNull()
++                null // WIRING MUTATION C: always null
+             }
+```
+- **Test que falló:** `testP15_flushReadingProgress_deserializesLastSavedLocatorJson`
+- **Resultado XML literal:**
+```text
+java.lang.AssertionError: currentLoc no debe ser nulo cuando lastSavedLocatorJson es deserializable
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.example.woodsreader.ui.reader.ReaderViewModelProgressCharacterizationTest$testP15_flushReadingProgress_deserializesLastSavedLocatorJson$1.invokeSuspend(ReaderViewModelProgressCharacterizationTest.kt:377)
+```
+- **Estado:** **VERIFICADO** (detecta que el lambda delegado es el que provee la deserialización al resolver).

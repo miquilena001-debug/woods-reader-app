@@ -833,7 +833,7 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    private fun saveProgress(locator: Locator) {
+    private fun trackWordsRead(locator: Locator) {
         if (readingSessionManager.currentSessionMode == ReadingMode.MANUAL) {
             val currentProg = locator.locations.totalProgression ?: 0.0
             val totalWords = (uiState.value as? ReaderUiState.Success)?.book?.estimatedWordCount ?: 100_000L
@@ -847,7 +847,9 @@ class ReaderViewModel @Inject constructor(
             }
             progressTracker.lastRecordedProgression = currentProg
         }
+    }
 
+    private fun trackPageRead(locator: Locator) {
         // Track unique pages read in this session
         val pageKey = "${locator.href}#${locator.locations.position ?: 0}"
         val isNewPage = !readingSessionManager.pagesRead.value.contains(pageKey)
@@ -860,7 +862,9 @@ class ReaderViewModel @Inject constructor(
                 )
             }
         }
+    }
 
+    private fun warmChapterCacheIfNeeded(locator: Locator) {
         if (!isPdfBook) {
             val href = locator.href.toString()
             if (lastProcessedChapterHref != href) {
@@ -887,6 +891,12 @@ class ReaderViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun saveProgress(locator: Locator) {
+        trackWordsRead(locator)
+        trackPageRead(locator)
+        warmChapterCacheIfNeeded(locator)
 
         // Calculate WPM & Time remaining estimates
         val activeWpm = calculateReadingStatsUseCase.calculateActiveWpm(
@@ -1101,29 +1111,29 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun getFallbackLocator(): Locator? {
-        val navLocator = (navigator as? VisualNavigator)?.currentLocator?.value
-        if (navLocator != null) return navLocator
-
-        val lastLoc = _lastTtsLocator.value ?: _currentTtsLocator.value
-        if (lastLoc != null) return lastLoc
-
+        val nav = navigator as? VisualNavigator
         val successState = _uiState.value as? ReaderUiState.Success
-        val initialJson = successState?.initialLocatorJson
-        if (!initialJson.isNullOrBlank()) {
-            try {
-                val parsed = Locator.fromJSON(org.json.JSONObject(initialJson))
-                if (parsed != null) return parsed
-            } catch (e: Exception) {
-                Log.w(TAG, "Error parsing initialLocatorJson", e)
+        return ReaderProgressResolvers.resolveFallbackLocator(
+            navLocator = nav?.currentLocator?.value,
+            lastTtsLocator = _lastTtsLocator.value,
+            currentTtsLocator = _currentTtsLocator.value,
+            initialLocatorJson = successState?.initialLocatorJson,
+            parseInitial = { initialJson ->
+                try {
+                    Locator.fromJSON(org.json.JSONObject(initialJson))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error parsing initialLocatorJson", e)
+                    null
+                }
+            },
+            firstLinkLocator = {
+                val pub = publication ?: successState?.publication
+                val firstLink = pub?.readingOrder?.firstOrNull()
+                if (firstLink != null) {
+                    pub.locatorFromLink(firstLink)
+                } else null
             }
-        }
-
-        val pub = publication ?: successState?.publication
-        val firstLink = pub?.readingOrder?.firstOrNull()
-        if (firstLink != null) {
-            return pub.locatorFromLink(firstLink)
-        }
-        return null
+        )
     }
 
 
@@ -1543,13 +1553,17 @@ class ReaderViewModel @Inject constructor(
      */
     fun flushReadingProgressImmediately() {
         val nav = navigator as? VisualNavigator
-        val ttsLocator = _currentTtsLocator.value.takeIf {
-            ttsState.value == TtsState.PLAYING || ttsState.value == TtsState.PAUSED
-        }
-        val currentLoc = ttsLocator ?: nav?.currentLocator?.value ?: annotations.currentLocator
-            ?: progressTracker.lastSavedLocatorJson?.let { saved ->
+        val ttsIsActive = ttsState.value == TtsState.PLAYING || ttsState.value == TtsState.PAUSED
+        val currentLoc = ReaderProgressResolvers.resolveFlushCurrentLocator(
+            ttsLocator = _currentTtsLocator.value,
+            ttsIsActive = ttsIsActive,
+            navLocator = nav?.currentLocator?.value,
+            annotationsLocator = annotations.currentLocator,
+            lastSavedLocatorJson = progressTracker.lastSavedLocatorJson,
+            parseLocator = { saved ->
                 runCatching { Locator.fromJSON(org.json.JSONObject(saved)) }.getOrNull()
             }
+        )
         val chapterIdx = currentLoc?.let { locator ->
             val order = publication?.readingOrder.orEmpty()
             findMatchingResourceIndex(locator.href.toString(), order).takeIf { it >= 0 }
