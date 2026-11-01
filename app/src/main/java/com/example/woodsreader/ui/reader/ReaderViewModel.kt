@@ -367,6 +367,7 @@ class ReaderViewModel @Inject constructor(
         resolveChapterTitle = { pub, href, page -> loadBookFastUseCase.resolveChapterTitle(pub, href, page) }
     )
     private val ttsPlayback = ReaderTtsPlaybackCoordinator()
+    private val bookHydrator = ReaderBookHydrator(bookRepository, userPreferencesRepository, coverExtractor) { m, e -> Log.w(TAG, m, e) }
 
     // --- Init ------------------------------------------------------------------
 
@@ -486,7 +487,7 @@ class ReaderViewModel @Inject constructor(
                     _uiState.value = ReaderUiState.Error("Libro no encontrado en la base de datos")
                     return@launch
                 }
-                var book: BookEntity = loadedBook
+                val book: BookEntity = loadedBook
 
                 _showEpubCoverPage.value = false
                 lastProcessedChapterHref = null
@@ -511,15 +512,11 @@ class ReaderViewModel @Inject constructor(
                 ttsManager.setCurrentBookId(book.id)
 
                 val initialLocator = if (book.format.name == "PDF") {
-                    val physicalPath = if (book.filePath.startsWith("/")) {
-                        book.filePath
-                    } else {
-                        uri.path ?: book.filePath
-                    }
+                    val physicalPath = ReaderLoadResolvers.pdfPhysicalPath(book.filePath, uri.path)
                     pdfReflowManager.initialize(physicalPath, book.id) { words ->
                         recordActivity()
                     }
-                    val initialPage = sessionData.initialPdfPage ?: book.fallbackLocatorPosition?.takeIf { it > 0 } ?: 1
+                    val initialPage = ReaderLoadResolvers.initialPdfPage(sessionData.initialPdfPage, book.fallbackLocatorPosition)
                     progressTracker.lastKnownReflowPage = initialPage
                     pdfReflowManager.setReflowMode(enabled = true, scope = viewModelScope, initialPosition = initialPage)
                     null
@@ -532,9 +529,8 @@ class ReaderViewModel @Inject constructor(
                     loc
                 }
 
-                progressTracker.lastRecordedProgression = initialLocator?.locations?.totalProgression
-                    ?: book.readingProgressPercent.toDouble()
-                _globalProgress.value = book.readingProgressPercent.coerceIn(0f, 1f)
+                progressTracker.lastRecordedProgression = ReaderLoadResolvers.initialRecordedProgression(initialLocator, book.readingProgressPercent)
+                _globalProgress.value = ReaderLoadResolvers.initialGlobalProgress(book.readingProgressPercent)
                 startNewSession(ReadingMode.MANUAL, initialLocator)
 
                 // FASE 1 (Crítica — < 100 ms): Emitir inmediatamente el estado de lectura listo
@@ -548,29 +544,7 @@ class ReaderViewModel @Inject constructor(
 
                 // FASE 2 (Diferida en background): Tareas secundarias que no bloquean la lectura
                 viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        bookRepository.markOpened(book.id)
-                        userPreferencesRepository.updateLastReadBookId(book.id)
-
-                        // Asegurar portada si falta sin bloquear la apertura del lector
-                        val coverPath = book.coverCachePath
-                        if (coverPath.isNullOrBlank() || !File(coverPath).exists()) {
-                            val newCover = coverExtractor.extractCover(
-                                source = uri,
-                                format = book.format,
-                                fileHash = book.fileHash,
-                                title = book.title,
-                                author = book.author,
-                                publication = pub
-                            )
-                            if (newCover != null) {
-                                book = book.copy(coverCachePath = newCover)
-                                bookRepository.updateCoverPath(book.id, newCover)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error en hidratación diferida (Fase 2) de ${book.title}", e)
-                    }
+                    bookHydrator.hydrate(book, uri, pub)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadBook: Exception loading book $bookId", e)
