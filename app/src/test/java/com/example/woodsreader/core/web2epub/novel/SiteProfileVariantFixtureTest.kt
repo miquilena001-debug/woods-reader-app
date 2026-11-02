@@ -73,4 +73,91 @@ class SiteProfileVariantFixtureTest {
         assertFalse(result.bodyXhtml.contains("Gran traducción, muchas gracias"))
         assertFalse(result.bodyXhtml.contains("Comentario 10"))
     }
+
+    @Test
+    fun `novelfire profile removeSelectors removes site-specific elements not in default selectors`() {
+        val novelfireProfile = SiteProfile(
+            id = "novelfire",
+            domains = listOf("novelfire.net"),
+            contentSelectors = listOf("#content", ".content"),
+            removeSelectors = listOf(
+                ".words",
+                ".titles button",
+                ".titles .icon-cog-outline",
+                ".chapternav",
+                ".skiptranslate",
+                ".ads",
+                ".ad-container",
+                "div.box-header",
+                "div.chapter-header"
+            )
+        )
+
+        val htmlWithSiteSpecificJunk = """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Capítulo 1</title></head>
+            <body>
+                <div class="content">
+                    <p>El héroe desenvainó la hoja de fuego para comenzar la expedición.</p>
+                    <div class="skiptranslate">Barra de Google Translate del sitio novelfire</div>
+                    <div class="chapternav">Botones Anterior Siguiente del sitio</div>
+                    <div class="words">[ Conteo de palabras: 2450 palabras ]</div>
+                    <p>La cueva oscura resonaba con el eco de sus pasos apresurados.</p>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        val extractor = ContentExtractor(novelfireProfile)
+        val result = extractor.extract(htmlWithSiteSpecificJunk, "https://novelfire.net/novel/mech/chapter-1")
+
+        assertTrue(result.bodyXhtml.contains("El héroe desenvainó la hoja de fuego"))
+        assertTrue(result.bodyXhtml.contains("La cueva oscura resonaba con el eco"))
+
+        // Los elementos específicos de removeSelectors del perfil NO deben estar en el resultado
+        assertFalse(result.bodyXhtml.contains("Barra de Google Translate"))
+        assertFalse(result.bodyXhtml.contains("Botones Anterior Siguiente"))
+        assertFalse(result.bodyXhtml.contains("Conteo de palabras: 2450 palabras"))
+    }
+
+    @Test
+    fun `novelfire profile removeTextContains strips watermarks embedded in narrative paragraphs`() {
+        val novelfireProfile = SiteProfile(
+            id = "novelfire",
+            domains = listOf("novelfire.net"),
+            contentSelectors = listOf("#content", ".content"),
+            removeTextContains = listOf(
+                "[ ... words ]",
+                "Novel Fire",
+                "novelfire.net"
+            )
+        )
+
+        val htmlWithEmbeddedWatermark = """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Capítulo 1</title></head>
+            <body>
+                <div class="content">
+                    <p>El ejército avanzó por las planicies heladas del imperio del norte.</p>
+                    <p>Esta traducción pertenece exclusivamente a Novel Fire y no debe ser republicada.</p>
+                    <p>Para más capítulos visita novelfire.net cada semana.</p>
+                    <p>La batalla decisiva comenzaría al amanecer del siguiente día.</p>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        val extractor = ContentExtractor(novelfireProfile)
+        val result = extractor.extract(htmlWithEmbeddedWatermark, "https://novelfire.net/novel/mech/chapter-1")
+
+        assertTrue(result.bodyXhtml.contains("El ejército avanzó por las planicies heladas"))
+        assertTrue(result.bodyXhtml.contains("La batalla decisiva comenzaría al amanecer"))
+
+        // Las marcas de agua prohibidas por removeTextContains deben haber sido eliminadas
+        assertFalse(result.bodyXhtml.contains("Novel Fire"))
+        assertFalse(result.bodyXhtml.contains("novelfire.net"))
+    }
+
 }

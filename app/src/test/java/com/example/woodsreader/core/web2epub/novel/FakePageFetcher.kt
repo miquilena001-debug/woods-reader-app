@@ -40,6 +40,7 @@ class FakePageFetcher(
             is FetchFailure.Network -> FetchResult.Failure(FetchError.NetworkError(response.message ?: "Network", response.cause))
             is FetchFailure.LoginRequired -> FetchResult.Failure(FetchError.LoginRequired(response.loginUrl))
             is FetchFailure.NeedsJavaScript -> FetchResult.Failure(FetchError.NeedsJavaScript(response.reason))
+            is FetchFailure.UnsupportedSite -> FetchResult.Failure(FetchError.UnsupportedSite(response.siteName, response.reason))
             is FetchFailure -> FetchResult.Failure(FetchError.HttpError(500, response.message ?: "Failure"))
             else -> FetchResult.Failure(FetchError.NotFound(url))
         }

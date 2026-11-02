@@ -141,4 +141,41 @@ class ContentExtractorCssRegressionTest {
         assertFalse(result.bodyXhtml.contains("Texto inline trampa con display none"))
         assertFalse(result.bodyXhtml.contains("Texto trampa oculto con visibility hidden important"))
     }
+
+    @Test
+    fun `default remove selectors do not remove legitimate elements with classes containing ad substring`() {
+        val html = """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Capítulo 1</title></head>
+            <body>
+                <div id="content">
+                    <p class="head-title">Encabezado con clase head-title</p>
+                    <div class="read-content">
+                        <p class="lead-paragraph">Párrafo principal con clase lead-paragraph.</p>
+                        <p class="broad-description">Descripción amplia con clase broad-description.</p>
+                        <p class="load-more">Texto de lectura con clase load-more.</p>
+                        <p class="leaderboard-mention">Mención del torneo en clase leaderboard-mention.</p>
+                    </div>
+                    <div class="ad">Anuncio real con clase ad exacta que debe eliminarse</div>
+                    <div class="advertisement">Publicidad real con clase advertisement que debe eliminarse</div>
+                </div>
+            </body>
+            </html>
+        """.trimIndent()
+
+        val result = extractor.extract(html, "https://example.com/ch1")
+
+        // Elementos legítimos que contienen el substring "ad" en su clase NO deben eliminarse
+        assertTrue(result.bodyXhtml.contains("Encabezado con clase head-title"))
+        assertTrue(result.bodyXhtml.contains("Párrafo principal con clase lead-paragraph"))
+        assertTrue(result.bodyXhtml.contains("Descripción amplia con clase broad-description"))
+        assertTrue(result.bodyXhtml.contains("Texto de lectura con clase load-more"))
+        assertTrue(result.bodyXhtml.contains("Mención del torneo en clase leaderboard-mention"))
+
+        // Anuncios reales con clase exacta ad o advertisement sí deben eliminarse
+        assertFalse(result.bodyXhtml.contains("Anuncio real con clase ad exacta"))
+        assertFalse(result.bodyXhtml.contains("Publicidad real con clase advertisement"))
+    }
+
 }

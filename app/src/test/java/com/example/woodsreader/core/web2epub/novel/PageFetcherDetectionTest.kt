@@ -152,4 +152,53 @@ class PageFetcherDetectionTest {
             assertEquals("Empty SPA shell", e.reason)
         }
     }
+    @Test
+    fun `parseRetryAfter caps HTTP-date delay at 1 hour maximum`() {
+        val now = System.currentTimeMillis()
+        val twoHoursLater = ZonedDateTime.now().plusHours(2).format(DateTimeFormatter.RFC_1123_DATE_TIME)
+        val ms = PageFetcherDetector.parseRetryAfter(twoHoursLater, nowMs = now)
+        assertEquals(3_600_000L, ms)
+    }
+
+    @Test
+    fun `isLoginRedirect non-regression preserves requested url with login in slug when query parameters are appended without login path`() {
+        val requested = "https://example.com/novel/the-login-system-master/chapter-1"
+        val redirectedWithTracking = "https://example.com/novel/the-login-system-master/chapter-1?source=share&utm=test"
+        assertFalse(PageFetcherDetector.isLoginRedirect(requested, redirectedWithTracking))
+    }
+
+    @Test
+    fun `detectSpaShell returns false if payload exceeds 25KB even with empty root and noscript`() {
+        val largePadding = "<!-- " + "x".repeat(26_000) + " -->"
+        val largeHtml = """
+            <!doctype html><html><head><script defer src="/main.js"></script></head>
+            <body><noscript>You need to enable JavaScript to run this app.</noscript><div id="root"></div>$largePadding</body></html>
+        """.trimIndent()
+        assertFalse(PageFetcherDetector.detectSpaShell(largeHtml))
+    }
+
+    @Test
+    fun `detectSpaShell returns false if noscript is present but neither root nor app container exists`() {
+        val htmlWithoutRoot = """
+            <!doctype html><html><head></head>
+            <body>
+                <noscript>You need to enable JavaScript to run this app.</noscript>
+                <div id="main-content"><p>Contenido completo del capítulo estático.</p></div>
+            </body></html>
+        """.trimIndent()
+        assertFalse(PageFetcherDetector.detectSpaShell(htmlWithoutRoot))
+    }
+
+    @Test
+    fun `detectSpaShell returns false if empty root exists but no noscript or spa script bundle present`() {
+        val htmlWithoutSpaSignals = """
+            <!doctype html><html><head><title>Static Page</title></head>
+            <body>
+                <div id="root"></div>
+                <div class="content"><p>Texto legítimo cargado estáticamente sin JS.</p></div>
+            </body></html>
+        """.trimIndent()
+        assertFalse(PageFetcherDetector.detectSpaShell(htmlWithoutSpaSignals))
+    }
+
 }

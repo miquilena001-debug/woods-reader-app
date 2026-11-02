@@ -88,6 +88,7 @@ class OkHttpPageFetcher @JvmOverloads constructor(
                     is FetchFailure.NotFound -> FetchResult.Failure(FetchError.NotFound(e.url))
                     is FetchFailure.TooLarge -> FetchResult.Failure(FetchError.TooLarge(e.url))
                     is FetchFailure.Network -> FetchResult.Failure(FetchError.NetworkError(e.message ?: "Network error", e.cause))
+                    is FetchFailure.UnsupportedSite -> FetchResult.Failure(FetchError.UnsupportedSite(e.siteName, e.reason))
                 }
             }
             return FetchResult.Failure(FetchError.NetworkError(e.message ?: "Error de conexión de red", e))

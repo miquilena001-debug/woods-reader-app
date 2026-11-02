@@ -28,6 +28,7 @@ sealed interface FetchError {
     data class HttpError(val statusCode: Int, val message: String) : FetchError
     data class NetworkError(val message: String, val cause: Throwable? = null) : FetchError
     data class TooLarge(val url: String) : FetchError
+    data class UnsupportedSite(val siteName: String, val reason: String) : FetchError
 }
 
 sealed interface FetchResult {
@@ -43,6 +44,7 @@ sealed class FetchFailure(message: String, cause: Throwable? = null) : IOExcepti
     class TooLarge(val url: String) : FetchFailure("Respuesta demasiado grande")
     class LoginRequired(val loginUrl: String) : FetchFailure("Inicio de sesión requerido: $loginUrl")
     class NeedsJavaScript(val reason: String) : FetchFailure("Requiere JavaScript: $reason")
+    class UnsupportedSite(val siteName: String, val reason: String) : FetchFailure(reason)
 }
 
 fun FetchResult.toFetchedPageOrThrow(): FetchedPage = when (this) {
@@ -56,6 +58,7 @@ fun FetchResult.toFetchedPageOrThrow(): FetchedPage = when (this) {
         is FetchError.HttpError -> throw FetchFailure.Blocked(err.statusCode, null)
         is FetchError.NetworkError -> throw FetchFailure.Network(err.message, err.cause)
         is FetchError.TooLarge -> throw FetchFailure.TooLarge(err.url)
+        is FetchError.UnsupportedSite -> throw FetchFailure.UnsupportedSite(err.siteName, err.reason)
     }
 }
 
@@ -164,6 +167,7 @@ interface PageFetcher {
             is FetchFailure.NotFound -> FetchResult.Failure(FetchError.NotFound(e.url))
             is FetchFailure.TooLarge -> FetchResult.Failure(FetchError.TooLarge(e.url))
             is FetchFailure.Network -> FetchResult.Failure(FetchError.NetworkError(e.message ?: "Network error", e.cause))
+            is FetchFailure.UnsupportedSite -> FetchResult.Failure(FetchError.UnsupportedSite(e.siteName, e.reason))
         }
     } catch (e: Exception) {
         FetchResult.Failure(FetchError.NetworkError(e.message ?: "Unknown error", e))

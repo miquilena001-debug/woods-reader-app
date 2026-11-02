@@ -34,9 +34,11 @@ class SiteAdapterRegistry(
     fun profileForUrl(url: String): SiteProfile = forUrl(url).profile
 
     companion object {
+        val DEFAULT_CODE_ADAPTERS: List<SiteAdapter> = listOf(WattpadSiteAdapter())
+
         fun fromProfiles(
             userProfiles: List<SiteProfile> = emptyList(),
-            codeAdapters: List<SiteAdapter> = emptyList(),
+            codeAdapters: List<SiteAdapter> = DEFAULT_CODE_ADAPTERS,
             assetProfiles: List<SiteProfile> = emptyList(),
             defaultProfile: SiteProfile = SiteProfile.DEFAULT
         ): SiteAdapterRegistry {

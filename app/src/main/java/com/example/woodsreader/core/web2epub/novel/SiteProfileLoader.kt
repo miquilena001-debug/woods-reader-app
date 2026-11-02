@@ -7,7 +7,7 @@ import java.io.File
 class SiteProfileLoader(
     private val context: Context,
     private val extraDirs: List<File> = emptyList(),
-    private val codeAdapters: List<SiteAdapter> = emptyList()
+    private val codeAdapters: List<SiteAdapter> = SiteAdapterRegistry.DEFAULT_CODE_ADAPTERS
 ) {
 
     fun load(): SiteProfileRegistry {

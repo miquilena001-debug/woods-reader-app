@@ -93,7 +93,7 @@ class NovelImporter(
                     warnings = emptyList()
                 )
             } else {
-                _progressFlow.value = ImportProgress(stage = ImportStage.ERROR, error = e.message ?: "Error al cargar índice")
+                _progressFlow.value = ImportProgress(stage = ImportStage.ERROR, error = WebImportErrorFormatter.format(e))
                 return null
             }
         }

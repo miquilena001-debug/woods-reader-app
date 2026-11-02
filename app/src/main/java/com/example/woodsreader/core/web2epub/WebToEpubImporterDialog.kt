@@ -562,10 +562,10 @@ fun WebToEpubImporterDialog(
                                                     } catch (c: FetchFailure.Challenge) {
                                                         isCloudflareChallenge = true
                                                         stage = ImporterUiStage.ERROR
-                                                        errorMessage = "El sitio requiere verificación de navegador (Cloudflare)."
+                                                        errorMessage = WebImportErrorFormatter.format(c)
                                                     } catch (e: Exception) {
                                                         stage = ImporterUiStage.ERROR
-                                                        errorMessage = e.message ?: "No se pudo cargar el índice de la novela."
+                                                        errorMessage = WebImportErrorFormatter.format(e)
                                                     }
                                                 }
                                             } else {
