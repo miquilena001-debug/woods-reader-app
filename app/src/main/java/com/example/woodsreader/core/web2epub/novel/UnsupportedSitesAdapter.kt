@@ -2,8 +2,12 @@ package com.example.woodsreader.core.web2epub.novel
 
 import java.net.URI
 
-class WattpadSiteAdapter : SiteAdapter {
-    override val id: String = "wattpad"
+class UnsupportedSitesAdapter : SiteAdapter {
+    override val id: String = "unsupported-sites"
+
+    private val blockedDomains = listOf(
+        "wattpad.com"
+    )
 
     override fun matches(url: String): Boolean {
         if (url.isBlank()) return false
@@ -12,25 +16,24 @@ class WattpadSiteAdapter : SiteAdapter {
         } catch (_: Exception) {
             null
         } ?: ""
-        return host == "wattpad.com" || host.endsWith(".wattpad.com")
+        return blockedDomains.any { host == it || host.endsWith(".$it") }
     }
 
     override suspend fun parseIndex(html: String, finalUrl: String, fetcher: PageFetcher?): NovelIndex {
         throw FetchFailure.UnsupportedSite(
-            siteName = "Wattpad",
-            reason = "Wattpad no permite la importación automatizada de contenido según sus Términos de Servicio."
+            siteName = "Sitio no soportado",
+            reason = "Este sitio no permite la importación automatizada de contenido según sus Términos de Servicio."
         )
     }
 
     override fun extractChapter(html: String, finalUrl: String, fallbackTitle: String?): ExtractedChapter {
         throw FetchFailure.UnsupportedSite(
-            siteName = "Wattpad",
-            reason = "Wattpad no permite la importación automatizada de contenido según sus Términos de Servicio."
+            siteName = "Sitio no soportado",
+            reason = "Este sitio no permite la importación automatizada de contenido según sus Términos de Servicio."
         )
     }
 
     override val profile: SiteProfile = SiteProfile.DEFAULT.copy(
-        id = "wattpad",
-        domains = listOf("wattpad.com")
+        id = "unsupported-sites"
     )
 }

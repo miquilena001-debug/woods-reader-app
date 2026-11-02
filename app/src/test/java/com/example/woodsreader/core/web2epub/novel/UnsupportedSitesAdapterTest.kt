@@ -7,12 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 
-class WattpadSiteAdapterTest {
+class UnsupportedSitesAdapterTest {
 
-    private val adapter = WattpadSiteAdapter()
+    private val adapter = UnsupportedSitesAdapter()
 
     @Test
-    fun `matches returns true for wattpad com and subdomains`() {
+    fun `matches returns true for blocked domains and subdomains`() {
         assertTrue(adapter.matches("https://www.wattpad.com/story/123456-example-story"))
         assertTrue(adapter.matches("https://wattpad.com/123456-chapter-1"))
         assertTrue(adapter.matches("https://m.wattpad.com/story/123456"))
@@ -34,8 +34,8 @@ class WattpadSiteAdapterTest {
             adapter.parseIndex("", "https://www.wattpad.com/story/123", fakeFetcher)
             fail("Expected FetchFailure.UnsupportedSite")
         } catch (e: FetchFailure.UnsupportedSite) {
-            assertEquals("Wattpad", e.siteName)
-            assertEquals("Wattpad no permite la importación automatizada de contenido según sus Términos de Servicio.", e.reason)
+            assertEquals("Sitio no soportado", e.siteName)
+            assertEquals("Este sitio no permite la importación automatizada de contenido según sus Términos de Servicio.", e.reason)
         }
 
         // Verifica que NUNCA se realizó ninguna petición de red
@@ -49,16 +49,16 @@ class WattpadSiteAdapterTest {
             adapter.extractChapter("<html>...</html>", "https://www.wattpad.com/123-ch1", null)
             fail("Expected FetchFailure.UnsupportedSite")
         } catch (e: FetchFailure.UnsupportedSite) {
-            assertEquals("Wattpad", e.siteName)
-            assertEquals("Wattpad no permite la importación automatizada de contenido según sus Términos de Servicio.", e.reason)
+            assertEquals("Sitio no soportado", e.siteName)
+            assertEquals("Este sitio no permite la importación automatizada de contenido según sus Términos de Servicio.", e.reason)
         }
     }
 
     @Test
-    fun `SiteAdapterRegistry resolves wattpad URL to WattpadSiteAdapter by default`() {
+    fun `SiteAdapterRegistry resolves blocked domain to UnsupportedSitesAdapter by default`() {
         val registry = SiteAdapterRegistry.fromProfiles()
         val resolved = registry.forUrl("https://www.wattpad.com/story/999999-my-story")
-        assertTrue(resolved is WattpadSiteAdapter)
-        assertEquals("wattpad", resolved.id)
+        assertTrue(resolved is UnsupportedSitesAdapter)
+        assertEquals("unsupported-sites", resolved.id)
     }
 }

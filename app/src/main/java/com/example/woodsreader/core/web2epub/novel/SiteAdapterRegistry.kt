@@ -34,7 +34,7 @@ class SiteAdapterRegistry(
     fun profileForUrl(url: String): SiteProfile = forUrl(url).profile
 
     companion object {
-        val DEFAULT_CODE_ADAPTERS: List<SiteAdapter> = listOf(WattpadSiteAdapter())
+        val DEFAULT_CODE_ADAPTERS: List<SiteAdapter> = listOf(UnsupportedSitesAdapter())
 
         fun fromProfiles(
             userProfiles: List<SiteProfile> = emptyList(),
