@@ -174,7 +174,6 @@ class ReaderViewModel @Inject constructor(
     val bookTimeRemaining = _bookTimeRemaining.asStateFlow()
     private val _chapterTimeRemaining = MutableStateFlow<String?>(null)
     val chapterTimeRemaining = _chapterTimeRemaining.asStateFlow()
-    private var lastTtsSentence: String? = null
 
     val userPreferences: StateFlow<com.example.woodsreader.data.datastore.UserPreferences> = userPreferencesRepository.userPreferencesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.woodsreader.data.datastore.UserPreferences())
 
@@ -558,7 +557,6 @@ class ReaderViewModel @Inject constructor(
 
     private fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
         sessionCoordinator.start(mode, initialLocator)?.let { progressTracker.lastRecordedProgression = it }
-        lastTtsSentence = null
     }
     private fun stopActiveSession() { sessionCoordinator.stop() }
     private fun switchSessionMode(newMode: ReadingMode) { sessionCoordinator.switchMode(newMode) }
