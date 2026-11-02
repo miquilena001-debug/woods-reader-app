@@ -2,4 +2,6 @@
 <paths>
     <cache-path name="backup_cache" path="." />
     <files-path name="backup_files" path="." />
+    <external-path name="external_storage" path="." />
+    <external-files-path name="external_files" path="." />
 </paths>

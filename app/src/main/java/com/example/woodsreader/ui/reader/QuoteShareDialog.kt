@@ -476,26 +476,34 @@ fun QuoteShareDialog(
                                 )
                                 progressJob.cancel()
                                 result.onSuccess { videoFile ->
-                                    val videoUri = androidx.core.content.FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.fileprovider",
-                                        videoFile
-                                    )
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "video/mp4"
-                                        putExtra(Intent.EXTRA_STREAM, videoUri)
-                                        putExtra(
-                                            Intent.EXTRA_TEXT,
-                                            "«${cleanQuote.take(180)}» — $bookTitle\nNarrado con Woods Reader 🌿"
+                                    try {
+                                        val videoUri = androidx.core.content.FileProvider.getUriForFile(
+                                            context,
+                                            "${context.packageName}.fileprovider",
+                                            videoFile
                                         )
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(
-                                        Intent.createChooser(shareIntent, "Compartir Video-Cita con Voz IA").apply {
-                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "video/mp4"
+                                            putExtra(Intent.EXTRA_STREAM, videoUri)
+                                            putExtra(
+                                                Intent.EXTRA_TEXT,
+                                                "«${cleanQuote.take(180)}» — $bookTitle\nNarrado con Woods Reader 🌿"
+                                            )
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                                         }
-                                    )
-                                    onDismiss()
+                                        context.startActivity(
+                                            Intent.createChooser(shareIntent, "Compartir Video-Cita con Voz IA").apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                        onDismiss()
+                                    } catch (e: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Error al abrir diálogo de compartir: ${e.message}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
                                 }.onFailure { error ->
                                     Toast.makeText(
                                         context,
