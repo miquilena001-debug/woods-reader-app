@@ -192,7 +192,7 @@ class ReaderViewModel @Inject constructor(
 
     val globalProgress = _globalProgress.asStateFlow()
     private val _showEpubCoverPage = MutableStateFlow(false)
-        val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
+    val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // -- Teleprompter / Auto-Scroll Controller ----------------------------------
     private val autoScroll = ReaderAutoScrollController {
@@ -324,15 +324,15 @@ class ReaderViewModel @Inject constructor(
             reflowItems = pdfReflowManager.reflowState.value.items,
             currentHref = (navigator as? org.readium.r2.navigator.VisualNavigator)?.currentLocator?.value?.href?.toString().orEmpty()
         ) { targetIdx, link ->
-                val cached = chapterLruCache.get(targetIdx)
-                val doc = cached?.document ?: epubFormatManager.processResource(link.href.toString(), book.id)
-                if (doc != null && cached == null) {
-                    val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
-                    chapterLruCache.put(targetIdx, ParsedChapterData(targetIdx, link.href.toString(), title, doc))
-                }
-                val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
+            val cached = chapterLruCache.get(targetIdx)
+            val doc = cached?.document ?: epubFormatManager.processResource(link.href.toString(), book.id)
+            if (doc != null && cached == null) {
                 val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
-                com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
+                chapterLruCache.put(targetIdx, ParsedChapterData(targetIdx, link.href.toString(), title, doc))
+            }
+            val texts = doc?.ttsNarrationUnits?.map { it.textToSpeak } ?: emptyList()
+            val title = link.title?.takeIf { it.isNotBlank() } ?: "Capítulo ${targetIdx + 1}"
+            com.example.woodsreader.core.tts.ChapterTextChunk(title, texts)
         }
     }
 
@@ -577,7 +577,7 @@ class ReaderViewModel @Inject constructor(
 
     // Las update* duplicadas han sido eliminadas en favor de estas.
 
-            fun onThemeChange(theme: ReaderTheme)        = viewModelScope.launch { userPreferencesRepository.updateTheme(theme) }
+    fun onThemeChange(theme: ReaderTheme)        = viewModelScope.launch { userPreferencesRepository.updateTheme(theme) }
 
     fun onFontSizeChange(size: Float)            = viewModelScope.launch { userPreferencesRepository.updateFontSize(size) }
 
