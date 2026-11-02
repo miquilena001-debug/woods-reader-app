@@ -129,10 +129,6 @@ import com.example.woodsreader.ui.theme.LiterataFamily
 
 
 
-private const val MENU_ITEM_TTS_ID = 0x7F0A_BEEF
-private const val MENU_ITEM_HIGHLIGHT_ID = 0x7F0A_FEED
-private const val MENU_ITEM_DICTIONARY_ID = 0x7F0A_FEEC
-private const val MENU_ITEM_TRANSLATE_ID = 0x7F0A_FEEB
 private const val MENU_ITEM_ADD_TO_GRAPH_ID = 0x7F0A_FEEA
 private const val MENU_ITEM_VIEW_GRAPH_ID = 0x7F0A_FEE9
 
@@ -414,59 +410,6 @@ fun ReaderScreen(
             }
             override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
                 when (item.itemId) {
-                    MENU_ITEM_HIGHLIGHT_ID -> {
-                        scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
-                            if (sel != null) {
-                                showHighlightMenu = sel
-                                viewModel.hideControls()
-                            }
-                            mode.finish()
-                            activeActionMode = null
-                        }
-                        return true
-                    }
-                    MENU_ITEM_TTS_ID -> {
-                        scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
-                            if (sel != null) {
-                                viewModel.playTts(sel.locator)
-                                viewModel.hideControls()
-                                showTtsMacroWindow = true
-                            }
-                            mode.finish()
-                            activeActionMode = null
-                        }
-                        return true
-                    }
-                    MENU_ITEM_DICTIONARY_ID -> {
-                        scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
-                            val text = sel?.locator?.text?.highlight ?: ""
-                            if (text.isNotBlank()) {
-                                selectedTextForQuery = text
-                                showDictionarySheet = true
-                                viewModel.hideControls()
-                            }
-                            mode.finish()
-                            activeActionMode = null
-                        }
-                        return true
-                    }
-                    MENU_ITEM_TRANSLATE_ID -> {
-                        scope.launch {
-                            val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
-                            val text = sel?.locator?.text?.highlight ?: ""
-                            if (text.isNotBlank()) {
-                                selectedTextForQuery = text
-                                showTranslateSheet = true
-                                viewModel.hideControls()
-                            }
-                            mode.finish()
-                            activeActionMode = null
-                        }
-                        return true
-                    }
                     MENU_ITEM_ADD_TO_GRAPH_ID -> {
                         scope.launch {
                             val sel = (navigatorState.value as? SelectableNavigator)?.currentSelection() ?: pendingSelection
