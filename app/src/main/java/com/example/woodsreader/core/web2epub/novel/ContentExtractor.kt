@@ -68,6 +68,9 @@ class ContentExtractor(
         // 3. Clonar contenedor para manipulación
         val workingElement = contentElement.clone()
 
+        // 3.5 Remover elementos ocultos por CSS (reglas en <style> e inline)
+        removeHiddenCssElements(doc, workingElement)
+
         // 4. Remover elementos no deseados por selector
         val selectorsToRemove = mutableListOf(
             "script", "style", "noscript", "iframe", "svg", "button", "input", "form",
@@ -305,5 +308,46 @@ class ContentExtractor(
         }
 
         return ChapterStatus.OK
+    }
+    private fun removeHiddenCssElements(doc: Document, workingElement: Element) {
+        // 1. Parsear reglas display:none y visibility:hidden en tags <style>
+        val styleElements = (doc.select("style") + workingElement.select("style")).distinct()
+        val hideDeclarationRegex = Regex("""(?i)\b(?:display\s*:\s*none|visibility\s*:\s*hidden)\b""")
+        val simpleSelectorRegex = Regex("""^[a-zA-Z0-9]*[.#][a-zA-Z0-9_-]+$""")
+
+        for (styleEl in styleElements) {
+            val rawCss = listOf(styleEl.data(), styleEl.html())
+                .firstOrNull { it.isNotBlank() } ?: continue
+            val cleanCss = rawCss.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+
+            val ruleRegex = Regex("""([^{}]+)\{([^{}]+)\}""")
+            for (match in ruleRegex.findAll(cleanCss)) {
+                val selectorsPart = match.groupValues[1]
+                val declsPart = match.groupValues[2]
+                if (hideDeclarationRegex.containsMatchIn(declsPart)) {
+                    val subSelectors = selectorsPart.split(",")
+                    for (subSel in subSelectors) {
+                        val trimmedSel = subSel.trim()
+                        if (simpleSelectorRegex.matches(trimmedSel)) {
+                            try {
+                                workingElement.select(trimmedSel).remove()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Parsear style inline en workingElement
+        for (el in workingElement.select("[style]")) {
+            val inlineStyle = el.attr("style")
+            if (hideDeclarationRegex.containsMatchIn(inlineStyle)) {
+                try {
+                    el.remove()
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 }
