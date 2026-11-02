@@ -66,7 +66,7 @@ class WebNovelImportWorker @AssistedInject constructor(
         val outputDir = File(context.filesDir, "epubs").apply { if (!exists()) mkdirs() }
         val baseStoreDir = File(context.cacheDir, "web2epub").apply { if (!exists()) mkdirs() }
 
-        val profileRegistry = SiteProfileLoader(context).load()
+        val adapterRegistry = SiteProfileLoader(context).loadRegistry()
         val fetcher = OkHttpPageFetcher(okHttpClient)
         val imageDownloader = ImageDownloader(okHttpClient)
         val store = ImportStore(baseStoreDir)
@@ -74,7 +74,7 @@ class WebNovelImportWorker @AssistedInject constructor(
 
         val importer = NovelImporter(
             fetcher = fetcher,
-            profileRegistry = profileRegistry,
+            adapterRegistry = adapterRegistry,
             store = store,
             imageDownloader = imageDownloader,
             assembler = assembler
