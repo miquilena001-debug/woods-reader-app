@@ -79,4 +79,6 @@ Thumbs.db
 tools/woods_pro_private.pem
 __pycache__/
 codigo_revision.txt
-
+# Step evidence and temporary scratch scripts
+scratch/
+step-*-evidence.md
