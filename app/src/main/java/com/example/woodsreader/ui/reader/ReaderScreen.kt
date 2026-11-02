@@ -336,9 +336,11 @@ fun ReaderScreen(
     }
 
     LaunchedEffect(isTtsActive) {
-        val activity = context.findFragmentActivity()
-        if (activity != null) {
+        val activity = context.findFragmentActivity() ?: return@LaunchedEffect
+        if (isTtsActive) {
             activity.volumeControlStream = android.media.AudioManager.STREAM_MUSIC
+        } else {
+            activity.volumeControlStream = android.media.AudioManager.USE_DEFAULT_STREAM_TYPE
         }
     }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
