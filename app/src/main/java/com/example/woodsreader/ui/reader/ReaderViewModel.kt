@@ -191,7 +191,6 @@ class ReaderViewModel @Inject constructor(
     private val _globalProgress = MutableStateFlow(0f)
 
     val globalProgress = _globalProgress.asStateFlow()
-    private val _showEpubCoverPage = MutableStateFlow(false)
     val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // -- Teleprompter / Auto-Scroll Controller ----------------------------------
@@ -489,7 +488,6 @@ class ReaderViewModel @Inject constructor(
                 }
                 val book: BookEntity = loadedBook
 
-                _showEpubCoverPage.value = false
                 lastProcessedChapterHref = null
                 _uiState.value = ReaderUiState.InitialLoading(book)
 
@@ -760,7 +758,6 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun onTtsLocatorChanged(locator: Locator) {
-        if (_showEpubCoverPage.value) return
         annotations.currentLocator = locator
         val locJson = saveReadingProgressUseCase.serializeLocator(locator)
         progressTracker.lastSavedLocatorJson = locJson
@@ -1566,7 +1563,6 @@ class ReaderViewModel @Inject constructor(
 
     fun saveCurrentProgressBeforeExit() {
         autoScroll.deactivate()
-        if (_showEpubCoverPage.value) return
         flushReadingProgressImmediately()
     }
 
