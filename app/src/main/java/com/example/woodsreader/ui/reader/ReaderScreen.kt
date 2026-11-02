@@ -637,7 +637,7 @@ fun ReaderScreen(
     val currentTtsPage by viewModel.currentTtsPage.collectAsStateWithLifecycle()
 
     // Sincronización TTS para EPUB: resaltado elegante cambiando el color de letra (idéntico a PDF Reflow) y seguimiento visual
-    LaunchedEffect(ttsState, navigatorState.value, isUserInteracting, isFingerDown, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
+    LaunchedEffect(ttsState, navigatorState.value, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
         val nav = navigatorState.value ?: return@LaunchedEffect
         val decorableNav = nav as? DecorableNavigator
         
@@ -664,9 +664,9 @@ fun ReaderScreen(
 
                 // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
                 val now = System.currentTimeMillis()
-                val isTouchActive = isFingerDown || (now - lastTouchUpTime) < 1800L
+                val isTouchActive = isTouchActiveState.value
                 val isLockActive = (now - lastInteractionTime) < 3000L
-                val autoScrollEnabled = !isTouchActive && !isUserInteracting && !isLockActive && userPreferences.ttsAutoScroll
+                val autoScrollEnabled = !isTouchActive && !isLockActive && userPreferences.ttsAutoScroll
 
                 if (nav is VisualNavigator) {
                     val currentScreenLoc = nav.currentLocator.value
