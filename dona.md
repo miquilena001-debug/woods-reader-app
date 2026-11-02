@@ -8,7 +8,7 @@
 - **Base verificada tras Tarea P2:** HEAD `e721a31` (`master`).
 - **Build configurado:** `versionName = "1.0.10"`, `versionCode = 11` en `app/build.gradle.kts`.
 - **Inventario estático:** 259 archivos Kotlin seguidos por Git (producción y tests); 58 archivos Kotlin en `app/src/test/`; suite unitaria ejecutada: **269 casos de test en verde (0 fallos, 0 errores)**.
-- **ReaderViewModel:** 2.167 líneas y 119.062 bytes. Constructor verificado por script: **19 parámetros totales** (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 17 dependencias inyectadas).
+- **ReaderViewModel:** 1.674 líneas. Constructor verificado por script: **19 parámetros totales** (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 17 dependencias inyectadas de dominio, repositorios y coordinadores).
 - **Alcance:** este archivo es el índice de código y mapa técnico; el estado de pendientes está en `ROADMAP.md`, la arquitectura resumida en `ARCHITECTURE.md` y los documentos anteriores en `docs/archive/README.md`.
 
 Los resultados de compilación o pruebas mencionados en secciones históricas deben interpretarse en su fecha original, no como resultados de HEAD actual.
@@ -102,7 +102,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 2. **Tolerancia Cero a Errores de Build:** Todo cambio debe verificar `:app:compileDebugKotlin` y `:app:testDebugUnitTest` con 0 errores antes de dar por buena una intervención.
 3. **Atomicidad de Fases:** Un commit descriptivo por fase o componente. Nunca acumular múltiples tareas no relacionadas en un solo commit.
 4. **Evidencia Antes de Aserción:** Prohibido afirmar que un bug está resuelto o que un módulo funciona sin haber inspeccionado el código fuente, ejecutado las pruebas o validado en logcat.
-5. **Criterio de Validación Dispositivo (🟡 → ✅):** Todo hallazgo o refactor que involucre hardware o subsistemas de Android (TTS nativo, Sherpa ONNX, audio focus, ciclo de vida del WebView) se marca como 🟡 hasta ser ejecutado y comprobado físicamente en el teléfono (`TECNO-LH7n`).
+5. **Criterio de Validación Dispositivo (🟡 → ✅):** Todo hallazgo o refactor que involucre hardware o subsistemas de Android (TTS nativo, Sherpa ONNX, audio focus, ciclo de vida del WebView) se marca como 🟡 hasta ser ejecutado y comprobado físicamente en el teléfono (`moto_e22i`).
 6. **Mantenimiento del Documento Ancla:** Todo commit que modifique la firma o propósito de un archivo debe actualizar su entrada en `dona.md`.
 
 ---
@@ -117,7 +117,7 @@ Los siguientes componentes constituyen el núcleo crítico del lector y **NUNCA 
 3. **Fase 3 del Roadmap: Doble Vista para Documentos PDF**:
    - Alternancia fluida entre modo Reflow accesible (extracción semántica) y modo Réplica Original con zoom, conservando la sincronización de lectura bidireccional.
 4. **Deuda Técnica Crítica Pendiente:**
-   - 🟡 **C3 [Mitigado en código - Pendiente dispositivo]:** Descompresión de God Class en `ReaderViewModel.kt`. Líneas pasaron de 2.905 a 2.476 (casos de uso) y a 2.158 en HEAD tras P5/P6, con objetivo de diseño de ~600 líneas. Constructor reducido de 24 parámetros (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 22 dependencias de dominio/servicios, y no 17 ni 27) a 21 parámetros en HEAD (2 de framework + 19 dependencias inyectadas).
+   - 🟡 **C3 [Mitigado en código - Pendiente dispositivo]:** Descompresión de God Class en `ReaderViewModel.kt`. Líneas pasaron de 2.905 a 2.476 (casos de uso) y a 1.674 en HEAD actual tras la extracción de coordinadores (`ReaderChapterNavigationCoordinator`, `ReaderVoiceAndAmbienceController`, `ReaderIntelligenceAndExportCoordinator`) y saneamiento de dead code. Constructor auditado y verificado en 19 parámetros totales (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` + 17 dependencias inyectadas).
    - 🔴 **C4:** Cancelación ordenada de la corrutina de limpieza en `SherpaModelManager.kt:280`.
    - ⚪ **C5 [Falso positivo / No aplica]:** Logging nativo C++ de Sherpa en `SherpaModelManager.kt:437` pasa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En release `BuildConfig.DEBUG` es `false`, desactivando los logs de depuración nativos en producción; nunca estuvo hardcodeado a `true` en release.
    - 🔴 **C11:** Saneamiento de mojibake residual fuera de `ReaderViewModel`: 24 ocurrencias en comentarios (`TtsManager.kt`, `BookScannerService.kt`, `LibraryScreen.kt`, `ReaderScreen.kt`) y 1 ocurrencia de código/regex con riesgo funcional en `MultilingualAudiobookNormalizer.kt:30` (`elongatedCharsRegex`). En `ui/reader/` se verifican 0 cadenas visibles de usuario afectadas.
@@ -524,7 +524,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Clases:** `ReaderVoiceAndAmbienceController` (@Singleton / @Inject constructor)
 - **Depende_de:** SleepTimer, SherpaModelManager, ForestAmbienceEngine, AmbientSoundscapePlayer, EdgeNeuralTtsClient, PronunciationLexiconManager, TtsPresetCatalog, UserPreferencesRepository, TtsManager
 - **Usado_por:** ReaderViewModel
-- **Estado:** 🟡 Validar en tlf. (completo, 255 líneas, 8 tests unitarios en verde: pendiente validación en TECNO-LH7n del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer)
+- **Estado:** 🟡 Validar en tlf. (completo, 255 líneas, 8 tests unitarios en verde: pendiente validación en moto_e22i del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer)
 - **Hallazgos:** C3 mitigado parcialmente: encapsula 7 dependencias de audio/ambiente (`SleepTimer`, `SherpaModelManager`, `ForestAmbienceEngine`, `AmbientSoundscapePlayer`, `EdgeNeuralTtsClient`, `PronunciationLexiconManager`, `TtsPresetCatalog`) y gestión de diálogos en un controlador desacoplado, reduciendo la firma del constructor de `ReaderViewModel` a 21 parámetros totales (2 de framework + 19 dependencias inyectadas).
 
 ### 3.4 Escáneres de Archivos
@@ -1601,7 +1601,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `haze`, `hazeChild`), Readium Navigator 3.x (`VisualNavigator`, `SelectableNavigator`, `DecorableNavigator`, `EpubNavigatorFragment`, `PdfNavigatorFragment`), `ReaderViewModel`, `ReaderEgoGraphViewModel`, `ChapterScrollDetector`, `ReaderTopBar`, `ReaderBottomSlider`, `ReaderTeleprompterPill`, `ReaderSideMenu`, `ReaderHighlightOverlay`, `ReaderReflowOverlay`, `ReaderPdfTtsHud`, `ReaderControlBottomSheet`, `ReaderTtsMacroWindow`, `ReaderTtsControlsLayer`, `ReaderHeroSplash`, `PullToChapterIndicator`, `FootnoteSheet`, `TocBottomSheet`, `SearchBottomSheet`, `ReaderXRayBottomSheet`, `ReaderExternalLookupSheets`, `TtsRulesBottomSheet`, `ReaderTtsLockOverlay`, `ReaderEgoGraphBottomSheet`, `AddEntityFromSelectionDialog`, `InlineLookupManager`.
 - **Usado_por:** `NavGraph.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 1.855 líneas - validar en TECNO-LH7n)
+- **Estado:** ✅ REVISADO_ATOMICAMENTE (modularizado, 1.748 líneas: concurrencia táctil reactiva, blindaje de fuga de navigator, reseteo de volumeControlStream, 41 imports huérfanos purgados - validación física en moto_e22i)
 - **Hallazgos:**
   - **M18:** Inyección de JavaScript directo en L1166–1170 (`s.modify('move', 'backward', 'sentence')`) sobre instancias de WebView sin timeout de ejecución ni callback de error ante sintaxis no soportada en motores WebView desactualizados.
   - **M19:** Captura de excepciones vacía (`catch (_: Exception) {}`) en L1220–1222 al disparar el intent implícito `ACTION_VIEW` para abrir definiciones web externas, ocultando posibles `ActivityNotFoundException` si el dispositivo no tiene navegador instalado.
@@ -1613,7 +1613,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `PullToChapterIndicator` (@Composable, L27-88): Indicador visual de tracción táctil entre capítulos.
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `ReaderDesign`, `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 88 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 88 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/FootnoteSheet.kt`
@@ -1622,7 +1622,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `FootnoteSheet` (@Composable, L18-59): BottomSheet para lectura fluida de notas al pie.
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `ReaderDesign`, `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 59 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 59 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderViewModel.kt`
@@ -1632,7 +1632,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
 - **Usado_por:** ReaderScreen
 - **Estado:** ✅ REVISADO_ATOMICAMENTE (completo, 2.167 líneas, 135.5 KB)
 - **Hallazgos:**
-  - **C3 [MITIGADO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Descompresión de God Class en curso. Evolución de líneas: pasó de 2.905 líneas (original `4de4bd7^`) a 2.476 líneas (tras extracción de Casos de Uso) y actualmente a 2.158 líneas en HEAD (tras P5 y P6), con objetivo de diseño de ~600 líneas. Constructor verificado por script: el original contenía 24 parámetros totales (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 22 dependencias de dominio/servicios, y no 17 ni 27 como se había indicado erróneamente en notas previas); en HEAD se redujo a 21 parámetros totales (2 de framework + 19 dependencias inyectadas) tras extraer `ReaderVoiceAndAmbienceController` (255 líneas, P6) y `ReaderChapterNavigationCoordinator` (444 líneas, P5). Pendiente validación en `TECNO-LH7n` del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer.
+  - **C3 [MITIGADO EN CÓDIGO - PENDIENTE DISPOSITIVO]:** Descompresión de God Class en curso. Evolución de líneas: pasó de 2.905 líneas (original `4de4bd7^`) a 2.476 líneas (tras extracción de Casos de Uso) y actualmente a 2.158 líneas en HEAD (tras P5 y P6), con objetivo de diseño de ~600 líneas. Constructor verificado por script: el original contenía 24 parámetros totales (2 de framework: `Application context` y `SavedStateHandle savedStateHandle` del que sale `bookId` + 22 dependencias de dominio/servicios, y no 17 ni 27 como se había indicado erróneamente en notas previas); en HEAD se redujo a 21 parámetros totales (2 de framework + 19 dependencias inyectadas) tras extraer `ReaderVoiceAndAmbienceController` (255 líneas, P6) y `ReaderChapterNavigationCoordinator` (444 líneas, P5). Pendiente validación en `moto_e22i` del cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer.
   - **A12 [RESUELTO]:** Doble persistencia de progreso unificada en `SaveReadingProgressUseCase`.
   - **C2 [RESUELTO]:** Blindado en commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Emite `ReaderUiState.Error` seguro si falta el parámetro.
   - **C8/C10 [RESUELTO EN COMENTARIOS]:** Saneados todos los caracteres corruptos (mojibake) en comentarios de `ui/reader/` (separadores de sección en `ReaderViewModel.kt` y notas en `ReaderScreen.kt`). Cero cadenas visibles al usuario alteradas.
@@ -1692,7 +1692,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `ActionIconCircle` (privado, L705–726): Botón circular táctil con icono representativo para las acciones secundarias.
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `HighlightColor`, `LookupResult`, `SaveCharacterDialog`, `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`, `ReaderScreenOverlays.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 726 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 726 líneas - validar en moto_e22i)
 - **Hallazgos:**
   - **M20:** Captura de excepciones vacía (`catch (_: Exception) {}`) en el fallback del navegador web para traducciones/definiciones cuando `onErrorOpenBrowser == null`.
 
@@ -1702,7 +1702,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `SaveCharacterDialog` (público, L25–171): Diálogo de categorización y persistencia de personajes.
 - **Depende_de:** Compose UI, Material 3, `HiddenForest`.
 - **Usado_por:** `HighlightColorMenu.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 171 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 171 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/QuoteShareDialog.kt`
@@ -1714,7 +1714,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `QuoteShareDialog` (público, L233–633): Diálogo de previsualización, personalización y despacho de exportaciones.
 - **Depende_de:** Compose UI, Material 3, Android Graphics (`Bitmap`, `Canvas`, `StaticLayout`, `TextPaint`, `Paint`), MediaStore, Dagger-Hilt (`EntryPointAccessors`), `QuoteVideoClipExporter`, `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`, `HighlightColorMenu.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 633 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 633 líneas - validar en moto_e22i)
 - **Hallazgos:**
   - **M21:** `QuoteVideoClipEntryPoint` utiliza `EntryPointAccessors.fromApplication` manualmente dentro de un `remember` en Compose para resolver `QuoteVideoClipExporter` en lugar de inyectarlo formalmente en el ViewModel.
   - **M22:** `renderThemedQuoteBitmap` genera directamente un Bitmap de 1080x1350 en memoria (5.8 MB ARGB_8888) en el hilo de UI cuando el usuario pulsa "Imagen", antes de escribirlo en MediaStore.
@@ -1824,7 +1824,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - Persistencia de paisajes sonoros: Al cambiar `soundscape_mode` o `soundscape_intensity`, guarda inmediatamente en SharedPreferences `"woods_studio_voice_hd"` (L393, L426).
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`, `hazeChild`), `ReaderTtsActiveControls`, `ReaderTtsVoiceTab`, `ReaderTtsAmbienceTab`, `ReaderTtsExportTab`, `AddPhoneticRuleDialog`, `WoodsProUnlockDialog`, `PronunciationLexiconManager`, `ProLicenseManager`, `WoodsKeepAliveManager`, `SherpaVoiceOption`, `AudioExportState`, `TtsHighlightStyle`, `TtsUiStyle`, `SoundscapeMode`, `AmbiencePreset`, `HiddenForest`.
 - **Usado_por:** `ReaderScreen.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 878 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (modularizado, 878 líneas - validar en moto_e22i)
 - **Hallazgos:**
   - **M17:** Uso de SharedPreferences sincrónicas (`"woods_studio_voice_hd"`) con `.edit().apply()` en callbacks de Compose (L393, L426) en lugar de persistir reactivamente en DataStore.
 
@@ -1834,7 +1834,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `AddPhoneticRuleDialog` (@Composable, L12-71): Diálogo de captura de mapeo fonético.
 - **Depende_de:** Compose UI, Material 3.
 - **Usado_por:** `ReaderTtsMacroWindow.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 71 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 71 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsActiveControls.kt`
@@ -1843,7 +1843,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `ReaderTtsActiveControls` (@Composable, L38-546): Controles de transporte y cabecera activa del panel macro de TTS.
 - **Depende_de:** Compose UI, Material 3, Haze (`HazeState`), `ReaderCrystalCard`, `WoodsKeepAliveManager`, `ChapterInfo`, Coil3 (`AsyncImage`).
 - **Usado_por:** `ReaderTtsMacroWindow.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 546 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 546 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsAmbienceTab.kt`
@@ -1852,7 +1852,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `ReaderTtsAmbienceTab` (@Composable, L29-324): Pestaña de masterización acústica, dramatización y reglas de pronunciación.
 - **Depende_de:** Compose UI, Material 3, `PronunciationLexiconManager`, `StudioAcousticsProfile`, `PremiumSlider`.
 - **Usado_por:** `ReaderTtsMacroWindow.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 324 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 324 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsExportTab.kt`
@@ -1861,7 +1861,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `ReaderTtsExportTab` (@Composable, L21-272): Pestaña de exportación de audiolibros offline a archivo contenedor M4A.
 - **Depende_de:** Compose UI, Material 3, `AudioExportState`, `SherpaVoiceOption`.
 - **Usado_por:** `ReaderTtsMacroWindow.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 272 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 272 líneas - validar en moto_e22i)
 - **Hallazgos:** Ninguno.
 
 #### `ui/reader/ReaderTtsVoiceTab.kt`
@@ -1870,7 +1870,7 @@ El proyecto utiliza Dagger-Hilt para inyección de dependencias con alcance sing
   - `ReaderTtsVoiceTab` (@Composable, L33-613): Pestaña de selección y gestión de voces offline y de sistema.
 - **Depende_de:** Compose UI, Material 3, `SherpaModelManager`, `SherpaVoiceOption`, `SherpaDownloadState`, `SupportedTtsLanguage`, `ReaderMacroEngineMode`.
 - **Usado_por:** `ReaderTtsMacroWindow.kt`.
-- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 613 líneas - validar en TECNO-LH7n)
+- **Estado:** 🟡 REVISADO_ATOMICAMENTE (completo, 613 líneas - validar en moto_e22i)
 - **Hallazgos:**
   - **M16:** `SherpaModelManager(context.applicationContext)` se instancia manualmente en L48 mediante `remember(context)`, eludiendo la inyección de dependencias de Hilt.
 
@@ -2397,7 +2397,7 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 
 ### Leyenda de Estados
 - ✅ **Resuelto y verificado en código:** Verificado mediante inspección estricta de código y pruebas unitarias automáticas en verde.
-- 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** Implementado y verificado en código, pero requiere validación física en hardware.
+- 🟡 **Resuelto en código, pendiente de validación en dispositivo (moto_e22i):** Implementado y verificado en código, pero requiere validación física en hardware.
 - 🔴 **Pendiente (Error conocido / Deuda técnica):** Problema vigente identificado, documentado sin corregir en esta fase.
 - ⚪ **No verificado:** Estado preventivo de elementos pendientes de auditoría directa.
 
@@ -2409,7 +2409,7 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 |---|---|---|---|---|---|---|---|
 | **C1** | Crítica | `AppDatabase.kt:37-39` | Fallo de migración (`IllegalStateException`) al actualizar de DB v10 a v11 | `AppDatabase` → Todos los DAOs → Toda la app | ✅ **Resuelto** | Abrir app con DB v10 preexistente. Esquemas `10.json` vs `11.json` confirman que solo se añadieron 4 tablas de grafos sin alterar entidades previas. | Resuelto vía Room `@AutoMigration(from = 10, to = 11)`. No requiere `AutoMigrationSpec`. |
 | **C2** | Crítica | `ReaderViewModel.kt:171, 597` | Cierre forzado inmediato (`IllegalStateException`) si el lector se abre con URI sin `bookId` | `NavGraph` → `ReaderScreen` → `ReaderViewModel` | ✅ **Resuelto** | Navegar a `Screen.Reader.createRoute("")`. Antes crasheaba en `checkNotNull(savedStateHandle["bookId"])`. | Commit `7ac5385`: `savedStateHandle.get<String>("bookId").orEmpty()`. Si viene en blanco, emite `ReaderUiState.Error` seguro. |
-| **C3** | Crítica | `ReaderViewModel.kt:129-161` | Descompresión de God Class en curso: 21 parámetros en constructor (2 de framework: Application + SavedStateHandle con `bookId` + 19 dependencias inyectadas) tras extraer coordinadores P5/P6. Original tenía 24 parámetros (2 de framework + 22 dependencias de dominio, corregida cifra previa de 17 y 27). Líneas pasaron de 2.905 a 2.476 y a 2.158; objetivo ~600 | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | 🟡 **Validar en tlf.** | Contar parámetros en constructor (L129-161): 21 parámetros en HEAD. Pendiente validar físicamente en `TECNO-LH7n` cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer. | Encapsuladas 7 dependencias puente en `ReaderVoiceAndAmbienceController` (Sherpa ONNX, Edge Neural, léxico, ambientes y sleep timer) y delegada navegación en `ReaderChapterNavigationCoordinator`. Firmas públicas en UI intactas. |
+| **C3** | Crítica | `ReaderViewModel.kt` | Descompresión de God Class consolidada: 19 parámetros totales en constructor (2 de framework: Application + SavedStateHandle con `bookId` + 17 dependencias inyectadas). Líneas reducidas de 2.905 a 1.674 en HEAD. | `ReaderViewModel` ↔ Toda la lógica de lectura, audio, búsqueda y exportación | 🟡 **Validar en tlf.** | Constructor verificado por script: 19 parámetros en HEAD. Pendiente validar físicamente en `moto_e22i` cambio de voz Sherpa, descarga de modelo, activación de ambiente y sleep timer. | Encapsuladas dependencias en `ReaderVoiceAndAmbienceController`, `ReaderChapterNavigationCoordinator` y `ReaderIntelligenceAndExportCoordinator`. Golden API `ReaderViewModel.api.txt` 100% preservada. |
 | **C4** | Alta | `SherpaModelManager.kt:280` | Corrutina huérfana en `init` lanzada en singleton sin control de cancelación | `SherpaModelManager` → Ciclo de vida de app | 🔴 **Pendiente** | Inspeccionar línea 280: `managerScope.launch` borra directorio de Kokoro recursivamente sin almacenar el `Job`. | Deuda técnica documentada. No impacta runtime crítico al ser `@Singleton`, pero carece de método de cancelación ordenado. |
 | **C5** | Baja | `SherpaModelManager.kt:437` | Logging nativo C++ de Sherpa ONNX configurado con `debug = com.example.woodsreader.BuildConfig.DEBUG` | `SherpaModelManager` → Logcat del sistema | ⚪ **Falso positivo / No aplica** | Inspeccionar L437: pasa `debug = com.example.woodsreader.BuildConfig.DEBUG`. En compilación de release compila como `false`, anulando logs en producción. | Falso positivo: el reporte original asumía `debug = true` hardcodeado en producción. En release `BuildConfig.DEBUG` es `false`, por lo que el logging C++ está desactivado en producción. |
 | **C6** | Crítica | `TtsManager.kt:1375` | Congelamiento o suspensión prolongada del hilo de síntesis de TTS en arranque en frío | `TtsManager` → `narrateSequence` → `ReaderTtsService` | 🟡 **Validar en tlf.** | Pulsar Play de TTS inmediatamente tras abrir la app en frío con motor Sherpa activado. | Commits `93e4dc2` y `5a9b341`: eliminó `.first()`, usa `@Volatile cachedUseSherpaTts` y `ensurePreferencesLoaded(300ms)`. |
@@ -2439,13 +2439,13 @@ Esta sección reúne **TODOS** los hallazgos críticos, advertencias, errores re
 | **M22** | Media | `ReaderUIComponents.kt:1530-1536` | Generación de Bitmap (1080x1350 px, 5.8 MB) síncrona en el hilo principal de UI al pulsar "Imagen" | `ReaderUIComponents` → Canvas Android → Hilo Main | 🔴 **Pendiente** | Inspeccionar L1530: `renderThemedQuoteBitmap` corre en hilo UI antes de insertar en MediaStore. | Mover la generación y compresión del Bitmap a `Dispatchers.Default` o `Dispatchers.IO`. |
 | **M23** | Baja | `SettingsScreen.kt:1171-1184` | Ficha técnica contiene cadenas de versión hardcodeadas ("v1.0.0-ALPHA", "Build 2026.10") | `SettingsScreen` → Ficha Técnica | 🔴 **Pendiente** | Inspeccionar L1175: valores estáticos en texto multilínea. | Sustituir cadenas fijas por interpolación de `BuildConfig.VERSION_NAME` y `BuildConfig.VERSION_CODE`. |
 | **M24** | Media | `SettingsScreen.kt:940, 1356` | Exposición directa de instancias de dominio (`viewModel.woodsKeepAliveManager`, `viewModel.proLicenseManager`) a vistas Compose | `SettingsScreen` → Gestores de Dominio | 🔴 **Pendiente** | Inspeccionar L940 y L1356: la UI invoca métodos de los gestores directamente. | Delegar las acciones a través de métodos públicos del `SettingsViewModel`. |
-| **M25** | Media | `ReaderViewModel.kt:304, 582, 2149` / `SleepTimerManager.kt:37-43` | Dos temporizadores en paralelo con preset forzado `MIN_15` unificados en `SleepTimerManager` como autoridad única | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🟡 **Validar en tlf.** | Probar en teléfono TECNO-LH7n: temporizador de 20 min (cuenta regresiva real), fin de capítulo (-1, detiene TTS y ambiente) y cancelación (restaura velocidad). | Unificada la autoridad en `SleepTimerManager` con soporte de minutos arbitrarios y fin de capítulo (-1). En `ReaderViewModel` se eliminó la corrutina concurrente de `smartSleepTimerManager`, sincronizando parada de narración y ambientes sonoros. |
-| **M26** | Media | `ReaderViewModel.kt:167-195, 1349-1430, 1463-1540` | Retorno anticipado antes de la rama PDF desacoplado de `VisualNavigator` en PDF y Reflow usando TOC | `ReaderViewModel` → Navegación PDF Reflow | 🟡 **Validar en tlf. (hasta P4)** | Confirmado en código: retorno anticipado (`val nav = navigator ?: return`) impedía alcanzar la rama PDF cuando `navigator` era null. No confirmado: que `navigator` sea efectivamente `null` en vista libro. Validar en `TECNO-LH7n` en P4: botones de siguiente/anterior capítulo en barra inferior (modo libro y reflow) y avance automático de TTS. | Desacoplada la navegación por capítulos en PDF/Reflow vía `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` en `ReaderChapterNavigationCoordinator`. Estado 🟡 hasta pruebas de integración en P4. |
+| **M25** | Media | `ReaderViewModel.kt:304, 582, 2149` / `SleepTimerManager.kt:37-43` | Dos temporizadores en paralelo con preset forzado `MIN_15` unificados en `SleepTimerManager` como autoridad única | `ReaderViewModel` ↔ `SleepTimer` ↔ `TtsManager.smartSleepTimerManager` | 🟡 **Validar en tlf.** | Probar en teléfono moto_e22i: temporizador de 20 min (cuenta regresiva real), fin de capítulo (-1, detiene TTS y ambiente) y cancelación (restaura velocidad). | Unificada la autoridad en `SleepTimerManager` con soporte de minutos arbitrarios y fin de capítulo (-1). En `ReaderViewModel` se eliminó la corrutina concurrente de `smartSleepTimerManager`, sincronizando parada de narración y ambientes sonoros. |
+| **M26** | Media | `ReaderViewModel.kt:167-195, 1349-1430, 1463-1540` | Retorno anticipado antes de la rama PDF desacoplado de `VisualNavigator` en PDF y Reflow usando TOC | `ReaderViewModel` → Navegación PDF Reflow | 🟡 **Validar en tlf. (hasta P4)** | Confirmado en código: retorno anticipado (`val nav = navigator ?: return`) impedía alcanzar la rama PDF cuando `navigator` era null. No confirmado: que `navigator` sea efectivamente `null` en vista libro. Validar en `moto_e22i` en P4: botones de siguiente/anterior capítulo en barra inferior (modo libro y reflow) y avance automático de TTS. | Desacoplada la navegación por capítulos en PDF/Reflow vía `resolveNextPdfPageFromToc` / `resolvePreviousPdfPageFromToc` en `ReaderChapterNavigationCoordinator`. Estado 🟡 hasta pruebas de integración en P4. |
 | **M27** | Media | `ReaderViewModel.kt:2143`, `ReaderContract.kt:39` | `ReaderViewState` contiene 10 de 14 campos obsoletos/nunca actualizados, y `ReaderState` duplica sus campos activos | `ReaderViewModel` ↔ `ReaderContract` ↔ `ReaderViewState` | 🔴 **Pendiente** | Inspeccionar `_viewState`: solo actualiza 4 campos (bloques de narración y PDF); los otros 10 campos nunca se mutan y la UI no observa `viewState`. | Eliminar campos muertos de `ReaderViewState` o fusionarlo con `ReaderState` en `ReaderContract.kt`. |
 | **M28** | Media | `ReaderViewModel.kt:1066, 1205` | Bloques duplicados de cálculo de tiempo restante y progreso de capítulo entre `onTtsLocatorChanged` y `saveProgress` | `ReaderViewModel` ↔ `CalculateReadingStatsUseCase` | ✅ **Resuelto** | Comparar L1066 con L1205: cálculo unificado en función privada `updateReadingStats(locator, activeWpm)`. | Unificada la lógica duplicada en `updateReadingStats(locator, activeWpm)`, eliminando 54 líneas repetidas y estandarizando `DEFAULT_READING_WPM`. |
-| **M29** | Baja | `ReaderViewModel.kt:141` | `readingProgressManager` inyectado en el constructor de `ReaderViewModel` sin ningún uso en todo el archivo | `ReaderViewModel` ↔ `ReadingProgressManager` | 🔴 **Pendiente** | Buscar `readingProgressManager` en `ReaderViewModel.kt`: solo aparece en L141 en la firma del constructor. | Eliminar la inyección de `ReadingProgressManager` del constructor de `ReaderViewModel`. |
+| **M29** | Baja | `ReaderViewModel.kt` | `readingProgressManager` inyectado en el constructor de `ReaderViewModel` sin uso | `ReaderViewModel` ↔ `ReadingProgressManager` | ✅ **Resuelto** | Verificada la firma del constructor: 0 referencias a `readingProgressManager`. | Inyección eliminada de `ReaderViewModel`, reduciendo parámetros inyectados a 17. |
 
-### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en TECNO-LH7n)
+### 📱 Riesgos que Solo se Detectan en Dispositivo Físico (Validación en moto_e22i)
 
 Los siguientes comportamientos dependen de subsistemas de hardware, controladores OEM y el kernel de Android, por lo que **NO PUEDEN DARSE POR RESUELTOS (✅)** mediante pruebas unitarias en JVM ni en emulador estándar:
 
@@ -2454,7 +2454,7 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
    - *Verificación física:* Probar que `TtsManager` pause suavemente la narración y la reanude en el punto exacto al colgar, sin superponerse ni perder la posición de lectura.
 2. **Compatibilidad con `utteranceId == null` o Modificado por Motores TTS OEM**:
    - *Riesgo:* Dispositivos de fabricantes como Samsung, Xiaomi (MIUI) o Tecno (HiOS) ejecutan motores de síntesis propietarios que a veces omiten o alteran el `utteranceId` en el callback `onDone()`.
-   - *Verificación física:* Comprobar en el teléfono TECNO-LH7n que la narración de párrafos consecutivos fluya sin detenerse eternamente esperando el listener.
+   - *Verificación física:* Comprobar en el teléfono moto_e22i que la narración de párrafos consecutivos fluya sin detenerse eternamente esperando el listener.
 3. **Arranque en Frío con Sherpa ONNX y Latencia de Inferencia por Hardware**:
    - *Riesgo:* Cargar los modelos ONNX (VITS / Piper) en la memoria RAM y asignarlos a la NPU/CPU de la arquitectura MediaTek puede tardar entre 150 y 350 ms.
    - *Verificación física:* Confirmar que el método `ensurePreferencesLoaded(timeoutMs = 300)` impida condiciones de carrera sin congelar la UI de lectura al pulsar Play en frío.
@@ -2472,20 +2472,20 @@ Los siguientes comportamientos dependen de subsistemas de hardware, controladore
    - *Verificación física:* Abrir un libro voluminoso (>1.000 páginas) en el teléfono y cronometrar que el fast-path sintético $O(1)$ abra la pantalla instantáneamente en memoria (tiempo objetivo estimado <200 ms).
 7. **Temporizador de Sueño Inteligente, Fin de Capítulo y Cancelación (M25)**:
    - *Riesgo:* Desincronización en la cuenta regresiva, doble parada de audio o falta de restauración de velocidad del motor TTS al cancelar o expirar.
-   - *Verificación física:* En el teléfono TECNO-LH7n:
+   - *Verificación física:* En el teléfono moto_e22i:
      - Configurar temporizador personalizado de 20 min y verificar que el contador descienda con precisión.
      - Activar modo "Fin del Cap." (-1) y verificar que la narración y los sonidos de ambiente se detengan al culminar el capítulo actual.
      - Cancelar el temporizador durante la rampa de frenado final y verificar que la velocidad del audio retorne a su valor original sin artefactos.
 8. **Navegación por Capítulos y Avance Automático de TTS en PDF / Reflow (M26)** (Estado 🟡 hasta la P4):
    - *Confirmado vs no confirmado:* Confirmado en código que el retorno anticipado (`val nav = navigator ?: return`) impedía ejecutar la navegación PDF si `navigator` era null. No confirmado que `navigator` sea efectivamente `null` en vista libro en runtime (validación física en dispositivo requerida).
    - *Riesgo:* En libros PDF (tanto en modo estándar de dos páginas/libro como en modo Reflow vertical), el usuario puede pulsar los botones de salto de capítulo en la barra inferior o finalizar la narración del capítulo actual con avance automático activado (`advanceTtsToNextChapter`).
-   - *Verificación física:* En el teléfono TECNO-LH7n:
+   - *Verificación física:* En el teléfono moto_e22i:
      - Abrir un PDF con tabla de contenidos (TOC) estructurada en modo libro y en modo Reflow.
      - Pulsar el botón de siguiente capítulo y anterior capítulo en el slider inferior: verificar que la página salte al inicio del capítulo correspondiente sin requerir `navigator` activo en Compose.
      - Activar TTS cerca del final del capítulo y confirmar que al concluir el último bloque de texto, la app cargue y comience a sintetizar automáticamente el siguiente capítulo sin congelarse ni interrumpir la sesión de lectura.
 9. **Control de Voces Sherpa/Edge, Soundscapes de Ambiente y Temporizador en Controlador Desacoplado (C3 / P6)**:
    - *Riesgo:* Condiciones de carrera al cambiar entre modelos de voz ONNX en caliente, descarga en segundo plano y extracción de modelos tar.bz2 en almacenamiento local, activación de soundscapes concurrentes (`ForestAmbienceEngine` + `AmbientSoundscapePlayer`) o parada de sleep timer.
-   - *Verificación física:* En el teléfono TECNO-LH7n:
+   - *Verificación física:* En el teléfono moto_e22i:
      - Cambiar voz de síntesis Sherpa ONNX a una voz ya descargada y probar síntesis en caliente.
      - Seleccionar una voz no descargada: verificar apertura del diálogo oficial de descarga, progreso de descarga porcentual y conmutación automática una vez extraído el modelo.
      - Activar soundscape de ambiente (`ForestAmbienceEngine`) mientras se reproduce TTS y ajustar volumen relativo.
@@ -2577,7 +2577,7 @@ Antes de alterar cualquier componente:
 3. **Revisar Registro Consolidado (Sección 14):** Consulta la Matriz Consolidada de Hallazgos y la subsección de Riesgos en Dispositivo para no reintroducir bugs ya mitigados ni pasar por alto condiciones de carrera de hardware.
 4. **Respetar la Leyenda de Estados:**
    - ✅ **Resuelto / Verificado en código:** El cambio cuenta con pruebas unitarias en verde y revisión estricta de código.
-   - 🟡 **Resuelto en código, pendiente de validación en dispositivo (TECNO-LH7n):** Requiere comprobación física en hardware antes de promoverse a ✅.
+   - 🟡 **Resuelto en código, pendiente de validación en dispositivo (moto_e22i):** Requiere comprobación física en hardware antes de promoverse a ✅.
    - 🔴 **Pendiente:** Deuda técnica identificada que debe abordarse bajo un plan dedicado.
    - ⚪ **No verificado:** Estado preventivo de componentes no auditados.
 5. **Verificación Continua:** Ejecutar obligatoriamente `.\gradlew.bat :app:compileDebugKotlin` y `.\gradlew.bat :app:testDebugUnitTest` tras cada fase de trabajo.
@@ -2585,3 +2585,16 @@ Antes de alterar cualquier componente:
 ---
 
 *`dona.md` es un documento vivo de alta fidelidad mantenido bajo control de versiones.*
+### Historial de PRs Recientes (Consolidación)
+- **PR 2 (`refactor/dead-code-pr2`):** ✅ FUSIONADO en `master`. Limpieza de dead code en capas de dominio y librerías.
+- **PR 3 (`refactor/pr3-locator-dedupe`):** ✅ FUSIONADO en `master`. Guarda de identidad en setter de `navigator` (`field !== value`) y deduplicación de emisión en PDF original.
+- **`feature/reader-screen-cleanup`:** ✅ COMPLETADO (10 commits atómicos, 589 tests verdes, -110 líneas en `ReaderScreen.kt`).
+  - Cooldown táctil reactivo con `rememberUpdatedState`.
+  - Resaltado TTS EPUB y loop 60fps Teleprompter desacoplados de toques del usuario.
+  - Fuga de `navigator` resuelta (`viewModel.navigator = null` en `onFragmentDetached` y `onDispose`).
+  - `volumeControlStream` reseteado a `USE_DEFAULT_STREAM_TYPE` al pausar/detener TTS.
+  - 41 imports huérfanos y variables locales muertas purgados.
+- **Blindaje de Persistencia (`SaveReadingProgressUseCase.kt` & `ReaderViewModel.kt`):** ✅ COMPLETADO.
+  - `SaveReadingProgressUseCase` promovido a `@Singleton` con `saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)`.
+  - Salvaguarda en `saveProgressDebounced`: si `locator == null`, hace fallback a `lastSavedLocatorJson` evitando sobrescribir `currentLocatorJson = ""` en Room.
+  - En `onReflowScroll`: pasa `locator = annotations.currentLocator` en lugar de `null`.
