@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.readium.r2.shared.publication.Locator
 import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * Caso de uso responsable de la persistencia atómica y optimizada del progreso de lectura.
@@ -18,6 +20,7 @@ import javax.inject.Inject
  * - Debouncing de escrituras frecuentes para evitar contención de I/O en disco durante el scroll continuo.
  * - Guardado sincrónico inmediato (`flushImmediately`) en SharedPreferences (checkpoint) y Room para ON_PAUSE y onCleared.
  */
+@Singleton
 class SaveReadingProgressUseCase @Inject constructor(
     @ApplicationContext private val context: Context,
     private val bookRepository: BookRepository
@@ -30,8 +33,13 @@ class SaveReadingProgressUseCase @Inject constructor(
         const val TTS_DEBOUNCE_MS = 10_000L
     }
 
+    private val saveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private var lastSaveTimeMs: Long = 0L
     private var lastTtsSaveTimeMs: Long = 0L
+    /**
+     * Estado cacheado del último locator serializado. Asume una única sesión de lectura activa a la vez.
+     */
     private var lastSavedLocatorJson: String? = null
 
     fun getLastSavedLocatorJson(): String? = lastSavedLocatorJson
@@ -67,10 +75,11 @@ class SaveReadingProgressUseCase @Inject constructor(
         }
         lastSaveTimeMs = now
 
-        val locJson = serializeLocator(locator)
-        if (locJson.isNotEmpty()) {
-            lastSavedLocatorJson = locJson
+        val serialized = serializeLocator(locator)
+        if (serialized.isNotEmpty()) {
+            lastSavedLocatorJson = serialized
         }
+        val locJson = serialized.ifEmpty { lastSavedLocatorJson.orEmpty() }
         val href = locator?.href?.toString() ?: ""
         val pos = fallbackPosition ?: locator?.locations?.position ?: 0
 
@@ -150,7 +159,7 @@ class SaveReadingProgressUseCase @Inject constructor(
      * 2. Lanza persistencia inmediata en Room DB sin esperar ningún temporizador ni debounce.
      */
     fun flushImmediately(
-        scope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+        scope: CoroutineScope = saveScope,
         bookId: String,
         chapterIndex: Int,
         progress: Float,

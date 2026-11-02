@@ -1430,7 +1430,7 @@ class ReaderViewModel @Inject constructor(
                     scope = viewModelScope,
                     bookId = bookId,
                     progress = progress,
-                    locator = null,
+                    locator = annotations.currentLocator,
                     fallbackPosition = pageNumber,
                     force = true
                 )
