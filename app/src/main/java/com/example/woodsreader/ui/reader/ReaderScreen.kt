@@ -491,237 +491,29 @@ fun ReaderScreen(
     // Envolvemos TODO en una Box para permitir la capa Splash
     Box(modifier = Modifier.fillMaxSize()) {
 
-    var lastSubmittedEpubPrefs by remember { mutableStateOf<org.readium.r2.navigator.epub.EpubPreferences?>(null) }
-    LaunchedEffect(navigatorState.value, epubPreferences) {
-        val nav = navigatorState.value ?: return@LaunchedEffect
-        if (nav is EpubNavigatorFragment) {
-            if (lastSubmittedEpubPrefs != null && lastSubmittedEpubPrefs != epubPreferences) {
-                nav.submitPreferences(epubPreferences)
-            }
-            lastSubmittedEpubPrefs = epubPreferences
-            nav.safePublicationView?.let { pubView ->
-                applyToAllWebViews(pubView) { wv ->
-                    wv.applyCustomFontFamily(userPreferences.fontFamily)
-                }
-            }
-        } else if (nav is PdfNavigatorFragment<*, *>) {
-            @Suppress("UNCHECKED_CAST")
-            (nav as PdfNavigatorFragment<*, org.readium.adapter.pdfium.navigator.PdfiumPreferences>).submitPreferences(userPreferences.toPdfPreferences())
-        }
-    }
-
-    LaunchedEffect(navigatorState.value, highlights, highlightColors) {
-        val nav = navigatorState.value as? DecorableNavigator ?: return@LaunchedEffect
-        val decorations = highlights.mapNotNull { hl ->
-            try {
-                val color = when (hl.color) {
-                    com.example.woodsreader.data.model.HighlightColor.YELLOW -> highlightColors.yellow
-                    com.example.woodsreader.data.model.HighlightColor.GREEN -> highlightColors.green
-                    com.example.woodsreader.data.model.HighlightColor.BLUE -> highlightColors.blue
-                    com.example.woodsreader.data.model.HighlightColor.PINK -> highlightColors.pink
-                    com.example.woodsreader.data.model.HighlightColor.RED -> highlightColors.red
-                }
-                val loc = hl.toLocator() ?: return@mapNotNull null
-                Decoration(
-                    id = hl.id,
-                    locator = loc,
-                    style = Decoration.Style.Highlight(tint = color.toArgb())
-                )
-            } catch (_: Exception) { null }
-        }
-        nav.applyDecorations(decorations, "highlights")
-    }
-
     val isPdf = (uiState as? ReaderUiState.Success)?.book?.format?.name == "PDF"
     val currentTtsPage by viewModel.currentTtsPage.collectAsStateWithLifecycle()
 
-    // Sincronización TTS para EPUB: resaltado elegante cambiando el color de letra (idéntico a PDF Reflow) y seguimiento visual
-    LaunchedEffect(ttsState, navigatorState.value, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
-        val nav = navigatorState.value ?: return@LaunchedEffect
-        val decorableNav = nav as? DecorableNavigator
-        
-        if (ttsState == TtsState.PLAYING) {
-            var lastHighlightedSentence = ""
-            var lastTargetResource = ""
-            var lastPageTurnTime = 0L
-
-            viewModel.currentTtsLocator.collectLatest { locator ->
-                if (locator == null) return@collectLatest
-                val sentenceText = locator.text.highlight ?: viewModel.currentTtsSentence.value
-                if (sentenceText.isNullOrBlank()) return@collectLatest
-                if (sentenceText == lastHighlightedSentence) return@collectLatest
-                lastHighlightedSentence = sentenceText
-
-                // 1. Asegurar que Readium no dibuje ninguna caja de fondo nativa
-                if (decorableNav != null) {
-                    decorableNav.applyDecorations(emptyList(), "tts")
-                    decorableNav.applyDecorations(emptyList(), "tts-scrub")
-                }
-
-                val cssSelector = locator.locations.otherLocations["cssSelector"] as? String
-                val isPaginated = false // En modo unificado el layout base es vertical continuo para scroll libre y fluido
-
-                // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
-                val now = System.currentTimeMillis()
-                val isTouchActive = isTouchActiveState.value
-                val isLockActive = (now - lastInteractionTime) < 3000L
-                val autoScrollEnabled = !isTouchActive && !isLockActive && userPreferences.ttsAutoScroll
-
-                if (nav is VisualNavigator) {
-                    val currentScreenLoc = nav.currentLocator.value
-                    val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
-                    val currentRes = currentScreenLoc.href.toString().substringAfterLast('/').substringBefore('#')
-
-                    if (targetRes.isNotEmpty() && currentRes.isNotEmpty() && targetRes != currentRes && targetRes != lastTargetResource && autoScrollEnabled) {
-                        lastTargetResource = targetRes
-                        nav.go(locator, animated = false)
-                        kotlinx.coroutines.delay(250L)
-                        val newWv = nav.safePublicationView?.let { findActiveWebView(it) }
-                        newWv?.applyCustomTtsHighlight(
-                            cssSelector = cssSelector,
-                            textSnippet = sentenceText,
-                            style = userPreferences.ttsHighlightStyle,
-                            theme = userPreferences.theme,
-                            isPaginated = isPaginated,
-                            autoScroll = autoScrollEnabled,
-                            onPageAction = { action ->
-                                if (!isTouchActiveState.value) {
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastPageTurnTime > 350L) {
-                                        lastPageTurnTime = now
-                                        when (action) {
-                                            "NEXT" -> nav.goForwardCompat(animated = true)
-                                            "PREV" -> nav.goBackwardCompat(animated = true)
-                                            "JUMP" -> nav.go(locator, animated = false)
-                                        }
-                                    }
-                                }
-                            }
-                        )
-                    } else {
-                        val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
-                        activeWv?.applyCustomTtsHighlight(
-                            cssSelector = cssSelector,
-                            textSnippet = sentenceText,
-                            style = userPreferences.ttsHighlightStyle,
-                            theme = userPreferences.theme,
-                            isPaginated = isPaginated,
-                            autoScroll = autoScrollEnabled,
-                            onPageAction = { action ->
-                                if (!isTouchActiveState.value) {
-                                    val now = System.currentTimeMillis()
-                                    if (now - lastPageTurnTime > 350L) {
-                                        lastPageTurnTime = now
-                                        when (action) {
-                                            "NEXT" -> nav.goForwardCompat(animated = true)
-                                            "PREV" -> nav.goBackwardCompat(animated = true)
-                                            "JUMP" -> nav.go(locator, animated = false)
-                                        }
-                                    }
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-        } else {
-            if (decorableNav != null) {
-                decorableNav.applyDecorations(emptyList(), "tts")
-                decorableNav.applyDecorations(emptyList(), "tts-scrub")
-            }
-            if (nav is VisualNavigator) {
-                nav.safePublicationView?.let { pubView ->
-                    applyToAllWebViews(pubView) { wv ->
-                        wv.clearCustomTtsHighlight()
-                    }
-                }
-            }
-        }
-    }
-
-    // Sincronización automática de página para PDF Original (modo no reflow)
-    var lastNavigatedPdfPage by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(currentTtsPage, ttsState, isReflowMode, isPdf, navigatorState.value, userPreferences.ttsAutoScroll) {
-        if (isPdf && !isReflowMode && ttsState == TtsState.PLAYING && currentTtsPage > 0) {
-            val nav = navigatorState.value ?: return@LaunchedEffect
-            if (!userPreferences.ttsAutoScroll) return@LaunchedEffect
-
-            // Si el usuario acaba de tocar la pantalla (ej. al pulsar Play), esperar brevemente en vez de descartar el salto de página
-            while (isUserInteracting || (System.currentTimeMillis() - lastInteractionTime) < 1200L) {
-                delay(250L)
-            }
-
-            if (lastNavigatedPdfPage != currentTtsPage) {
-                lastNavigatedPdfPage = currentTtsPage
-                val loc = viewModel.getLocatorForPdfPage(currentTtsPage)
-                if (loc != null && nav is VisualNavigator) {
-                    nav.go(loc, animated = false)
-                }
-            }
-        } else if (ttsState != TtsState.PLAYING) {
-            lastNavigatedPdfPage = -1
-        }
-    }
-
-    // Corrutina de Teleprompter / Auto-Scroll suave a 60 FPS con pausa táctil inteligente
-    LaunchedEffect(isAutoScrollActive) {
-        if (!isAutoScrollActive) {
-            viewModel.setAutoScrollManuallyPaused(false)
-            endOfChapterTime = null
-            isAdvancingChapter = false
-        }
-    }
-
-    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, navigatorState.value, ttsState) {
-        if (!isAutoScrollActive) return@LaunchedEffect
-
-        val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
-        var accumulatedPx = 0f
-
-        while (isActive) {
-            delay(16L)
-
-            val now = System.currentTimeMillis()
-            val isTouchPaused = isTouchActiveState.value
-
-            if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter || ttsState == TtsState.PLAYING) {
-                continue
-            }
-
-            val pubView = nav.safePublicationView
-            val activeWv = pubView?.let { findActiveWebView(it) }
-
-            if (activeWv != null) {
-                if (activeWv.canScrollVertically(1)) {
-                    endOfChapterTime = null
-                    val density = activeWv.resources.displayMetrics.density.coerceAtLeast(1f)
-                    val wordsPerSec = autoScrollWpm / 60.0f
-                    val pxPerWord = 9.2f * density
-                    val pxPerSec = wordsPerSec * pxPerWord
-                    val deltaPx = pxPerSec * 0.016f
-
-                    accumulatedPx += deltaPx
-                    if (accumulatedPx >= 1.0f) {
-                        val pxToScroll = accumulatedPx.toInt()
-                        activeWv.scrollBy(0, pxToScroll)
-                        accumulatedPx -= pxToScroll
-                    }
-                } else {
-                    val reachedTime = endOfChapterTime
-                    if (reachedTime == null) {
-                        endOfChapterTime = now
-                    } else if (now - reachedTime >= 2500L && !isAdvancingChapter) {
-                        isAdvancingChapter = true
-                        endOfChapterTime = null
-                        viewModel.goToNextChapter(nav)
-                        delay(800L)
-                        isAdvancingChapter = false
-                        accumulatedPx = 0f
-                    }
-                }
-            }
-        }
-    }
+    ReaderSyncEffects(
+        navigator = navigator,
+        epubPreferences = epubPreferences,
+        userPreferences = userPreferences,
+        highlights = highlights,
+        highlightColors = highlightColors,
+        ttsState = ttsState,
+        isTouchActiveState = isTouchActiveState,
+        lastInteractionTime = lastInteractionTime,
+        isUserInteracting = isUserInteracting,
+        isReflowMode = isReflowMode,
+        isPdf = isPdf,
+        currentTtsPage = currentTtsPage,
+        isAutoScrollActive = isAutoScrollActive,
+        autoScrollWpm = autoScrollWpm,
+        isAutoScrollManuallyPaused = isAutoScrollManuallyPaused,
+        onEndOfChapterReached = { endOfChapterTime = System.currentTimeMillis() },
+        onEndOfChapterReset = { endOfChapterTime = null },
+        viewModel = viewModel
+    )
 
     val pageTurnState = rememberBookPageTurnState()
 
@@ -1371,245 +1163,19 @@ fun ReaderScreen(
             }
         }
 
-        // CAPA 3: Hoja de Control Multifuncion (Audio, Notas, Diseño)
-        if (showAudioSheet) {
-            ReaderControlBottomSheet(
-                activeTab = activeTab,
-                onTabChange = { activeTab = it },
-                bookTitle = successState?.book?.title ?: "",
-                bookAuthor = successState?.book?.author ?: "",
-                // Notes Props
-                highlights = highlights,
-                bookmarks = bookmarks,
-                onHighlightClick = { hl ->
-                    val loc = hl.toLocator()
-                    if (loc != null) viewModel.goToLocator(navigator, loc)
-                    showAudioSheet = false
-                },
-                onBookmarkClick = { bm ->
-                    val loc = bm.toLocator()
-                    if (loc != null) viewModel.goToLocator(navigator, loc)
-                    showAudioSheet = false
-                },
-                onDeleteHighlight = { viewModel.deleteHighlight(it) },
-                onDeleteBookmark = { viewModel.deleteBookmark(it) },
-                // Settings Props
-                preferences = userPreferences,
-                onThemeChange = { viewModel.onThemeChange(it) },
-                onFontSizeChange = { viewModel.onFontSizeChange(it) },
-                onLineSpacingChange = { viewModel.onLineSpacingChange(it) },
-                onMarginChange = { viewModel.onMarginChange(it) },
-                onTextAlignChange = { viewModel.onTextAlignChange(it) },
-                onFontFamilyChange = { viewModel.onFontFamilyChange(it) },
-                onHyphenationChange = { viewModel.updateHyphenation(it) },
-                onVolumeKeysNavigationChange = { viewModel.updateVolumeKeysNavigation(it) },
-                onScrollModeChange = { viewModel.onScrollModeChange(it) },
-                onPageTurnAnimationChange = { viewModel.onPageTurnAnimationChange(it) },
-                onPageTurnStyleChange = { viewModel.onPageTurnStyleChange(it) },
-                onInvertedTapZonesChange = { viewModel.onInvertedTapZonesChange(it) },
-                onTtsHighlightStyleChange = { viewModel.updateTtsHighlightStyle(it) },
-                hazeState = hazeState,
-                onDismiss = { showAudioSheet = false }
-            )
-        }
-
-        if (showTtsMacroWindow) {
-            val lastTtsLocator by viewModel.lastTtsLocator.collectAsStateWithLifecycle()
-            val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
-            val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
-            val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
-            val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
-            val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
-            val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
-            val availableVoices by viewModel.availableVoices.collectAsStateWithLifecycle()
-            val macroGlobalProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
-            ReaderTtsMacroWindow(
-                hazeState = hazeState,
-                coverPath = successState?.book?.coverCachePath,
-                title = successState?.book?.title ?: "",
-                author = successState?.book?.author ?: "",
-                progress = macroGlobalProgress,
-                ttsState = ttsState,
-                isLoadingTtsModel = isLoadingTtsModel,
-                currentSpeed = currentSpeed,
-                currentLanguage = userPreferences.ttsLanguage,
-                ttsAutoScroll = userPreferences.ttsAutoScroll,
-                availableVoices = availableVoices,
-                currentVoiceName = userPreferences.ttsVoiceName,
-                onVoiceChange = { viewModel.updateTtsVoiceName(it) },
-                onOpenRules = { showTtsRulesSheet = true },
-                onPlay = { 
-                    if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
-                        viewModel.onPlay()
-                    } else {
-                        viewModel.resumeTts()
-                    }
-                },
-                onPause = { viewModel.pauseTts() },
-                onStop = { viewModel.stopTts() },
-                onSpeedChange = { s -> viewModel.onSpeedChange(s) },
-                onLanguageChange = { lang -> viewModel.onLanguageChange(lang) },
-                onTtsAutoScrollChange = { enabled -> viewModel.onTtsAutoScrollChange(enabled) },
-                useSherpaTts = userPreferences.useSherpaTts,
-                onUseSherpaTtsChange = { enabled -> viewModel.updateUseSherpaTts(enabled) },
-                sherpaDownloadState = sherpaDownloadState,
-                currentPitch = currentPitch,
-                onPitchChange = { pitch -> viewModel.onPitchChange(pitch) },
-                onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
-                onSkipSentenceBackward = { viewModel.skipTtsSentenceBackward() },
-                onSkipChapterForward = { viewModel.skipTtsChapterForward() },
-                onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
-                onSleepTimer = { mins -> viewModel.startSleepTimer(mins) },
-                onCancelSleepTimer = { viewModel.cancelSleepTimer() },
-                sleepTimerRemaining = sleepTimerRemaining,
-                activeAmbiencePreset = viewModel.activeAmbiencePreset,
-                onToggleNextAmbience = { viewModel.toggleNextAmbience() },
-                onInstallTtsPresetPack = { pack ->
-                    viewModel.installTtsPresetPackWithResult(pack)
-                },
-                currentSentenceFlow = viewModel.currentTtsSentence,
-                currentTtsRangeFlow = viewModel.currentTtsRange,
-                chapterInfoFlow = viewModel.chapterInfo,
-                ttsUiStyle = userPreferences.ttsUiStyle,
-                onTtsUiStyleChange = { viewModel.updateTtsUiStyle(it) },
-                ttsHighlightStyle = userPreferences.ttsHighlightStyle,
-                onTtsHighlightStyleChange = { viewModel.updateTtsHighlightStyle(it) },
-                hasLastPosition = lastTtsLocator != null,
-                onResumeLast = {
-                    viewModel.playTtsFromLast()
-                    showTtsMacroWindow = false
-                },
-                selectedSherpaVoice = selectedSherpaVoice,
-                onSelectSherpaVoice = { viewModel.selectOrDownloadSherpaVoice(it) },
-                isSherpaVoiceDownloaded = { viewModel.isSherpaVoiceDownloaded(it) },
-                onDeleteSherpaVoice = { viewModel.deleteSherpaVoiceFromReader(it) },
-                audioExportState = audioExportState,
-                onExportChapterAudio = { viewModel.exportCurrentChapterToAudio() },
-                onExportAudioChapters = { viewModel.exportAudioChapters(it) },
-                onCancelAudioExport = { viewModel.cancelAudioExport() },
-                onResetAudioExportState = { viewModel.resetAudioExportState() },
-                useEdgeNeuralTts = useEdgeNeuralTts,
-                onUseEdgeNeuralTtsChange = { viewModel.setUseEdgeNeuralTts(it) },
-                selectedEdgeVoice = selectedEdgeVoice,
-                onSelectEdgeVoice = { viewModel.selectEdgeVoice(it) },
-                proLicenseManager = viewModel.proLicenseManager,
-                keepAliveManager = viewModel.woodsKeepAliveManager,
-                onDismiss = { showTtsMacroWindow = false }
-            )
-        }
-
-        if (showSherpaDownloadDialog) {
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissSherpaDownloadDialog() },
-                title = {
-                    Text(
-                        "Descargar Voz Neuronal (IA)",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = HiddenForest.Text
-                    )
-                },
-                text = {
-                    Text(
-                        "La voz neural de alta calidad (Sherpa ONNX) se ejecuta 100% offline en tu dispositivo.\n\nRequiere una descarga única de aproximadamente 64 MB. ¿Deseas descargarla ahora?",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = HiddenForest.TextSecondary
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { viewModel.downloadSherpaModel() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = HiddenForest.Accent,
-                            contentColor = HiddenForest.Background
-                        )
-                    ) {
-                        Text("Descargar (~64 MB)", fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { viewModel.dismissSherpaDownloadDialog() }) {
-                        Text("Cancelar", color = HiddenForest.TextLow)
-                    }
-                },
-                containerColor = HiddenForest.Surface,
-                shape = RoundedCornerShape(16.dp)
-            )
-        }
-
-        if (showToc && successState != null) {
-            TocBottomSheet(
-                publication = successState.publication,
-                currentHref = currentLocator?.href?.toString(),
-                hazeState = hazeState,
-                onChapterClick = { link ->
-                    val locator = successState.publication.locatorFromLink(link)
-                    val isPdf = successState.book.format.name == "PDF"
-                    val targetPage = if (isPdf) resolveTocTargetPage(link, locator) else locator?.locations?.position
-
-                    val finalLocator = locator ?: run {
-                        val readingOrderLink = successState.publication.readingOrder.firstOrNull()
-                        if (readingOrderLink != null && targetPage != null) {
-                            successState.publication.locatorFromLink(readingOrderLink)?.copy(
-                                locations = Locator.Locations(position = targetPage)
-                            )
-                        } else null
-                    }
-
-                    if (finalLocator != null) {
-                        viewModel.goToLocator(navigator, finalLocator)
-                    }
-
-                    if (isReflowMode && targetPage != null) {
-                        viewModel.jumpToReflowPage(targetPage)
-                    }
-                    showToc = false
-                },
-                onDismiss = { showToc = false }
-            )
-        }
-
-        if (showSearch && successState != null) {
-            SearchBottomSheet(
-                publication = successState.publication,
-                initialQuery = initialSearchQuery,
-                hazeState = hazeState,
-                onResultClick = { locator ->
-                    viewModel.goToLocator(navigator, locator)
-                    val targetSnippet = locator.text.highlight?.takeIf { it.isNotBlank() }
-                        ?: listOfNotNull(locator.text.before, locator.text.highlight, locator.text.after)
-                            .joinToString(" ").trim().takeIf { it.isNotBlank() }
-                    val progression = locator.locations.progression
-                    val nav = navigator
-                    if (nav is EpubNavigatorFragment) {
-                        scope.launch {
-                            delay(350L)
-                            val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
-                            activeWv?.highlightAndScrollToSearchHit(targetSnippet, progression)
-                        }
-                    }
-                    showSearch = false
-                    initialSearchQuery = ""
-                },
-                onDismiss = {
-                    showSearch = false
-                    initialSearchQuery = ""
-                }
-            )
-        }
-
-        if (showXRaySheet) {
-            ReaderXRayBottomSheet(
-                report = xRayReport,
-                hazeState = hazeState,
-                onSearchInBook = { query ->
-                    initialSearchQuery = query
-                    showSearch = true
-                    showXRaySheet = false
-                },
-                onDismiss = { showXRaySheet = false }
-            )
-        }
-
+        ReaderTtsMacroWindowHost(
+            show = showTtsMacroWindow,
+            viewModel = viewModel,
+            userPreferences = userPreferences,
+            hazeState = hazeState,
+            successState = successState,
+            ttsState = ttsState,
+            isLoadingTtsModel = isLoadingTtsModel,
+            currentSpeed = currentSpeed,
+            currentPitch = currentPitch,
+            onOpenRules = { showTtsRulesSheet = true },
+            onDismiss = { showTtsMacroWindow = false }
+        )
 
         // CAPA 5: TTS Controls (style-dependent)
         val chapterProgressForTts = chapterInfoForTts.progress
@@ -1670,79 +1236,686 @@ fun ReaderScreen(
 
 
 
-        if (showTtsRulesSheet) {
-            TtsRulesBottomSheet(
-                rules = ttsRules,
-                onSaveRule = { viewModel.saveTtsRule(it) },
-                onDeleteRule = { viewModel.deleteTtsRule(it) },
-                onInstallPresetPack = { pack -> viewModel.installTtsPresetPack(pack) },
-                onDismiss = { showTtsRulesSheet = false }
-            )
-        }
-
-        if (isTtsScreenLocked && successState != null) {
-            val lockProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
-            ReaderTtsLockOverlay(
-                modifier = Modifier.zIndex(100f),
-                bookTitle = successState.book.title,
-                bookAuthor = successState.book.author,
-                chapterName = chapterInfoForTts.title ?: "",
-                progress = lockProgress,
-                isTtsPlaying = ttsState == TtsState.PLAYING,
-                hazeState = hazeState,
-                onUnlock = { isTtsScreenLocked = false }
-            )
-        }
-
-        if (showEgoGraphSheet && successState != null) {
-            ReaderEgoGraphBottomSheet(
-                bookId = successState.book.id,
-                currentChapterIndex = viewModel.getCurrentChapterIndex(),
-                initialEntityName = initialEgoEntityName,
-                onDismiss = {
-                    showEgoGraphSheet = false
-                    initialEgoEntityName = null
-                },
-                onNavigateToFullGraph = {
-                    showEgoGraphSheet = false
-                    onNavigateToGraph?.invoke(successState.book.id, viewModel.getCurrentChapterIndex())
-                },
-                onJumpToLocator = { targetLocator ->
-                    showEgoGraphSheet = false
-                    val nav = navigatorState.value
-                    if (nav != null) {
-                        viewModel.goToLocator(nav, targetLocator)
-                    }
-                },
-                viewModel = egoGraphViewModel
-            )
-        }
-
-        if (showAddToGraphDialog && successState != null) {
-            AddEntityFromSelectionDialog(
-                initialName = entityNameToAdd,
-                onDismiss = {
-                    showAddToGraphDialog = false
-                    entitySelectionLocator = null
-                },
-                onConfirm = { name, type, description ->
-                    showAddToGraphDialog = false
-                    val loc = entitySelectionLocator
-                    entitySelectionLocator = null
-                    egoGraphViewModel.addEntityFromSelection(
-                        bookId = successState.book.id,
-                        name = name,
-                        type = type,
-                        description = description,
-                        currentChapter = viewModel.getCurrentChapterIndex(),
-                        locator = loc
-                    )
-                    clearActiveSelection()
-                    Toast.makeText(context, "Entidad '$name' añadida al grafo", Toast.LENGTH_SHORT).show()
-                }
-            )
-        }
+        ReaderModalSheetsAndDialogs(
+            showAudioSheet = showAudioSheet,
+            onDismissAudioSheet = { showAudioSheet = false },
+            activeTab = activeTab,
+            onTabChange = { activeTab = it },
+            showSherpaDownloadDialog = showSherpaDownloadDialog,
+            showToc = showToc,
+            onDismissToc = { showToc = false },
+            showSearch = showSearch,
+            onDismissSearch = { showSearch = false },
+            initialSearchQuery = initialSearchQuery,
+            onResetSearchQuery = { initialSearchQuery = "" },
+            showXRaySheet = showXRaySheet,
+            onDismissXRaySheet = { showXRaySheet = false },
+            onOpenSearchWithQuery = { query ->
+                initialSearchQuery = query
+                showSearch = true
+            },
+            showTtsRulesSheet = showTtsRulesSheet,
+            onDismissTtsRulesSheet = { showTtsRulesSheet = false },
+            isTtsScreenLocked = isTtsScreenLocked,
+            onUnlockScreen = { isTtsScreenLocked = false },
+            showEgoGraphSheet = showEgoGraphSheet,
+            onDismissEgoGraphSheet = {
+                showEgoGraphSheet = false
+                initialEgoEntityName = null
+            },
+            initialEgoEntityName = initialEgoEntityName,
+            showAddToGraphDialog = showAddToGraphDialog,
+            onDismissAddToGraphDialog = {
+                showAddToGraphDialog = false
+                entitySelectionLocator = null
+            },
+            entityNameToAdd = entityNameToAdd,
+            entitySelectionLocator = entitySelectionLocator,
+            onClearEntitySelection = { entitySelectionLocator = null },
+            successState = successState,
+            navigator = navigator,
+            viewModel = viewModel,
+            egoGraphViewModel = egoGraphViewModel,
+            userPreferences = userPreferences,
+            highlights = highlights,
+            bookmarks = bookmarks,
+            xRayReport = xRayReport,
+            ttsRules = ttsRules,
+            chapterInfoForTts = chapterInfoForTts,
+            ttsState = ttsState,
+            isReflowMode = isReflowMode,
+            hazeState = hazeState,
+            currentLocator = currentLocator,
+            onNavigateToGraph = onNavigateToGraph,
+            clearActiveSelection = { clearActiveSelection() }
+        )
 
     }
 }
+}
+// ============================================================================
+// SUB-COMPOSABLES PRIVADOS PARA DESCOMPRESIÓN DE REGISTROS DEX (> 255 REGISTROS)
+// ============================================================================
+
+@Composable
+private fun ReaderTtsMacroWindowHost(
+    show: Boolean,
+    viewModel: ReaderViewModel,
+    userPreferences: com.example.woodsreader.data.datastore.UserPreferences,
+    hazeState: HazeState,
+    successState: ReaderUiState.Success?,
+    ttsState: TtsState,
+    isLoadingTtsModel: Boolean,
+    currentSpeed: Float,
+    currentPitch: Float,
+    onOpenRules: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    if (!show) return
+
+    val lastTtsLocator by viewModel.lastTtsLocator.collectAsStateWithLifecycle()
+    val sleepTimerRemaining by viewModel.sleepTimerRemaining.collectAsStateWithLifecycle()
+    val sherpaDownloadState by viewModel.sherpaDownloadState.collectAsStateWithLifecycle()
+    val selectedSherpaVoice by viewModel.selectedSherpaVoice.collectAsStateWithLifecycle()
+    val audioExportState by viewModel.audioExportState.collectAsStateWithLifecycle()
+    val useEdgeNeuralTts by viewModel.useEdgeNeuralTts.collectAsStateWithLifecycle()
+    val selectedEdgeVoice by viewModel.selectedEdgeVoice.collectAsStateWithLifecycle()
+    val availableVoices by viewModel.availableVoices.collectAsStateWithLifecycle()
+    val macroGlobalProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
+
+    ReaderTtsMacroWindow(
+        hazeState = hazeState,
+        coverPath = successState?.book?.coverCachePath,
+        title = successState?.book?.title ?: "",
+        author = successState?.book?.author ?: "",
+        progress = macroGlobalProgress,
+        ttsState = ttsState,
+        isLoadingTtsModel = isLoadingTtsModel,
+        currentSpeed = currentSpeed,
+        currentLanguage = userPreferences.ttsLanguage,
+        ttsAutoScroll = userPreferences.ttsAutoScroll,
+        availableVoices = availableVoices,
+        currentVoiceName = userPreferences.ttsVoiceName,
+        onVoiceChange = { viewModel.updateTtsVoiceName(it) },
+        onOpenRules = onOpenRules,
+        onPlay = { 
+            if (ttsState == TtsState.IDLE || ttsState == TtsState.STOPPED) {
+                viewModel.onPlay()
+            } else {
+                viewModel.resumeTts()
+            }
+        },
+        onPause = { viewModel.pauseTts() },
+        onStop = { viewModel.stopTts() },
+        onSpeedChange = { s -> viewModel.onSpeedChange(s) },
+        onLanguageChange = { lang -> viewModel.onLanguageChange(lang) },
+        onTtsAutoScrollChange = { enabled -> viewModel.onTtsAutoScrollChange(enabled) },
+        useSherpaTts = userPreferences.useSherpaTts,
+        onUseSherpaTtsChange = { enabled -> viewModel.updateUseSherpaTts(enabled) },
+        sherpaDownloadState = sherpaDownloadState,
+        currentPitch = currentPitch,
+        onPitchChange = { pitch -> viewModel.onPitchChange(pitch) },
+        onSkipSentenceForward = { viewModel.skipTtsSentenceForward() },
+        onSkipSentenceBackward = { viewModel.skipTtsSentenceBackward() },
+        onSkipChapterForward = { viewModel.skipTtsChapterForward() },
+        onSkipChapterBackward = { viewModel.skipTtsChapterBackward() },
+        onSleepTimer = { mins -> viewModel.startSleepTimer(mins) },
+        onCancelSleepTimer = { viewModel.cancelSleepTimer() },
+        sleepTimerRemaining = sleepTimerRemaining,
+        activeAmbiencePreset = viewModel.activeAmbiencePreset,
+        onToggleNextAmbience = { viewModel.toggleNextAmbience() },
+        onInstallTtsPresetPack = { pack ->
+            viewModel.installTtsPresetPackWithResult(pack)
+        },
+        currentSentenceFlow = viewModel.currentTtsSentence,
+        currentTtsRangeFlow = viewModel.currentTtsRange,
+        chapterInfoFlow = viewModel.chapterInfo,
+        ttsUiStyle = userPreferences.ttsUiStyle,
+        onTtsUiStyleChange = { viewModel.updateTtsUiStyle(it) },
+        ttsHighlightStyle = userPreferences.ttsHighlightStyle,
+        onTtsHighlightStyleChange = { viewModel.updateTtsHighlightStyle(it) },
+        hasLastPosition = lastTtsLocator != null,
+        onResumeLast = {
+            viewModel.playTtsFromLast()
+            onDismiss()
+        },
+        selectedSherpaVoice = selectedSherpaVoice,
+        onSelectSherpaVoice = { viewModel.selectOrDownloadSherpaVoice(it) },
+        isSherpaVoiceDownloaded = { viewModel.isSherpaVoiceDownloaded(it) },
+        onDeleteSherpaVoice = { viewModel.deleteSherpaVoiceFromReader(it) },
+        audioExportState = audioExportState,
+        onExportChapterAudio = { viewModel.exportCurrentChapterToAudio() },
+        onExportAudioChapters = { viewModel.exportAudioChapters(it) },
+        onCancelAudioExport = { viewModel.cancelAudioExport() },
+        onResetAudioExportState = { viewModel.resetAudioExportState() },
+        useEdgeNeuralTts = useEdgeNeuralTts,
+        onUseEdgeNeuralTtsChange = { viewModel.setUseEdgeNeuralTts(it) },
+        selectedEdgeVoice = selectedEdgeVoice,
+        onSelectEdgeVoice = { viewModel.selectEdgeVoice(it) },
+        proLicenseManager = viewModel.proLicenseManager,
+        keepAliveManager = viewModel.woodsKeepAliveManager,
+        onDismiss = onDismiss
+    )
+}
+
+@Composable
+private fun ReaderSyncEffects(
+    navigator: Navigator?,
+    epubPreferences: org.readium.r2.navigator.epub.EpubPreferences,
+    userPreferences: com.example.woodsreader.data.datastore.UserPreferences,
+    highlights: List<com.example.woodsreader.data.database.HighlightEntity>,
+    highlightColors: com.example.woodsreader.ui.theme.HighlightColors,
+    ttsState: TtsState,
+    isTouchActiveState: State<Boolean>,
+    lastInteractionTime: Long,
+    isUserInteracting: Boolean,
+    isReflowMode: Boolean,
+    isPdf: Boolean,
+    currentTtsPage: Int,
+    isAutoScrollActive: Boolean,
+    autoScrollWpm: Int,
+    isAutoScrollManuallyPaused: Boolean,
+    onEndOfChapterReached: () -> Unit,
+    onEndOfChapterReset: () -> Unit,
+    viewModel: ReaderViewModel
+) {
+    var lastSubmittedEpubPrefs by remember { mutableStateOf<org.readium.r2.navigator.epub.EpubPreferences?>(null) }
+    LaunchedEffect(navigator, epubPreferences) {
+        val nav = navigator ?: return@LaunchedEffect
+        if (nav is EpubNavigatorFragment) {
+            if (lastSubmittedEpubPrefs != null && lastSubmittedEpubPrefs != epubPreferences) {
+                nav.submitPreferences(epubPreferences)
+            }
+            lastSubmittedEpubPrefs = epubPreferences
+            nav.safePublicationView?.let { pubView ->
+                applyToAllWebViews(pubView) { wv ->
+                    wv.applyCustomFontFamily(userPreferences.fontFamily)
+                }
+            }
+        } else if (nav is PdfNavigatorFragment<*, *>) {
+            @Suppress("UNCHECKED_CAST")
+            (nav as PdfNavigatorFragment<*, org.readium.adapter.pdfium.navigator.PdfiumPreferences>).submitPreferences(userPreferences.toPdfPreferences())
+        }
+    }
+
+    LaunchedEffect(navigator, highlights, highlightColors) {
+        val nav = navigator as? DecorableNavigator ?: return@LaunchedEffect
+        val decorations = highlights.mapNotNull { hl ->
+            try {
+                val color = when (hl.color) {
+                    com.example.woodsreader.data.model.HighlightColor.YELLOW -> highlightColors.yellow
+                    com.example.woodsreader.data.model.HighlightColor.GREEN -> highlightColors.green
+                    com.example.woodsreader.data.model.HighlightColor.BLUE -> highlightColors.blue
+                    com.example.woodsreader.data.model.HighlightColor.PINK -> highlightColors.pink
+                    com.example.woodsreader.data.model.HighlightColor.RED -> highlightColors.red
+                }
+                val loc = hl.toLocator() ?: return@mapNotNull null
+                Decoration(
+                    id = hl.id,
+                    locator = loc,
+                    style = Decoration.Style.Highlight(tint = color.toArgb())
+                )
+            } catch (_: Exception) { null }
+        }
+        nav.applyDecorations(decorations, "highlights")
+    }
+
+    // Sincronización TTS para EPUB: resaltado elegante cambiando el color de letra y seguimiento visual
+    LaunchedEffect(ttsState, navigator, userPreferences.ttsHighlightStyle, userPreferences.scrollMode, userPreferences.ttsAutoScroll, userPreferences.theme) {
+        val nav = navigator ?: return@LaunchedEffect
+        val decorableNav = nav as? DecorableNavigator
+        
+        if (ttsState == TtsState.PLAYING) {
+            var lastHighlightedSentence = ""
+            var lastTargetResource = ""
+            var lastPageTurnTime = 0L
+
+            viewModel.currentTtsLocator.collectLatest { locator ->
+                if (locator == null) return@collectLatest
+                val sentenceText = locator.text.highlight ?: viewModel.currentTtsSentence.value
+                if (sentenceText.isNullOrBlank()) return@collectLatest
+                if (sentenceText == lastHighlightedSentence) return@collectLatest
+                lastHighlightedSentence = sentenceText
+
+                // 1. Asegurar que Readium no dibuje ninguna caja de fondo nativa
+                if (decorableNav != null) {
+                    decorableNav.applyDecorations(emptyList(), "tts")
+                    decorableNav.applyDecorations(emptyList(), "tts-scrub")
+                }
+
+                val cssSelector = locator.locations.otherLocations["cssSelector"] as? String
+                val isPaginated = false // En modo unificado el layout base es vertical continuo para scroll libre y fluido
+
+                // 2. Seguimiento visual de lectura: cambio de capítulo o avance suave dentro del capítulo
+                val now = System.currentTimeMillis()
+                val isTouchActive = isTouchActiveState.value
+                val isLockActive = (now - lastInteractionTime) < 3000L
+                val autoScrollEnabled = !isTouchActive && !isLockActive && userPreferences.ttsAutoScroll
+
+                if (nav is VisualNavigator) {
+                    val currentScreenLoc = nav.currentLocator.value
+                    val targetRes = locator.href.toString().substringAfterLast('/').substringBefore('#')
+                    val currentRes = currentScreenLoc.href.toString().substringAfterLast('/').substringBefore('#')
+
+                    if (targetRes.isNotEmpty() && currentRes.isNotEmpty() && targetRes != currentRes && targetRes != lastTargetResource && autoScrollEnabled) {
+                        lastTargetResource = targetRes
+                        nav.go(locator, animated = false)
+                        delay(250L)
+                        val newWv = nav.safePublicationView?.let { findActiveWebView(it) }
+                        newWv?.applyCustomTtsHighlight(
+                            cssSelector = cssSelector,
+                            textSnippet = sentenceText,
+                            style = userPreferences.ttsHighlightStyle,
+                            theme = userPreferences.theme,
+                            isPaginated = isPaginated,
+                            autoScroll = autoScrollEnabled,
+                            onPageAction = { action ->
+                                if (!isTouchActiveState.value) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPageTurnTime > 350L) {
+                                        lastPageTurnTime = now
+                                        when (action) {
+                                            "NEXT" -> nav.goForwardCompat(animated = true)
+                                            "PREV" -> nav.goBackwardCompat(animated = true)
+                                            "JUMP" -> nav.go(locator, animated = false)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    } else {
+                        val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
+                        activeWv?.applyCustomTtsHighlight(
+                            cssSelector = cssSelector,
+                            textSnippet = sentenceText,
+                            style = userPreferences.ttsHighlightStyle,
+                            theme = userPreferences.theme,
+                            isPaginated = isPaginated,
+                            autoScroll = autoScrollEnabled,
+                            onPageAction = { action ->
+                                if (!isTouchActiveState.value) {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastPageTurnTime > 350L) {
+                                        lastPageTurnTime = now
+                                        when (action) {
+                                            "NEXT" -> nav.goForwardCompat(animated = true)
+                                            "PREV" -> nav.goBackwardCompat(animated = true)
+                                            "JUMP" -> nav.go(locator, animated = false)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        } else {
+            if (decorableNav != null) {
+                decorableNav.applyDecorations(emptyList(), "tts")
+                decorableNav.applyDecorations(emptyList(), "tts-scrub")
+            }
+            if (nav is VisualNavigator) {
+                nav.safePublicationView?.let { pubView ->
+                    applyToAllWebViews(pubView) { wv ->
+                        wv.clearCustomTtsHighlight()
+                    }
+                }
+            }
+        }
+    }
+
+    // Sincronización automática de página para PDF Original (modo no reflow)
+    var lastNavigatedPdfPage by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(currentTtsPage, ttsState, isReflowMode, isPdf, navigator, userPreferences.ttsAutoScroll) {
+        if (isPdf && !isReflowMode && ttsState == TtsState.PLAYING && currentTtsPage > 0) {
+            val nav = navigator ?: return@LaunchedEffect
+            if (!userPreferences.ttsAutoScroll) return@LaunchedEffect
+
+            while (isUserInteracting || (System.currentTimeMillis() - lastInteractionTime) < 1200L) {
+                delay(250L)
+            }
+
+            if (lastNavigatedPdfPage != currentTtsPage) {
+                lastNavigatedPdfPage = currentTtsPage
+                val loc = viewModel.getLocatorForPdfPage(currentTtsPage)
+                if (loc != null && nav is VisualNavigator) {
+                    nav.go(loc, animated = false)
+                }
+            }
+        } else if (ttsState != TtsState.PLAYING) {
+            lastNavigatedPdfPage = -1
+        }
+    }
+
+    // Corrutina de Teleprompter / Auto-Scroll suave a 60 FPS con pausa táctil inteligente
+    var endOfChapterInternalTime by remember { mutableStateOf<Long?>(null) }
+    var isAdvancingChapter by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isAutoScrollActive) {
+        if (!isAutoScrollActive) {
+            viewModel.setAutoScrollManuallyPaused(false)
+            endOfChapterInternalTime = null
+            onEndOfChapterReset()
+            isAdvancingChapter = false
+        }
+    }
+
+    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, navigator, ttsState) {
+        if (!isAutoScrollActive) return@LaunchedEffect
+
+        val nav = navigator as? VisualNavigator ?: return@LaunchedEffect
+        var accumulatedPx = 0f
+
+        while (isActive) {
+            delay(16L)
+
+            val now = System.currentTimeMillis()
+            val isTouchPaused = isTouchActiveState.value
+
+            if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter || ttsState == TtsState.PLAYING) {
+                continue
+            }
+
+            val pubView = nav.safePublicationView
+            val activeWv = pubView?.let { findActiveWebView(it) }
+
+            if (activeWv != null) {
+                if (activeWv.canScrollVertically(1)) {
+                    endOfChapterInternalTime = null
+                    onEndOfChapterReset()
+                    val density = activeWv.resources.displayMetrics.density.coerceAtLeast(1f)
+                    val wordsPerSec = autoScrollWpm / 60.0f
+                    val pxPerWord = 9.2f * density
+                    val pxPerSec = wordsPerSec * pxPerWord
+                    val deltaPx = pxPerSec * 0.016f
+
+                    accumulatedPx += deltaPx
+                    if (accumulatedPx >= 1.0f) {
+                        val pxToScroll = accumulatedPx.toInt()
+                        activeWv.scrollBy(0, pxToScroll)
+                        accumulatedPx -= pxToScroll
+                    }
+                } else {
+                    val reachedTime = endOfChapterInternalTime
+                    if (reachedTime == null) {
+                        endOfChapterInternalTime = now
+                        onEndOfChapterReached()
+                    } else if (now - reachedTime >= 2500L && !isAdvancingChapter) {
+                        isAdvancingChapter = true
+                        endOfChapterInternalTime = null
+                        onEndOfChapterReset()
+                        viewModel.goToNextChapter(nav)
+                        delay(800L)
+                        isAdvancingChapter = false
+                        accumulatedPx = 0f
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderModalSheetsAndDialogs(
+    showAudioSheet: Boolean,
+    onDismissAudioSheet: () -> Unit,
+    activeTab: ReaderTab,
+    onTabChange: (ReaderTab) -> Unit,
+    showSherpaDownloadDialog: Boolean,
+    showToc: Boolean,
+    onDismissToc: () -> Unit,
+    showSearch: Boolean,
+    onDismissSearch: () -> Unit,
+    initialSearchQuery: String,
+    onResetSearchQuery: () -> Unit,
+    showXRaySheet: Boolean,
+    onDismissXRaySheet: () -> Unit,
+    onOpenSearchWithQuery: (String) -> Unit,
+    showTtsRulesSheet: Boolean,
+    onDismissTtsRulesSheet: () -> Unit,
+    isTtsScreenLocked: Boolean,
+    onUnlockScreen: () -> Unit,
+    showEgoGraphSheet: Boolean,
+    onDismissEgoGraphSheet: () -> Unit,
+    initialEgoEntityName: String?,
+    showAddToGraphDialog: Boolean,
+    onDismissAddToGraphDialog: () -> Unit,
+    entityNameToAdd: String,
+    entitySelectionLocator: Locator?,
+    onClearEntitySelection: () -> Unit,
+    successState: ReaderUiState.Success?,
+    navigator: Navigator?,
+    viewModel: ReaderViewModel,
+    egoGraphViewModel: ReaderEgoGraphViewModel,
+    userPreferences: com.example.woodsreader.data.datastore.UserPreferences,
+    highlights: List<com.example.woodsreader.data.database.HighlightEntity>,
+    bookmarks: List<com.example.woodsreader.data.database.BookmarkEntity>,
+    xRayReport: ChapterXRayReport?,
+    ttsRules: List<com.example.woodsreader.data.database.TtsRuleEntity>,
+    chapterInfoForTts: ChapterInfo,
+    ttsState: TtsState,
+    isReflowMode: Boolean,
+    hazeState: HazeState,
+    currentLocator: Locator?,
+    onNavigateToGraph: ((String, Int) -> Unit)?,
+    clearActiveSelection: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    if (showAudioSheet) {
+        ReaderControlBottomSheet(
+            activeTab = activeTab,
+            onTabChange = onTabChange,
+            bookTitle = successState?.book?.title ?: "",
+            bookAuthor = successState?.book?.author ?: "",
+            highlights = highlights,
+            bookmarks = bookmarks,
+            onHighlightClick = { hl ->
+                val loc = hl.toLocator()
+                if (loc != null) viewModel.goToLocator(navigator, loc)
+                onDismissAudioSheet()
+            },
+            onBookmarkClick = { bm ->
+                val loc = bm.toLocator()
+                if (loc != null) viewModel.goToLocator(navigator, loc)
+                onDismissAudioSheet()
+            },
+            onDeleteHighlight = { viewModel.deleteHighlight(it) },
+            onDeleteBookmark = { viewModel.deleteBookmark(it) },
+            preferences = userPreferences,
+            onThemeChange = { viewModel.onThemeChange(it) },
+            onFontSizeChange = { viewModel.onFontSizeChange(it) },
+            onLineSpacingChange = { viewModel.onLineSpacingChange(it) },
+            onMarginChange = { viewModel.onMarginChange(it) },
+            onTextAlignChange = { viewModel.onTextAlignChange(it) },
+            onFontFamilyChange = { viewModel.onFontFamilyChange(it) },
+            onHyphenationChange = { viewModel.updateHyphenation(it) },
+            onVolumeKeysNavigationChange = { viewModel.updateVolumeKeysNavigation(it) },
+            onScrollModeChange = { viewModel.onScrollModeChange(it) },
+            onPageTurnAnimationChange = { viewModel.onPageTurnAnimationChange(it) },
+            onPageTurnStyleChange = { viewModel.onPageTurnStyleChange(it) },
+            onInvertedTapZonesChange = { viewModel.onInvertedTapZonesChange(it) },
+            onTtsHighlightStyleChange = { viewModel.updateTtsHighlightStyle(it) },
+            hazeState = hazeState,
+            onDismiss = onDismissAudioSheet
+        )
+    }
+
+    if (showSherpaDownloadDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissSherpaDownloadDialog() },
+            title = {
+                Text(
+                    "Descargar Voz Neuronal (IA)",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = HiddenForest.Text
+                )
+            },
+            text = {
+                Text(
+                    "La voz neural de alta calidad (Sherpa ONNX) se ejecuta 100% offline en tu dispositivo.\n\nRequiere una descarga única de aproximadamente 64 MB. ¿Deseas descargarla ahora?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = HiddenForest.TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.downloadSherpaModel() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = HiddenForest.Accent,
+                        contentColor = HiddenForest.Background
+                    )
+                ) {
+                    Text("Descargar (~64 MB)", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissSherpaDownloadDialog() }) {
+                    Text("Cancelar", color = HiddenForest.TextLow)
+                }
+            },
+            containerColor = HiddenForest.Surface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showToc && successState != null) {
+        TocBottomSheet(
+            publication = successState.publication,
+            currentHref = currentLocator?.href?.toString(),
+            hazeState = hazeState,
+            onChapterClick = { link ->
+                val locator = successState.publication.locatorFromLink(link)
+                val isPdf = successState.book.format.name == "PDF"
+                val targetPage = if (isPdf) resolveTocTargetPage(link, locator) else locator?.locations?.position
+
+                val finalLocator = locator ?: run {
+                    val readingOrderLink = successState.publication.readingOrder.firstOrNull()
+                    if (readingOrderLink != null && targetPage != null) {
+                        successState.publication.locatorFromLink(readingOrderLink)?.copy(
+                            locations = Locator.Locations(position = targetPage)
+                        )
+                    } else null
+                }
+
+                if (finalLocator != null) {
+                    viewModel.goToLocator(navigator, finalLocator)
+                }
+
+                if (isReflowMode && targetPage != null) {
+                    viewModel.jumpToReflowPage(targetPage)
+                }
+                onDismissToc()
+            },
+            onDismiss = onDismissToc
+        )
+    }
+
+    if (showSearch && successState != null) {
+        SearchBottomSheet(
+            publication = successState.publication,
+            initialQuery = initialSearchQuery,
+            hazeState = hazeState,
+            onResultClick = { locator ->
+                viewModel.goToLocator(navigator, locator)
+                val targetSnippet = locator.text.highlight?.takeIf { it.isNotBlank() }
+                    ?: listOfNotNull(locator.text.before, locator.text.highlight, locator.text.after)
+                        .joinToString(" ").trim().takeIf { it.isNotBlank() }
+                val progression = locator.locations.progression
+                val nav = navigator
+                if (nav is EpubNavigatorFragment) {
+                    scope.launch {
+                        delay(350L)
+                        val activeWv = nav.safePublicationView?.let { findActiveWebView(it) }
+                        activeWv?.highlightAndScrollToSearchHit(targetSnippet, progression)
+                    }
+                }
+                onDismissSearch()
+                onResetSearchQuery()
+            },
+            onDismiss = {
+                onDismissSearch()
+                onResetSearchQuery()
+            }
+        )
+    }
+
+    if (showXRaySheet) {
+        ReaderXRayBottomSheet(
+            report = xRayReport,
+            hazeState = hazeState,
+            onSearchInBook = { query ->
+                onOpenSearchWithQuery(query)
+                onDismissXRaySheet()
+            },
+            onDismiss = onDismissXRaySheet
+        )
+    }
+
+    if (showTtsRulesSheet) {
+        TtsRulesBottomSheet(
+            rules = ttsRules,
+            onSaveRule = { viewModel.saveTtsRule(it) },
+            onDeleteRule = { viewModel.deleteTtsRule(it) },
+            onInstallPresetPack = { pack -> viewModel.installTtsPresetPack(pack) },
+            onDismiss = onDismissTtsRulesSheet
+        )
+    }
+
+    if (isTtsScreenLocked && successState != null) {
+        val lockProgress by viewModel.globalProgress.collectAsStateWithLifecycle(initialValue = 0f)
+        ReaderTtsLockOverlay(
+            modifier = Modifier.zIndex(100f),
+            bookTitle = successState.book.title,
+            bookAuthor = successState.book.author,
+            chapterName = chapterInfoForTts.title ?: "",
+            progress = lockProgress,
+            isTtsPlaying = ttsState == TtsState.PLAYING,
+            hazeState = hazeState,
+            onUnlock = onUnlockScreen
+        )
+    }
+
+    if (showEgoGraphSheet && successState != null) {
+        ReaderEgoGraphBottomSheet(
+            bookId = successState.book.id,
+            currentChapterIndex = viewModel.getCurrentChapterIndex(),
+            initialEntityName = initialEgoEntityName,
+            onDismiss = onDismissEgoGraphSheet,
+            onNavigateToFullGraph = {
+                onDismissEgoGraphSheet()
+                onNavigateToGraph?.invoke(successState.book.id, viewModel.getCurrentChapterIndex())
+            },
+            onJumpToLocator = { targetLocator ->
+                onDismissEgoGraphSheet()
+                val nav = navigator
+                if (nav != null) {
+                    viewModel.goToLocator(nav, targetLocator)
+                }
+            },
+            viewModel = egoGraphViewModel
+        )
+    }
+
+    if (showAddToGraphDialog && successState != null) {
+        AddEntityFromSelectionDialog(
+            initialName = entityNameToAdd,
+            onDismiss = onDismissAddToGraphDialog,
+            onConfirm = { name, type, description ->
+                onDismissAddToGraphDialog()
+                val loc = entitySelectionLocator
+                egoGraphViewModel.addEntityFromSelection(
+                    bookId = successState.book.id,
+                    name = name,
+                    type = type,
+                    description = description,
+                    currentChapter = viewModel.getCurrentChapterIndex(),
+                    locator = loc
+                )
+                clearActiveSelection()
+                Toast.makeText(context, "Entidad '$name' añadida al grafo", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 }
