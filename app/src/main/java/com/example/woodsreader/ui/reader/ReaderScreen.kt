@@ -3,7 +3,6 @@ package com.example.woodsreader.ui.reader
 import android.app.Activity
 import android.content.ClipData
 import android.content.Context
-import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -18,9 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.border
-import androidx.compose.ui.text.style.TextOverflow
 import com.example.woodsreader.data.graph.EntityType
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,8 +30,6 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,14 +37,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.graphics.Color as ComposeColor
-import androidx.compose.ui.res.stringResource
-import org.readium.r2.navigator.epub.css.RsProperties
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.viewinterop.AndroidViewBinding
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
@@ -57,20 +46,10 @@ import androidx.fragment.app.commit
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.ui.zIndex
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
-import dev.chrisbanes.haze.hazeChild
-import com.example.woodsreader.R
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Close
 import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.compose.ui.viewinterop.AndroidView
 import android.content.Intent
 import android.net.Uri
-import kotlinx.coroutines.Job
-import com.example.woodsreader.databinding.FragmentReaderContainerBinding
 import com.example.woodsreader.core.managers.InlineLookupManager
 import com.example.woodsreader.core.managers.LookupResult
 import com.example.woodsreader.core.xray.ChapterXRayReport
@@ -80,7 +59,6 @@ import com.example.woodsreader.ui.theme.LocalHighlightColors
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
 import org.readium.r2.navigator.input.InputListener
 import org.readium.r2.navigator.input.TapEvent
@@ -94,36 +72,17 @@ import org.readium.r2.navigator.Navigator
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.ExperimentalReadiumApi
-import org.readium.r2.shared.util.AbsoluteUrl
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.clickable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.material.icons.filled.Headset
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.delay
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import kotlinx.coroutines.isActive
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.IntOffset
 import com.example.woodsreader.model.TtsUiStyle
-import com.example.woodsreader.model.ScrollMode
 import com.example.woodsreader.model.PageTurnStyle
-import com.example.woodsreader.ui.reader.animation.BookPageTurnOverlay
 import com.example.woodsreader.ui.reader.animation.PageTurnDirection
 import com.example.woodsreader.ui.reader.animation.rememberBookPageTurnState
-import androidx.compose.ui.text.style.TextDecoration
-import com.example.woodsreader.ui.theme.LiterataFamily
 
 
 
