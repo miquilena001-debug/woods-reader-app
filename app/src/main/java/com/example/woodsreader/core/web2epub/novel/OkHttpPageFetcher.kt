@@ -12,7 +12,7 @@ import javax.inject.Singleton
 const val WEB_UA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
 @Singleton
-class OkHttpPageFetcher(
+class OkHttpPageFetcher @JvmOverloads constructor(
     private val client: OkHttpClient,
     private val pacer: RequestPacer? = null
 ) : PageFetcher {
@@ -30,12 +30,16 @@ class OkHttpPageFetcher(
     )
 
     override suspend fun get(url: String, referer: String?): FetchedPage {
-        return getInternal(url = url, referer = referer, redirectHops = 0)
+        return fetch(url, referer).toFetchedPageOrThrow()
     }
 
-    private suspend fun getInternal(url: String, referer: String?, redirectHops: Int): FetchedPage {
+    override suspend fun fetch(url: String, referer: String?): FetchResult {
+        return fetchInternal(url = url, referer = referer, redirectHops = 0)
+    }
+
+    private suspend fun fetchInternal(url: String, referer: String?, redirectHops: Int): FetchResult {
         if (redirectHops > 5) {
-            throw FetchFailure.Network("Demasiadas redirecciones para la URL: $url")
+            return FetchResult.Failure(FetchError.NetworkError("Demasiadas redirecciones para la URL: $url"))
         }
 
         pacer?.await()
@@ -48,7 +52,7 @@ class OkHttpPageFetcher(
         }
 
         if (scheme != "http" && scheme != "https") {
-            throw FetchFailure.Network("Esquema no soportado: $scheme para la URL: $url")
+            return FetchResult.Failure(FetchError.NetworkError("Esquema no soportado: $scheme para la URL: $url"))
         }
 
         val requestBuilder = Request.Builder()
@@ -75,11 +79,21 @@ class OkHttpPageFetcher(
         val response = try {
             client.newCall(request).execute()
         } catch (e: Exception) {
-            if (e is FetchFailure) throw e
-            throw FetchFailure.Network(e.message ?: "Error de conexión de red", e)
+            if (e is FetchFailure) {
+                return when (e) {
+                    is FetchFailure.Challenge -> FetchResult.Failure(FetchError.ChallengeRequired("Cloudflare", e.message ?: "Challenge required"))
+                    is FetchFailure.LoginRequired -> FetchResult.Failure(FetchError.LoginRequired(e.loginUrl))
+                    is FetchFailure.Blocked -> FetchResult.Failure(FetchError.RateLimited(e.retryAfterMs))
+                    is FetchFailure.NeedsJavaScript -> FetchResult.Failure(FetchError.NeedsJavaScript(e.reason))
+                    is FetchFailure.NotFound -> FetchResult.Failure(FetchError.NotFound(e.url))
+                    is FetchFailure.TooLarge -> FetchResult.Failure(FetchError.TooLarge(e.url))
+                    is FetchFailure.Network -> FetchResult.Failure(FetchError.NetworkError(e.message ?: "Network error", e.cause))
+                }
+            }
+            return FetchResult.Failure(FetchError.NetworkError(e.message ?: "Error de conexión de red", e))
         }
 
-        response.use { resp ->
+        return response.use { resp ->
             val status = resp.code
             val finalUrl = resp.request.url.toString()
             val contentType = resp.header("Content-Type")
@@ -89,7 +103,7 @@ class OkHttpPageFetcher(
                 headersMap[resp.headers.name(i).lowercase()] = resp.headers.value(i)
             }
 
-            val body = resp.body ?: throw FetchFailure.Network("Cuerpo de respuesta vacío para: $url")
+            val body = resp.body ?: return@use FetchResult.Failure(FetchError.NetworkError("Cuerpo de respuesta vacío para: $url"))
             val maxBytes = 5L * 1024L * 1024L
             val buffer = Buffer()
             val source = body.source()
@@ -101,61 +115,75 @@ class OkHttpPageFetcher(
                     if (read == -1L) break
                     totalRead += read
                     if (totalRead > maxBytes) {
-                        throw FetchFailure.TooLarge(url)
+                        return@use FetchResult.Failure(FetchError.TooLarge(url))
                     }
                 }
             } catch (e: IOException) {
-                if (e is FetchFailure) throw e
-                throw FetchFailure.Network("Error al leer el cuerpo de respuesta: ${e.message}", e)
+                return@use FetchResult.Failure(FetchError.NetworkError("Error al leer el cuerpo de respuesta: ${e.message}", e))
             }
 
             val bytes = buffer.readByteArray()
-            val sampleHtml = if (bytes.isNotEmpty()) {
-                val sampleLen = minOf(bytes.size, 20480)
-                CharsetDetector.decode(bytes.copyOfRange(0, sampleLen), contentType)
-            } else ""
-
-            val looksChallenge = ChallengeDetector.looksLikeChallenge(status, headersMap, sampleHtml)
-
-            if (status == 404) {
-                throw FetchFailure.NotFound(url)
-            }
-
-            if (status == 429 || status == 503 || status == 403) {
-                if (looksChallenge) {
-                    throw FetchFailure.Challenge(url)
-                }
-                val retryAfterSec = resp.header("Retry-After")?.toLongOrNull()
-                val retryAfterMs = if (retryAfterSec != null) retryAfterSec * 1000L else null
-                throw FetchFailure.Blocked(status, retryAfterMs)
-            }
-
-            if (status == 200 && looksChallenge) {
-                throw FetchFailure.Challenge(url)
-            }
-
-            if (!resp.isSuccessful) {
-                throw FetchFailure.Blocked(status, null)
-            }
-
-            // Detección de páginas intermedias con redirección JavaScript o Meta-Refresh
-            // (Ej: páginas señuelo 'Loading...' de readnovel.site -> novelphoenix.com)
             val fullHtml = if (bytes.isNotEmpty()) {
                 CharsetDetector.decode(bytes, contentType)
             } else ""
 
-            val jsRedirectTarget = extractRedirectTarget(fullHtml, finalUrl)
-            if (jsRedirectTarget != null && jsRedirectTarget != finalUrl && jsRedirectTarget != url) {
-                return getInternal(url = jsRedirectTarget, referer = finalUrl, redirectHops = redirectHops + 1)
+            val looksChallenge = PageFetcherDetector.detectChallenge(status, headersMap, fullHtml)
+
+            if (looksChallenge) {
+                return@use FetchResult.Failure(
+                    FetchError.ChallengeRequired("Cloudflare", "Verificación anti-bot requerida en $finalUrl")
+                )
             }
 
-            return FetchedPage(
-                requestedUrl = url,
-                finalUrl = finalUrl,
-                status = status,
-                bytes = bytes,
-                contentType = contentType,
-                headers = headersMap
+            if (PageFetcherDetector.isLoginRedirect(url, finalUrl)) {
+                return@use FetchResult.Failure(FetchError.LoginRequired(finalUrl))
+            }
+
+            if (status == 404) {
+                return@use FetchResult.Failure(FetchError.NotFound(url))
+            }
+
+            if (status == 429) {
+                val retryAfterMs = PageFetcherDetector.parseRetryAfter(resp.header("Retry-After"))
+                return@use FetchResult.Failure(FetchError.RateLimited(retryAfterMs))
+            }
+
+            if (status in 400..599) {
+                val retryAfterMs = PageFetcherDetector.parseRetryAfter(resp.header("Retry-After"))
+                if (retryAfterMs != null) {
+                    return@use FetchResult.Failure(FetchError.RateLimited(retryAfterMs))
+                }
+                val msg = resp.message.ifBlank { "HTTP $status" }
+                return@use FetchResult.Failure(FetchError.HttpError(status, msg))
+            }
+
+            if (!resp.isSuccessful) {
+                val msg = resp.message.ifBlank { "HTTP $status" }
+                return@use FetchResult.Failure(FetchError.HttpError(status, msg))
+            }
+
+            if (PageFetcherDetector.detectSpaShell(fullHtml)) {
+                return@use FetchResult.Failure(
+                    FetchError.NeedsJavaScript("El sitio requiere JavaScript para renderizar el contenido (SPA shell)")
+                )
+            }
+
+            // Detección de páginas intermedias con redirección JavaScript o Meta-Refresh
+            // (Ej: páginas señuelo 'Loading...' de readnovel.site -> novelphoenix.com)
+            val jsRedirectTarget = extractRedirectTarget(fullHtml, finalUrl)
+            if (jsRedirectTarget != null && jsRedirectTarget != finalUrl && jsRedirectTarget != url) {
+                return@use fetchInternal(url = jsRedirectTarget, referer = finalUrl, redirectHops = redirectHops + 1)
+            }
+
+            FetchResult.Success(
+                FetchedPage(
+                    requestedUrl = url,
+                    finalUrl = finalUrl,
+                    status = status,
+                    bytes = bytes,
+                    contentType = contentType,
+                    headers = headersMap
+                )
             )
         }
     }
