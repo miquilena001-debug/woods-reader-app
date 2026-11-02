@@ -220,8 +220,20 @@ fun ReaderScreen(
     val isAutoScrollManuallyPaused by viewModel.isAutoScrollManuallyPaused.collectAsStateWithLifecycle()
     var isFingerDown by remember { mutableStateOf(false) }
     var lastTouchUpTime by remember { mutableLongStateOf(0L) }
+    var isTouchCooldownActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isFingerDown, lastTouchUpTime) {
+        if (isFingerDown) {
+            isTouchCooldownActive = true
+        } else if (lastTouchUpTime > 0L) {
+            isTouchCooldownActive = true
+            delay(1800L)
+            isTouchCooldownActive = false
+        }
+    }
+
     val isTouchActiveState = rememberUpdatedState(
-        isFingerDown || isUserInteracting || (System.currentTimeMillis() - lastTouchUpTime) < 1800L
+        isFingerDown || isUserInteracting || isTouchCooldownActive
     )
     var endOfChapterTime by remember { mutableStateOf<Long?>(null) }
     var isAdvancingChapter by remember { mutableStateOf(false) }
@@ -1455,7 +1467,7 @@ fun ReaderScreen(
 
                 ReaderTeleprompterPill(
                     wpm = autoScrollWpm,
-                    isPaused = isAutoScrollManuallyPaused || isFingerDown || (System.currentTimeMillis() - lastTouchUpTime < 1200L),
+                    isPaused = isAutoScrollManuallyPaused || isTouchActiveState.value,
                     hazeState = hazeState,
                     onDecreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm - 10) },
                     onIncreaseWpm = { viewModel.setAutoScrollWpm(autoScrollWpm + 10) },
