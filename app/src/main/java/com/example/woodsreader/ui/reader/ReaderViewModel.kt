@@ -141,12 +141,21 @@ class ReaderViewModel @Inject constructor(
 
     private var navigatorLocatorJob: Job? = null
     private var lastProcessedChapterHref: String? = null
+    private data class PdfOriginalDedupeKey(
+        val locator: Locator,
+        val page: Int
+    )
+    private var lastPdfOriginalKey: PdfOriginalDedupeKey? = null
 
     var navigator: Navigator? = null
         set(value) {
+            val changed = field !== value
             field = value
             epubFormatManager.updateNavigator(value)
-            observeNavigator(value)
+            lastPdfOriginalKey = null
+            if (changed || navigatorLocatorJob?.isActive != true) {
+                observeNavigator(value)
+            }
         }
 
     private fun observeNavigator(nav: Navigator?) {
@@ -466,6 +475,7 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun loadBook() {
+        lastPdfOriginalKey = null
         if (bookId.isBlank()) {
             _uiState.value = ReaderUiState.Error("ID de libro no válido o no proporcionado")
             return
@@ -773,7 +783,15 @@ class ReaderViewModel @Inject constructor(
     fun onLocatorChanged(locator: Locator) {
         annotations.currentLocator = locator
         if (isPdfBook && !isReflowMode.value) {
-            progressTracker.lastKnownReflowPage = locator.locations.position ?: 1
+            val page = locator.locations.position ?: 1
+            if (lastPdfOriginalKey?.locator == locator &&
+                lastPdfOriginalKey?.page == page &&
+                progressTracker.lastKnownReflowPage == page
+            ) {
+                return
+            }
+            lastPdfOriginalKey = PdfOriginalDedupeKey(locator, page)
+            progressTracker.lastKnownReflowPage = page
         }
         refreshCurrentBookmarkState()
         if (isPdfBook && !isReflowMode.value) {
@@ -1337,6 +1355,7 @@ class ReaderViewModel @Inject constructor(
     // -- Reflow (PDF) -----------------------------------------------------------
 
     fun toggleReflowMode() {
+        lastPdfOriginalKey = null
         val currentLocator = (navigator as? VisualNavigator)?.currentLocator?.value
         val elements = pdfReflowManager.reflowElements.value
         val activeIndex = pdfReflowManager.ttsActiveBlockIndex.value
