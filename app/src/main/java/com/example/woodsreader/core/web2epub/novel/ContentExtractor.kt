@@ -312,16 +312,19 @@ class ContentExtractor(
     private fun removeHiddenCssElements(doc: Document, workingElement: Element) {
         // 1. Parsear reglas display:none y visibility:hidden en tags <style>
         val styleElements = (doc.select("style") + workingElement.select("style")).distinct()
-        val hideDeclarationRegex = Regex("""(?i)\b(?:display\s*:\s*none|visibility\s*:\s*hidden)\b""")
+        // Requiere propiedades explicitas (evita falsos positivos como --custom-display: none o background: none)
+        val hideDeclarationRegex = Regex("""(?i)(?:^|[\s;{])(?:display\s*:\s*none|visibility\s*:\s*hidden)(?:\s*!important)?\s*(?:;|$)""")
         val simpleSelectorRegex = Regex("""^[a-zA-Z0-9]*[.#][a-zA-Z0-9_-]+$""")
 
         for (styleEl in styleElements) {
             val rawCss = listOf(styleEl.data(), styleEl.html())
                 .firstOrNull { it.isNotBlank() } ?: continue
             val cleanCss = rawCss.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+            // Descarta at-rules (@media, @supports, @keyframes, etc.) para no aplicar reglas condicionales de responsive/print
+            val topLevelCss = stripAtRules(cleanCss)
 
             val ruleRegex = Regex("""([^{}]+)\{([^{}]+)\}""")
-            for (match in ruleRegex.findAll(cleanCss)) {
+            for (match in ruleRegex.findAll(topLevelCss)) {
                 val selectorsPart = match.groupValues[1]
                 val declsPart = match.groupValues[2]
                 if (hideDeclarationRegex.containsMatchIn(declsPart)) {
@@ -349,5 +352,54 @@ class ContentExtractor(
                 }
             }
         }
+    }
+
+    private fun stripAtRules(css: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        val len = css.length
+        while (i < len) {
+            val c = css[i]
+            if (c == '@') {
+                var j = i
+                var inQuote: Char? = null
+                while (j < len && (inQuote != null || (css[j] != ';' && css[j] != '{'))) {
+                    val ch = css[j]
+                    if (inQuote != null) {
+                        if (ch == inQuote && (j == 0 || css[j - 1] != '\\')) inQuote = null
+                    } else if (ch == '"' || ch == '\'') {
+                        inQuote = ch
+                    }
+                    j++
+                }
+                if (j < len && css[j] == ';') {
+                    i = j + 1
+                } else if (j < len && css[j] == '{') {
+                    var depth = 1
+                    j++
+                    inQuote = null
+                    while (j < len && depth > 0) {
+                        val ch = css[j]
+                        if (inQuote != null) {
+                            if (ch == inQuote && (j == 0 || css[j - 1] != '\\')) inQuote = null
+                        } else if (ch == '"' || ch == '\'') {
+                            inQuote = ch
+                        } else if (ch == '{') {
+                            depth++
+                        } else if (ch == '}') {
+                            depth--
+                        }
+                        j++
+                    }
+                    i = j
+                } else {
+                    i = j
+                }
+            } else {
+                sb.append(c)
+                i++
+            }
+        }
+        return sb.toString()
     }
 }
