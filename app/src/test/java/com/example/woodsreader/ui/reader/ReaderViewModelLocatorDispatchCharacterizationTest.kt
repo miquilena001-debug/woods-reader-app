@@ -133,10 +133,10 @@ class ReaderViewModelLocatorDispatchCharacterizationTest {
     }
 
     // =========================================================================
-    // Caso e: onLocatorChanged llamado dos veces con el mismo locator en PDF original
+    // Caso e / Test 1: Mismo locator dos veces seguidas en PDF original procesa UNA SOLA VEZ
     // =========================================================================
     @Test
-    fun `case e - onLocatorChanged called twice with same locator in original PDF executes work twice`() = runTest(testDispatcher) {
+    fun `commit3 test 1 - same locator twice consecutively in original PDF processes only once`() = runTest(testDispatcher) {
         val vm = fixture.loadedVm(format = BookFormat.PDF, reflow = false, initialPage = 1)
         val loc = fixture.createMockLocator(position = 3, progression = 0.3, totalProgression = 0.3)
 
@@ -145,7 +145,100 @@ class ReaderViewModelLocatorDispatchCharacterizationTest {
         vm.onLocatorChanged(loc)
         vm.onLocatorChanged(loc)
 
-        // En HEAD: refreshCurrentBookmarkState (vía isPageBookmarked) y saveProgressDebounced corren 2 veces
+        // Con deduplicación en PDF original: ambos corren 1 sola vez
+        verify(exactly = 1) {
+            fixture.manageReaderAnnotationsUseCase.isPageBookmarked(any(), any(), any(), any())
+        }
+        verify(exactly = 1) {
+            fixture.saveReadingProgressUseCase.saveProgressDebounced(any(), any(), any(), any(), any())
+        }
+    }
+
+    // =========================================================================
+    // Test 2: Mismo locator tras entrar y salir de reflow procesa de nuevo
+    // =========================================================================
+    @Test
+    fun `commit3 test 2 - same locator after entering and exiting reflow processes again`() = runTest(testDispatcher) {
+        val vm = fixture.loadedVm(format = BookFormat.PDF, reflow = false, initialPage = 1)
+        val loc = fixture.createMockLocator(position = 3, progression = 0.3, totalProgression = 0.3)
+
+        clearMocks(fixture.manageReaderAnnotationsUseCase, fixture.saveReadingProgressUseCase, answers = false)
+
+        vm.onLocatorChanged(loc)
+        // Entrar y salir de reflow
+        vm.toggleReflowMode()
+        vm.toggleReflowMode()
+        vm.onLocatorChanged(loc)
+
+        verify(exactly = 2) {
+            fixture.manageReaderAnnotationsUseCase.isPageBookmarked(any(), any(), any(), any())
+        }
+        verify(exactly = 2) {
+            fixture.saveReadingProgressUseCase.saveProgressDebounced(any(), any(), any(), any(), any())
+        }
+    }
+
+    // =========================================================================
+    // Test 3: Mismo locator tras cambiar lastKnownReflowPage por otro escritor procesa de nuevo
+    // =========================================================================
+    @Test
+    fun `commit3 test 3 - same locator after lastKnownReflowPage changed by another writer processes again`() = runTest(testDispatcher) {
+        val vm = fixture.loadedVm(format = BookFormat.PDF, reflow = false, initialPage = 1)
+        val loc = fixture.createMockLocator(position = 3, progression = 0.3, totalProgression = 0.3)
+
+        clearMocks(fixture.manageReaderAnnotationsUseCase, fixture.saveReadingProgressUseCase, answers = false)
+
+        vm.onLocatorChanged(loc)
+        // Otro escritor (ej. salto a página externa o jumpToReflowPage) altera la página
+        vm.jumpToReflowPage(15)
+        vm.onLocatorChanged(loc)
+
+        verify(exactly = 2) {
+            fixture.manageReaderAnnotationsUseCase.isPageBookmarked(any(), any(), any(), any())
+        }
+        verify(exactly = 2) {
+            fixture.saveReadingProgressUseCase.saveProgressDebounced(any(), any(), any(), any(), any())
+        }
+    }
+
+    // =========================================================================
+    // Test 4: Mismo locator tras reasignar navigator procesa de nuevo
+    // =========================================================================
+    @Test
+    fun `commit3 test 4 - same locator after reassigning navigator processes again`() = runTest(testDispatcher) {
+        val vm = fixture.loadedVm(format = BookFormat.PDF, reflow = false, initialPage = 1)
+        val loc = fixture.createMockLocator(position = 3, progression = 0.3, totalProgression = 0.3)
+
+        clearMocks(fixture.manageReaderAnnotationsUseCase, fixture.saveReadingProgressUseCase, answers = false)
+
+        vm.onLocatorChanged(loc)
+        // Reasignar navigator invalida la clave de deduplicación
+        val (newNav, _) = createTrackingVisualNavigator(loc)
+        vm.navigator = newNav
+        vm.onLocatorChanged(loc)
+
+        verify(exactly = 2) {
+            fixture.manageReaderAnnotationsUseCase.isPageBookmarked(any(), any(), any(), any())
+        }
+        verify(exactly = 2) {
+            fixture.saveReadingProgressUseCase.saveProgressDebounced(any(), any(), any(), any(), any())
+        }
+    }
+
+    // =========================================================================
+    // Test 5: Otro locator procesa siempre
+    // =========================================================================
+    @Test
+    fun `commit3 test 5 - different locator always processes`() = runTest(testDispatcher) {
+        val vm = fixture.loadedVm(format = BookFormat.PDF, reflow = false, initialPage = 1)
+        val loc1 = fixture.createMockLocator(position = 3, progression = 0.3, totalProgression = 0.3)
+        val loc2 = fixture.createMockLocator(position = 4, progression = 0.4, totalProgression = 0.4)
+
+        clearMocks(fixture.manageReaderAnnotationsUseCase, fixture.saveReadingProgressUseCase, answers = false)
+
+        vm.onLocatorChanged(loc1)
+        vm.onLocatorChanged(loc2)
+
         verify(exactly = 2) {
             fixture.manageReaderAnnotationsUseCase.isPageBookmarked(any(), any(), any(), any())
         }
