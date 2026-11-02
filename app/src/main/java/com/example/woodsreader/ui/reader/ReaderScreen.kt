@@ -179,8 +179,9 @@ fun ReaderScreen(
     val showControls by viewModel.showControls.collectAsStateWithLifecycle()
 
     val view = LocalView.current
+    val context = LocalContext.current
     LaunchedEffect(showControls) {
-        val window = (view.context as? Activity)?.window ?: return@LaunchedEffect
+        val window = context.findFragmentActivity()?.window ?: return@LaunchedEffect
         val insetsController = WindowCompat.getInsetsController(window, view)
         insetsController.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -193,7 +194,7 @@ fun ReaderScreen(
 
     DisposableEffect(view) {
         onDispose {
-            val window = (view.context as? Activity)?.window
+            val window = context.findFragmentActivity()?.window
             if (window != null) {
                 WindowCompat.getInsetsController(window, view)
                     .show(WindowInsetsCompat.Type.statusBars())
@@ -334,7 +335,6 @@ fun ReaderScreen(
         }
     }
 
-    val context = LocalContext.current
     LaunchedEffect(isTtsActive) {
         val activity = context.findFragmentActivity()
         if (activity != null) {
