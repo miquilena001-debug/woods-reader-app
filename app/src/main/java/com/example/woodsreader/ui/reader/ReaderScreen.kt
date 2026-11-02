@@ -541,7 +541,10 @@ fun ReaderScreen(
                 }
             }
             override fun onFragmentDetached(fm: FragmentManager, f: Fragment) {
-                if (navigatorState.value == f) navigatorState.value = null
+                if (navigatorState.value == f) {
+                    navigatorState.value = null
+                    viewModel.navigator = null
+                }
             }
         }
         fragmentManager.registerFragmentLifecycleCallbacks(callback, false)
@@ -559,6 +562,7 @@ fun ReaderScreen(
             }
             fragmentManager.fragmentFactory = androidx.fragment.app.FragmentFactory()
             navigatorState.value = null
+            viewModel.navigator = null
         }
     }
 
