@@ -343,12 +343,8 @@ fun ReaderScreen(
             activity.volumeControlStream = android.media.AudioManager.USE_DEFAULT_STREAM_TYPE
         }
     }
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val highlightColors = LocalHighlightColors.current
-    val accentColor = HiddenForest.Accent
-    val ttsHighlightColor = highlightColors.yellow.copy(alpha = 0.3f).toArgb()
     val fragmentManager = remember(context) { context.findFragmentActivity()?.supportFragmentManager }
-    val fm = fragmentManager
     val focusRequester = remember { FocusRequester() }
 
     var activeActionMode by remember { mutableStateOf<ActionMode?>(null) }
@@ -616,7 +612,6 @@ fun ReaderScreen(
         }
     }
 
-    val highlightColors = LocalHighlightColors.current
     LaunchedEffect(navigatorState.value, highlights, highlightColors) {
         val nav = navigatorState.value as? DecorableNavigator ?: return@LaunchedEffect
         val decorations = highlights.mapNotNull { hl ->
@@ -1109,11 +1104,6 @@ fun ReaderScreen(
                     Text(state.message, modifier = Modifier.align(Alignment.Center), color = HiddenForest.TextSecondary)
                 }
                 is ReaderUiState.Success -> {
-                    val isPdf = state.book.format.name == "PDF"
-                    val isDarkTheme = userPreferences.theme == com.example.woodsreader.model.ReaderTheme.HIDDEN_FOREST || 
-                                      userPreferences.theme == com.example.woodsreader.model.ReaderTheme.AMOLED || 
-                                      userPreferences.theme == com.example.woodsreader.model.ReaderTheme.SUNSET
-                    
                     ReaderNavigatorContainer(
                         state = state,
                         userPreferences = userPreferences,
