@@ -468,7 +468,7 @@ class ReaderViewModelProgressCharacterizationTest {
         vm.onLocatorChanged(loc)
         vm.onLocatorChanged(loc)
 
-        verify(exactly = 2) {
+        verify(exactly = 1) {
             fixture.saveReadingProgressUseCase.saveProgressDebounced(
                 scope = any(),
                 bookId = "test_book_id",
@@ -479,7 +479,7 @@ class ReaderViewModelProgressCharacterizationTest {
                 force = any()
             )
         }
-        verify(exactly = 2) {
+        verify(exactly = 1) {
             fixture.manageReaderAnnotationsUseCase.isPageBookmarked(
                 bookmarks = any(),
                 currentLocator = loc,

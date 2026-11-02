@@ -64,7 +64,6 @@ import org.readium.r2.shared.publication.Locator
 import org.json.JSONObject
 
 import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.publication.services.content.*
 
 import android.util.LruCache
 import com.example.woodsreader.core.xray.ChapterXRayReport
@@ -73,7 +72,6 @@ import com.example.woodsreader.core.license.ProLicenseManager
 import com.example.woodsreader.core.system.WoodsKeepAliveManager
 import com.example.woodsreader.service.CoverExtractor
 import org.readium.r2.shared.publication.Link
-import java.io.File
 
 import javax.inject.Inject
 
@@ -115,10 +113,6 @@ class ReaderViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ReaderViewModel"
-
-        private const val INACTIVITY_THRESHOLD = 5 * 60 * 1000L
-        private const val MAX_CACHED_REFLOW_PAGES = 50
-        private const val MAX_CACHED_CHAPTERS = 5
 
         /** Velocidad de lectura predeterminada en palabras por minuto (WPM) para estimaciones de progreso en TTS y fallback. */
         private const val DEFAULT_READING_WPM = 200
@@ -266,8 +260,9 @@ class ReaderViewModel @Inject constructor(
     val ttsRules = bookRepository.getTtsRules().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     private val _availableVoices = MutableStateFlow<List<String>>(emptyList())
     val availableVoices = _availableVoices.asStateFlow()
-    val ttsState = combine(epubFormatManager.ttsState, pdfReflowManager.ttsState, isReflowMode) { epub, pdf, reflow ->
-        if (isPdfBook || reflow) pdf else epub
+    private val _isPdfBook = MutableStateFlow(false)
+    val ttsState = combine(epubFormatManager.ttsState, pdfReflowManager.ttsState, isReflowMode, _isPdfBook) { epub, pdf, reflow, isPdf ->
+        if (isPdf || reflow) pdf else epub
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.woodsreader.ui.reader.TtsState.STOPPED)
     private val _currentTtsSentence = MutableStateFlow<String>("")
 
@@ -496,6 +491,7 @@ class ReaderViewModel @Inject constructor(
                     return@launch
                 }
                 val book: BookEntity = loadedBook
+                _isPdfBook.value = book.format.name == "PDF"
 
                 lastProcessedChapterHref = null
                 _uiState.value = ReaderUiState.InitialLoading(book)
@@ -555,6 +551,8 @@ class ReaderViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadBook: Exception loading book $bookId", e)
+                publication?.close()
+                publication = null
                 _uiState.value = ReaderUiState.Error("Error al cargar libro: ${e.message}")
             }
         }
@@ -1084,7 +1082,7 @@ class ReaderViewModel @Inject constructor(
 
     // -- TTS --------------------------------------------------------------------
     private val isPdfBook: Boolean
-        get() = (uiState.value as? ReaderUiState.Success)?.book?.format?.name == "PDF"
+        get() = _isPdfBook.value
 
     fun getLocatorForPdfPage(page: Int): Locator? {
         val pub = publication ?: return null
@@ -1134,7 +1132,7 @@ class ReaderViewModel @Inject constructor(
                 pdfReflowManager.playReflowTts(
                     scope = viewModelScope,
                     speed = currentSpeed.value,
-                    pitch = userPreferences.value.ttsPitch,
+                    pitch = _currentPitch.value,
                     languageCode = userPreferences.value.ttsLanguage,
                     voiceName = userPreferences.value.ttsVoiceName,
                     startIndex = startIndex
@@ -1204,7 +1202,7 @@ class ReaderViewModel @Inject constructor(
                 pdfReflowManager.playReflowTts(
                     scope = viewModelScope,
                     speed = currentSpeed.value,
-                    pitch = userPreferences.value.ttsPitch,
+                    pitch = _currentPitch.value,
                     languageCode = userPreferences.value.ttsLanguage,
                     voiceName = userPreferences.value.ttsVoiceName,
                     startIndex = targetIndex.coerceAtLeast(0)
@@ -1278,7 +1276,7 @@ class ReaderViewModel @Inject constructor(
                 pdfReflowManager.playReflowTts(
                     scope = viewModelScope,
                     speed = currentSpeed.value,
-                    pitch = userPreferences.value.ttsPitch,
+                    pitch = _currentPitch.value,
                     languageCode = userPreferences.value.ttsLanguage,
                     voiceName = userPreferences.value.ttsVoiceName,
                     startIndex = targetStartIndex.coerceAtLeast(0)
@@ -1303,8 +1301,8 @@ class ReaderViewModel @Inject constructor(
                     val ttsLocator = epubFormatManager.currentTtsLocator.value
 
                     // Si el usuario se ha desplazado visualmente a otra página o cambió de capítulo durante la pausa
-                    if (ttsPlayback.shouldReplayFromVisual(visualLoc, ttsLocator)) {
-                        playTts(visualLoc!!)
+                    if (visualLoc != null && ttsPlayback.shouldReplayFromVisual(visualLoc, ttsLocator)) {
+                        playTts(visualLoc)
                     } else {
                         epubFormatManager.resumeTts()
                         switchSessionMode(ReadingMode.TTS)
@@ -1458,14 +1456,30 @@ class ReaderViewModel @Inject constructor(
         pdfReflowManager.jumpToPage(viewModelScope, page)
     }
 
-    fun skipReflowTtsForward()  {
-        viewModelScope.launch { pdfReflowManager.playReflowTts(viewModelScope, currentSpeed.value, startIndex = ttsActiveBlockIndex.value + 1) }
-
+    fun skipReflowTtsForward() {
+        viewModelScope.launch {
+            pdfReflowManager.playReflowTts(
+                scope = viewModelScope,
+                speed = currentSpeed.value,
+                pitch = _currentPitch.value,
+                languageCode = userPreferences.value.ttsLanguage,
+                voiceName = userPreferences.value.ttsVoiceName,
+                startIndex = ttsActiveBlockIndex.value + 1
+            )
+        }
     }
 
     fun skipReflowTtsBackward() {
-        viewModelScope.launch { pdfReflowManager.playReflowTts(viewModelScope, currentSpeed.value, startIndex = (ttsActiveBlockIndex.value - 1).coerceAtLeast(0)) }
-
+        viewModelScope.launch {
+            pdfReflowManager.playReflowTts(
+                scope = viewModelScope,
+                speed = currentSpeed.value,
+                pitch = _currentPitch.value,
+                languageCode = userPreferences.value.ttsLanguage,
+                voiceName = userPreferences.value.ttsVoiceName,
+                startIndex = (ttsActiveBlockIndex.value - 1).coerceAtLeast(0)
+            )
+        }
     }
 
     // -- Sleep timer ------------------------------------------------------------
@@ -1505,7 +1519,10 @@ class ReaderViewModel @Inject constructor(
     // --- Misc ------------------------------------------------------------------
     private var lastUserInteractionTime = 0L
 
-    fun onUserInteraction()      { lastUserInteractionTime = System.currentTimeMillis() }
+    fun onUserInteraction() {
+        lastUserInteractionTime = System.currentTimeMillis()
+        recordActivity()
+    }
 
     fun togglePdfBookView() {
         val currentState = _viewState.value
@@ -1571,7 +1588,7 @@ class ReaderViewModel @Inject constructor(
             globalProgress = _globalProgress.value
         )
         plan.pageToRemember?.let { progressTracker.lastKnownReflowPage = it }
-        if (plan.saveProgressFirst) saveProgress(currentLoc!!)
+        if (plan.saveProgressFirst && currentLoc != null) saveProgress(currentLoc)
         saveReadingProgressUseCase.flushImmediately(
             bookId = bookId, chapterIndex = chapterIdx, progress = plan.progress, currentLocator = currentLoc,
             fallbackLocatorJson = locJson, fallbackHref = href, fallbackPosition = plan.fallbackPosition
@@ -1624,6 +1641,7 @@ class ReaderViewModel @Inject constructor(
         positionsByResource = emptyList()
         resourceIndexCache = null
         chapterNavigationCoordinator.clear()
+        _isPdfBook.value = false
         super.onCleared()
     }
 

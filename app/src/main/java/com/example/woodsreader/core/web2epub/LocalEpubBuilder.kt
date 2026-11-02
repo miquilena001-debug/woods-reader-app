@@ -91,48 +91,77 @@ class LocalEpubBuilder(
 
     fun appendChapter(rawTitle: String, paragraphs: List<String>, sourceUrl: String) {
         if (paragraphs.isEmpty()) return
-        val idx = chapters.size + 1
-        val fileName = "chapter_${"%04d".format(java.util.Locale.ROOT, idx)}.xhtml"
-        val cleanTitle = rawTitle.trim().ifBlank { "Capítulo $idx" }
+        val cleanTitle = rawTitle.trim().ifBlank { "Capítulo ${chapters.size + 1}" }
 
-        val bodyBuilder = StringBuilder(paragraphs.sumOf { it.length + 16 })
-        val imgTagRegex = Regex("""^\[WOODS_IMG:(.+)\]$""")
+        // Salvaguarda: límite de ~180 KB por archivo XHTML para fluidez en lectura móvil
+        val maxChunkChars = 180_000
+        val chunks = mutableListOf<List<String>>()
+        var currentChunk = mutableListOf<String>()
+        var currentChunkChars = 0
+
         for (p in paragraphs) {
-            val trimmed = p.trim()
-            if (trimmed.isNotEmpty()) {
-                val imgMatch = imgTagRegex.find(trimmed)
-                if (imgMatch != null) {
-                    val imgPath = escapeXml(imgMatch.groupValues[1])
-                    bodyBuilder.append("    <div class=\"illust-box\"><img src=\"").append(imgPath).append("\" alt=\"Ilustración\"/></div>\n")
-                } else {
-                    bodyBuilder.append("    <p>").append(escapeXml(trimmed)).append("</p>\n")
-                }
+            val pLen = p.length + 16
+            if (currentChunk.isNotEmpty() && currentChunkChars + pLen > maxChunkChars) {
+                chunks.add(currentChunk)
+                currentChunk = mutableListOf(p)
+                currentChunkChars = pLen
+            } else {
+                currentChunk.add(p)
+                currentChunkChars += pLen
             }
         }
+        if (currentChunk.isNotEmpty()) {
+            chunks.add(currentChunk)
+        }
 
-        val xhtml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
-            "<!DOCTYPE html>\n" +
-            "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"$languageCode\" lang=\"$languageCode\">\n" +
-            "<head>\n" +
-            "    <meta charset=\"utf-8\" />\n" +
-            "    <title>${escapeXml(cleanTitle)}</title>\n" +
-            "    <link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\" />\n" +
-            "</head>\n" +
-            "<body>\n" +
-            "    <h2>${escapeXml(cleanTitle)}</h2>\n" +
-            bodyBuilder.toString() +
-            "</body>\n" +
-            "</html>"
+        val imgTagRegex = Regex("""^\[WOODS_IMG:(.+)\]$""")
+        for ((partIdx, chunk) in chunks.withIndex()) {
+            val partTitle = if (chunks.size > 1) {
+                "$cleanTitle (Parte ${partIdx + 1})"
+            } else {
+                cleanTitle
+            }
+            val idx = chapters.size + 1
+            val fileName = "chapter_${"%04d".format(java.util.Locale.ROOT, idx)}.xhtml"
 
-        putTextEntry("OEBPS/$fileName", xhtml)
-        chapters.add(
-            ScrapedChapterMeta(
-                index = idx,
-                fileName = fileName,
-                title = cleanTitle,
-                sourceUrl = sourceUrl
+            val bodyBuilder = StringBuilder(chunk.sumOf { it.length + 16 })
+            for (p in chunk) {
+                val trimmed = p.trim()
+                if (trimmed.isNotEmpty()) {
+                    val imgMatch = imgTagRegex.find(trimmed)
+                    if (imgMatch != null) {
+                        val imgPath = escapeXml(imgMatch.groupValues[1])
+                        bodyBuilder.append("    <div class=\"illust-box\"><img src=\"").append(imgPath).append("\" alt=\"Ilustración\"/></div>\n")
+                    } else {
+                        bodyBuilder.append("    <p>").append(escapeXml(trimmed)).append("</p>\n")
+                    }
+                }
+            }
+
+            val xhtml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                "<!DOCTYPE html>\n" +
+                "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"$languageCode\" lang=\"$languageCode\">\n" +
+                "<head>\n" +
+                "    <meta charset=\"utf-8\" />\n" +
+                "    <title>${escapeXml(partTitle)}</title>\n" +
+                "    <link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\" />\n" +
+                "</head>\n" +
+                "<body>\n" +
+                "    <h2>${escapeXml(partTitle)}</h2>\n" +
+                bodyBuilder.toString() +
+                "</body>\n" +
+                "</html>"
+
+            putTextEntry("OEBPS/$fileName", xhtml)
+            chapters.add(
+                ScrapedChapterMeta(
+                    index = idx,
+                    fileName = fileName,
+                    title = partTitle,
+                    sourceUrl = if (partIdx == 0) sourceUrl else "$sourceUrl#part${partIdx + 1}"
+                )
             )
-        )
+        }
     }
 
     fun finishEpub(): Boolean {

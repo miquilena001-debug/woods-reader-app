@@ -13,6 +13,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.text.TextPaint
+import com.example.woodsreader.core.storage.WoodsFolderStructure
 import com.example.woodsreader.core.tts.TtsManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,8 @@ internal fun videoFramePtsUs(frameIndex: Long, fps: Int): Long =
 @Singleton
 class QuoteVideoClipExporter @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val ttsManager: TtsManager
+    private val ttsManager: TtsManager,
+    private val woodsFolderStructure: WoodsFolderStructure? = null
 ) {
     private val _isGeneratingVideo = MutableStateFlow(false)
     val isGeneratingVideo: StateFlow<Boolean> = _isGeneratingVideo.asStateFlow()
@@ -62,7 +64,7 @@ class QuoteVideoClipExporter @Inject constructor(
         _isGeneratingVideo.value = true
         _progress.value = 0.05f
 
-        val outDir = File(context.cacheDir, "shared_video_quotes").apply { mkdirs() }
+        val outDir = woodsFolderStructure?.videosDir ?: File(context.cacheDir, "shared_video_quotes").apply { mkdirs() }
         val outputFile = File(outDir, "woods_quote_${System.currentTimeMillis()}.mp4")
         var completedOk = false
 

@@ -12,6 +12,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.woodsreader.R
+import com.example.woodsreader.core.storage.WoodsFolderStructure
 import com.example.woodsreader.core.web2epub.novel.EpubAssembler
 import com.example.woodsreader.core.web2epub.novel.ImageDownloader
 import com.example.woodsreader.core.web2epub.novel.ImportStage
@@ -32,7 +33,8 @@ import java.io.File
 class WebNovelImportWorker @AssistedInject constructor(
     @Assisted private val context: Context,
     @Assisted private val params: WorkerParameters,
-    private val okHttpClient: OkHttpClient
+    private val okHttpClient: OkHttpClient,
+    private val woodsFolderStructure: WoodsFolderStructure
 ) : CoroutineWorker(context, params) {
 
     companion object {
@@ -63,7 +65,7 @@ class WebNovelImportWorker @AssistedInject constructor(
         createNotificationChannel()
         setForeground(createForegroundInfo(context.getString(R.string.novel_import_preparing), 0, 0))
 
-        val outputDir = File(context.filesDir, "epubs").apply { if (!exists()) mkdirs() }
+        val outputDir = woodsFolderStructure.epubsDir
         val baseStoreDir = File(context.cacheDir, "web2epub").apply { if (!exists()) mkdirs() }
 
         val adapterRegistry = SiteProfileLoader(context).loadRegistry()

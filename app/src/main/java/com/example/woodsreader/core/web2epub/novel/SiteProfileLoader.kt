@@ -1,6 +1,7 @@
 package com.example.woodsreader.core.web2epub.novel
 
 import android.content.Context
+import android.os.Environment
 import timber.log.Timber
 import java.io.File
 
@@ -23,7 +24,18 @@ class SiteProfileLoader(
         // 1. Directorios extra proporcionados
         candidateDirs.addAll(extraDirs)
 
-        // 2. Directorio de la app (context.getExternalFilesDir("site_profiles"))
+        // 2. Directorio público preferente Documents/WoodsReader/site_profiles
+        try {
+            val docs = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+            val publicDir = File(docs, "WoodsReader/site_profiles")
+            if (publicDir.exists() && publicDir.isDirectory) {
+                candidateDirs.add(publicDir)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Error al comprobar Documents/WoodsReader/site_profiles")
+        }
+
+        // 3. Directorio de la app (context.getExternalFilesDir("site_profiles"))
         try {
             context.getExternalFilesDir("site_profiles")?.let { candidateDirs.add(it) }
         } catch (e: Exception) {

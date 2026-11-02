@@ -22,6 +22,7 @@ data class PdfChapter(
  * 2. Purga de Ruido: Descarta números de página sueltos y encabezados/pies de página residuales.
  * 3. Detección Automática de Capítulos (TOC Virtual): Escanea novelas web empaquetadas en PDF (ej. 350 caps)
  *    generando la Tabla de Contenidos estructurada para Readium y el lector.
+ * 4. Filtro Anti-Índice y Monotonía: Descarta páginas de índice impreso y listas no monótonas.
  */
 object PdfParagraphHealer {
 
@@ -63,10 +64,50 @@ object PdfParagraphHealer {
             return false
         }
 
+        // Evitar líneas que comiencen con comillas o guiones de diálogo
+        if (trimmed.startsWith("\"") || trimmed.startsWith("“") || trimmed.startsWith("«") || trimmed.startsWith("—") || trimmed.startsWith("- ")) {
+            return false
+        }
+
         if (CHAPTER_HEADING_REGEX.matches(trimmed)) return true
-        if (NUMBERED_NOVEL_HEADING_REGEX.matches(trimmed)) return true
+        if (NUMBERED_NOVEL_HEADING_REGEX.matches(trimmed)) {
+            val titlePart = NUMBERED_NOVEL_HEADING_REGEX.find(trimmed)?.groupValues?.getOrNull(2).orEmpty().trim()
+            if (titlePart.length in 3..60 && !titlePart.contains("\"") && !titlePart.contains("”")) {
+                return true
+            }
+        }
 
         return false
+    }
+
+    /**
+     * Determina si un conjunto de líneas corresponde a una página de tabla de contenidos / índice impreso.
+     */
+    fun isTableOfContentsPage(lines: List<String>): Boolean {
+        val nonBlank = lines.map { it.trim() }.filter { it.isNotEmpty() }
+        if (nonBlank.size < 3) return false
+        val headingMatches = nonBlank.count { isChapterHeading(it) }
+        return headingMatches >= 3 || (nonBlank.size >= 5 && headingMatches.toFloat() / nonBlank.size >= 0.30f)
+    }
+
+    /**
+     * Extrae el número numérico del capítulo si existe en el encabezado.
+     */
+    fun extractChapterNumber(line: String): Int? {
+        val trimmed = line.trim()
+        val chapterMatch = CHAPTER_HEADING_REGEX.find(trimmed)
+        if (chapterMatch != null) {
+            val numStr = chapterMatch.groupValues.getOrNull(1)?.trim()
+            if (!numStr.isNullOrEmpty()) {
+                val parsed = numStr.toIntOrNull()
+                if (parsed != null) return parsed
+            }
+        }
+        val numberedMatch = NUMBERED_NOVEL_HEADING_REGEX.find(trimmed)
+        if (numberedMatch != null) {
+            return numberedMatch.groupValues[1].toIntOrNull()
+        }
+        return null
     }
 
     /**
@@ -173,6 +214,7 @@ object PdfParagraphHealer {
         val totalPages = minOf(document.numberOfPages, maxPagesToScan)
         val chapters = mutableListOf<PdfChapter>()
         var chapterCounter = 1
+        var lastChapterNum: Int? = null
 
         val stripper = if (pageTextExtractor == null) {
             runCatching {
@@ -195,11 +237,24 @@ object PdfParagraphHealer {
                 }
                 val lines = pageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
+                // Descartar páginas de índice impreso
+                if (isTableOfContentsPage(lines)) {
+                    continue
+                }
+
                 // Buscar encabezado de capítulo en las primeras 15 líneas de la página
                 for (line in lines.take(15)) {
                     if (isChapterHeading(line)) {
+                        val num = extractChapterNumber(line)
+                        if (num != null && lastChapterNum != null && num <= lastChapterNum) {
+                            // Salto no monótono: descartar
+                            continue
+                        }
+                        if (num != null) {
+                            lastChapterNum = num
+                        }
+
                         val cleanTitle = extractCleanChapterTitle(line, chapterCounter)
-                        // Evitar duplicar el mismo capítulo en la misma página
                         if (chapters.none { it.pageNumber == pageIdx && it.title == cleanTitle }) {
                             chapters.add(
                                 PdfChapter(
@@ -214,7 +269,6 @@ object PdfParagraphHealer {
                     }
                 }
             } catch (_: Exception) {
-                // Si una página específica falla la extracción, continuar con las siguientes
             }
         }
 
@@ -223,7 +277,6 @@ object PdfParagraphHealer {
 
     /**
      * Convierte una lista de [PdfChapter] a una lista de [Link] de Readium con destinos de página URL "/page_N#page=N".
-     * Permite inyectar un [urlFactory] personalizado para pruebas unitarias sin dependencias de Android framework.
      */
     fun chaptersToTocLinks(
         chapters: List<PdfChapter>,

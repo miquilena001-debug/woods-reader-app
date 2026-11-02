@@ -1,6 +1,7 @@
 package com.example.woodsreader.core.translation.calibre
 
 import android.content.Context
+import com.example.woodsreader.core.storage.WoodsFolderStructure
 import com.example.woodsreader.core.translation.calibre.inplace.EpubInPlaceTranslator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +29,8 @@ data class EpubTranslationProgress(
 class CalibreStyleEpubTranslator @Inject constructor(
     @ApplicationContext private val context: Context,
     private val googleFreeNetworkTranslator: GoogleFreeNetworkTranslator,
-    private val epubInPlaceTranslator: EpubInPlaceTranslator
+    private val epubInPlaceTranslator: EpubInPlaceTranslator,
+    private val woodsFolderStructure: WoodsFolderStructure? = null
 ) {
     private val _isTranslatingBook = MutableStateFlow(false)
     val isTranslatingBook: StateFlow<Boolean> = _isTranslatingBook.asStateFlow()
@@ -55,7 +57,7 @@ class CalibreStyleEpubTranslator @Inject constructor(
             return@withContext Result.failure(IllegalStateException("Ya hay una traducción de libro en curso"))
         }
 
-        val outputDir = File(context.filesDir, "translated_epubs").apply { mkdirs() }
+        val outputDir = woodsFolderStructure?.epubsDir ?: File(context.filesDir, "translated_epubs").apply { mkdirs() }
         val baseName = actualFile.nameWithoutExtension
         val translatedFile = File(outputDir, "${baseName}_${targetLanguageCode.uppercase()}.epub")
 

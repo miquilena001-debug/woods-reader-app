@@ -357,15 +357,21 @@ class LibraryViewModel @Inject constructor(
                 }
 
                 val parentDir = pdfFile.parentFile?.takeIf { it.canWrite() }
+                    ?: runCatching {
+                        val docs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                        val dir = File(docs, "WoodsReader/Epubs").apply { if (!exists()) mkdirs() }
+                        dir.takeIf { it.canWrite() }
+                    }.getOrNull()
                     ?: (context.getExternalFilesDir(null) ?: context.filesDir)
-                val safeBaseName = pdfFile.nameWithoutExtension.replace(Regex("""[^\w\-_\s]"""), "").trim()
+                val rawBase = pdfFile.nameWithoutExtension.replace('_', ' ').replace(Regex("""\s+"""), " ").trim()
+                val safeBaseName = rawBase.replace(Regex("""[^\w\-_\s]"""), "").trim()
                 val outputEpubFile = File(parentDir, "${safeBaseName}_Limpio.epub")
 
                 val result = PdfCleanExtractorAndConverter.convertPdfToCleanEpub(
                     pdfFile = pdfFile,
                     outputEpubFile = outputEpubFile,
-                    bookTitle = book.title.ifBlank { pdfFile.nameWithoutExtension },
-                    bookAuthor = book.author.ifBlank { "Web Novel" },
+                    bookTitle = book.title.ifBlank { safeBaseName },
+                    bookAuthor = if (book.author.isBlank() || book.author.equals("Web Novel", ignoreCase = true)) "Autor desconocido" else book.author,
                     languageCode = "es",
                     onProgress = { progress ->
                         _pdfConversionProgress.value = progress

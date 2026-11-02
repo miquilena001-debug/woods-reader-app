@@ -36,10 +36,8 @@ data class PdfConversionProgress(
  *    (aspect ratio > 3.6 o < 0.22).
  * 3. Limpieza de Texto y Line-Unwrapping: Elimina encabezados y pies de página repetidos (> 3 páginas)
  *    o con enlaces a redes (Discord, Patreon, Telegram), uniendo los renglones cortados para lectura continua.
- *
- * Conservación de Ilustraciones Reales:
- * - Toda ilustración artística de la historia que supere los filtros se conserva en alta calidad
- *   y se incrusta dentro de `OEBPS/images/` del archivo EPUB con su etiqueta `<div class="illust-box">`.
+ * 4. Filtro Anti-Índice y Monotonía: Detecta y descarta páginas de TOC impreso, asegurando una secuencia monótona de capítulos.
+ * 5. Salvaguarda de Tamaño de Capítulo: Límite estricto por archivo XHTML para visualización fluida.
  */
 object PdfCleanExtractorAndConverter {
 
@@ -102,6 +100,24 @@ object PdfCleanExtractorAndConverter {
                     throw IllegalStateException("El documento PDF no contiene páginas legibles.")
                 }
 
+                // Extracción y saneamiento de título y autor
+                val info = runCatching { doc.documentInformation }.getOrNull()
+                val infoTitle = info?.title?.trim().orEmpty()
+                val infoAuthor = info?.author?.trim().orEmpty()
+
+                val effectiveTitle = when {
+                    infoTitle.isNotBlank() && !infoTitle.equals("Untitled", ignoreCase = true) -> infoTitle
+                    bookTitle.isNotBlank() && !bookTitle.equals("Web Novel", ignoreCase = true) ->
+                        bookTitle.replace('_', ' ').replace(Regex("""\s+"""), " ").trim()
+                    else -> pdfFile.nameWithoutExtension.replace('_', ' ').replace(Regex("""\s+"""), " ").trim()
+                }
+
+                val effectiveAuthor = when {
+                    infoAuthor.isNotBlank() && !infoAuthor.equals("Web Novel", ignoreCase = true) -> infoAuthor
+                    bookAuthor.isNotBlank() && !bookAuthor.equals("Web Novel", ignoreCase = true) -> bookAuthor
+                    else -> "Autor desconocido"
+                }
+
                 onProgress(
                     PdfConversionProgress(
                         currentPage = 0,
@@ -113,7 +129,7 @@ object PdfCleanExtractorAndConverter {
                     )
                 )
 
-                // ── FASE 1: Análisis Ligero de Huellas Digitales y Encabezados Repetidos ──
+                // ── FASE 1: Análisis Ligero de Muestreo de Huellas y Encabezados Repetidos ──
                 val imageHashCounts = HashMap<String, Int>(64)
                 val imageFirstPage = HashMap<String, Int>(64)
                 val rawImageMap = HashMap<String, ByteArray>(64)
@@ -121,15 +137,23 @@ object PdfCleanExtractorAndConverter {
                 val footerOccurrences = HashMap<String, Int>(64)
 
                 var coverCandidateBytes: ByteArray? = null
+                var sampledImagePages = 0
+                var totalSampledTextChars = 0
 
                 val stripper = if (pageTextProvider == null) {
                     runCatching { PDFTextStripper().apply { sortByPosition = true } }.getOrNull()
                 } else null
 
-                for (pageIdx in 0 until totalPages) {
+                // Optimización de muestreo para PDFs extensos (>150 págs): primeros 100 y últimos 50
+                val samplePages = if (totalPages <= 150) {
+                    (0 until totalPages).toList()
+                } else {
+                    ((0 until 100) + (totalPages - 50 until totalPages)).distinct()
+                }
+
+                for (pageIdx in samplePages) {
                     currentCoroutineContext().ensureActive()
 
-                    // Extraer texto preliminar para detectar encabezados/pies repetidos
                     val rawPageText = if (pageTextProvider != null) {
                         pageTextProvider(doc, pageIdx + 1)
                     } else if (stripper != null) {
@@ -140,6 +164,10 @@ object PdfCleanExtractorAndConverter {
                         sw.toString()
                     } else {
                         ""
+                    }
+
+                    if (pageIdx < 20) {
+                        totalSampledTextChars += rawPageText.trim().length
                     }
 
                     val pageLines = rawPageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -158,6 +186,7 @@ object PdfCleanExtractorAndConverter {
                     try {
                         val page = doc.getPage(pageIdx)
                         val resources = page.resources
+                        var hasImageOnPage = false
                         resources?.xObjectNames?.forEach { xName ->
                             val xObject = try { resources.getXObject(xName) } catch (_: Throwable) { null }
                             if (xObject is PDImageXObject) {
@@ -167,6 +196,7 @@ object PdfCleanExtractorAndConverter {
                                     null
                                 }
                                 if (bytes != null && bytes.size > 256) {
+                                    hasImageOnPage = true
                                     val hash = calculateSha256(bytes)
                                     imageHashCounts[hash] = (imageHashCounts[hash] ?: 0) + 1
                                     if (!imageFirstPage.containsKey(hash)) {
@@ -174,8 +204,8 @@ object PdfCleanExtractorAndConverter {
                                         rawImageMap[hash] = bytes
                                     }
 
-                                    // Si estamos en la primera página y la imagen tiene buen tamaño, es candidata a portada
-                                    if (pageIdx == 0 && coverCandidateBytes == null) {
+                                    // Si estamos en las primeras 3 páginas y no hay portada, buscar candidata
+                                    if (pageIdx in 0..2 && coverCandidateBytes == null) {
                                         val w = xObject.width
                                         val h = xObject.height
                                         if (w >= 280 && h >= 380 && (w.toFloat() / h.toFloat()) in 0.45f..1.15f) {
@@ -185,21 +215,30 @@ object PdfCleanExtractorAndConverter {
                                 }
                             }
                         }
+                        if (hasImageOnPage && pageIdx < 20) {
+                            sampledImagePages++
+                        }
                     } catch (_: Throwable) {}
                 }
 
-                // Identificar lista negra de spam (imágenes repetidas >= 2 veces a lo largo del libro)
+                // Detección de PDF escaneado (sin texto legible): si más del 85% de las primeras páginas solo tienen imágenes y casi 0 caracteres
+                val checkedPagesCount = minOf(20, samplePages.size)
+                if (checkedPagesCount >= 5 && sampledImagePages >= (checkedPagesCount * 0.85) && totalSampledTextChars < 200) {
+                    throw IllegalStateException("Este documento es un PDF escaneado (solo imágenes) y no contiene capa de texto legible.")
+                }
+
+                // Lista negra de spam (imágenes repetidas >= 2 veces a lo largo del muestreo)
                 val spamImageHashes = imageHashCounts.filter { it.value >= 2 }.keys.toSet()
 
-                // Encabezados o pies de página que se repiten en 3 o más páginas
+                // Encabezados o pies de página repetidos
                 val spamHeaders = headerOccurrences.filter { it.value >= 3 }.keys.toSet()
                 val spamFooters = footerOccurrences.filter { it.value >= 3 }.keys.toSet()
 
                 // ── FASE 2: Extracción Limpia y Construcción de Capítulos con LocalEpubBuilder ──
                 val epubBuilder = LocalEpubBuilder(
                     outputFile = outputEpubFile,
-                    bookTitle = bookTitle,
-                    bookAuthor = bookAuthor,
+                    bookTitle = effectiveTitle,
+                    bookAuthor = effectiveAuthor,
                     languageCode = languageCode
                 )
 
@@ -213,9 +252,13 @@ object PdfCleanExtractorAndConverter {
                 var illustrationsCount = 0
                 var adsBlockedCount = 0
 
+                var chapterSequence = 1
+                var lastChapterNumber: Int? = null
+                var hasEncounteredFirstChapter = false
+                val preliminaryIllustrations = ArrayList<String>()
+
                 var currentChapterTitle = "Capítulo 1"
                 var currentChapterParagraphs = ArrayList<String>(128)
-                var chapterSequence = 1
 
                 fun flushChapter() {
                     if (currentChapterParagraphs.isNotEmpty()) {
@@ -277,7 +320,7 @@ object PdfCleanExtractorAndConverter {
                         filteredLines.add(line)
                     }
 
-                    // 2. Procesar imágenes de la página aplicando los 3 filtros anti-publicidad
+                    // 2. Procesar imágenes de la página aplicando los filtros anti-publicidad
                     val pageImagesToInsert = mutableListOf<String>()
                     try {
                         val page = doc.getPage(pageIdx)
@@ -313,6 +356,11 @@ object PdfCleanExtractorAndConverter {
                                     return@forEach
                                 }
 
+                                // Si la imagen es exactamente la misma de la portada en página 1, no duplicar en cuerpo
+                                if (pageIdx == 0 && hash == (coverCandidateBytes?.let { calculateSha256(it) })) {
+                                    return@forEach
+                                }
+
                                 // Es una ilustración real única: registrarla en el EPUB
                                 val compressed = imageCompressor(bytes)
                                 val imgMarker = epubBuilder.registerChapterImage(compressed)
@@ -324,27 +372,73 @@ object PdfCleanExtractorAndConverter {
                         }
                     } catch (_: Throwable) {}
 
-                    // 3. Estructuración en capítulos
-                    // Si encontramos un encabezado de capítulo al inicio de la página, creamos nuevo capítulo
-                    val firstHeading = filteredLines.firstOrNull { PdfParagraphHealer.isChapterHeading(it) }
-                    if (firstHeading != null && currentChapterParagraphs.isNotEmpty()) {
-                        flushChapter()
-                        currentChapterTitle = PdfParagraphHealer.extractCleanChapterTitle(firstHeading, chapterSequence)
-                    }
+                    // 3. Estructuración inteligente en capítulos con filtro Anti-Índice y Monotonía
+                    val isTableOfContents = PdfParagraphHealer.isTableOfContentsPage(filteredLines)
 
-                    // Incrustar ilustraciones encontradas en esta página
-                    pageImagesToInsert.forEach { currentChapterParagraphs.add(it) }
+                    if (isTableOfContents) {
+                        // Es una página de índice impreso del libro: NO iniciar capítulos aquí
+                        val healedTocLines = PdfParagraphHealer.healParagraphs(filteredLines)
+                        if (hasEncounteredFirstChapter) {
+                            currentChapterParagraphs.addAll(healedTocLines)
+                        }
+                        // Si es previo al capítulo 1, no se acumula como capítulo
+                    } else {
+                        val headingIdx = filteredLines.indexOfFirst { PdfParagraphHealer.isChapterHeading(it) }
+                        val headingLine = if (headingIdx >= 0) filteredLines[headingIdx] else null
 
-                    // Curar y unir renglones cortados (Line-Unwrapping)
-                    val healedParagraphs = PdfParagraphHealer.healParagraphs(filteredLines)
-                    for (p in healedParagraphs) {
-                        // Evitar repetir el título del capítulo dentro del cuerpo si ya se usó como encabezado
-                        if (p != firstHeading) {
-                            currentChapterParagraphs.add(p)
+                        if (headingLine != null) {
+                            val extractedNum = PdfParagraphHealer.extractChapterNumber(headingLine)
+                            val isMonotonic = extractedNum == null || lastChapterNumber == null || extractedNum > lastChapterNumber
+
+                            if (isMonotonic) {
+                                if (extractedNum != null) {
+                                    lastChapterNumber = extractedNum
+                                }
+
+                                // Volcar líneas previas al encabezado en el capítulo anterior
+                                if (headingIdx > 0) {
+                                    val linesBefore = filteredLines.subList(0, headingIdx)
+                                    currentChapterParagraphs.addAll(PdfParagraphHealer.healParagraphs(linesBefore))
+                                }
+
+                                if (currentChapterParagraphs.isNotEmpty()) {
+                                    flushChapter()
+                                }
+
+                                currentChapterTitle = PdfParagraphHealer.extractCleanChapterTitle(headingLine, chapterSequence)
+                                hasEncounteredFirstChapter = true
+
+                                // Si había ilustraciones acumuladas en las páginas preliminares, incluirlas en el inicio del Capítulo 1
+                                if (preliminaryIllustrations.isNotEmpty()) {
+                                    currentChapterParagraphs.addAll(preliminaryIllustrations)
+                                    preliminaryIllustrations.clear()
+                                }
+
+                                // Añadir ilustraciones de esta página al nuevo capítulo
+                                pageImagesToInsert.forEach { currentChapterParagraphs.add(it) }
+
+                                // Curar líneas posteriores al encabezado
+                                val linesAfter = filteredLines.subList(headingIdx + 1, filteredLines.size)
+                                currentChapterParagraphs.addAll(PdfParagraphHealer.healParagraphs(linesAfter))
+                            } else {
+                                // Salto no monótono (ej. enumeración o diálogo): procesar toda la página como texto normal
+                                pageImagesToInsert.forEach { currentChapterParagraphs.add(it) }
+                                currentChapterParagraphs.addAll(PdfParagraphHealer.healParagraphs(filteredLines))
+                            }
+                        } else {
+                            // Página sin encabezado de capítulo
+                            val healed = PdfParagraphHealer.healParagraphs(filteredLines)
+                            if (!hasEncounteredFirstChapter && healed.isEmpty() && pageImagesToInsert.isNotEmpty()) {
+                                // Ilustraciones artísticas preliminares (portadas internas / arte previo a cap 1)
+                                preliminaryIllustrations.addAll(pageImagesToInsert)
+                            } else {
+                                pageImagesToInsert.forEach { currentChapterParagraphs.add(it) }
+                                currentChapterParagraphs.addAll(healed)
+                            }
                         }
                     }
 
-                    if ((pageIdx + 1) % 10 == 0 || pageIdx == totalPages - 1) {
+                    if ((pageIdx + 1) % 50 == 0 || pageIdx == totalPages - 1) {
                         onProgress(
                             PdfConversionProgress(
                                 currentPage = pageIdx + 1,
@@ -352,7 +446,7 @@ object PdfCleanExtractorAndConverter {
                                 chaptersCreated = chaptersCount,
                                 illustrationsSaved = illustrationsCount,
                                 adsBlocked = adsBlockedCount,
-                                statusMessage = "Página ${pageIdx + 1} de $totalPages — ${illustrationsCount} ilustraciones, ${adsBlockedCount} anuncios bloqueados"
+                                statusMessage = "Página ${pageIdx + 1} de $totalPages — ${chaptersCount} capítulos, ${illustrationsCount} ilustraciones, ${adsBlockedCount} anuncios bloqueados"
                             )
                         )
                     }
@@ -362,10 +456,13 @@ object PdfCleanExtractorAndConverter {
                 flushChapter()
 
                 // Si no se detectó ningún capítulo (novela sin palabras clave de capítulo), volcar contenido global
-                if (chaptersCount == 0 && currentChapterParagraphs.isNotEmpty()) {
+                if (chaptersCount == 0 && (currentChapterParagraphs.isNotEmpty() || preliminaryIllustrations.isNotEmpty())) {
+                    val fallbackParagraphs = ArrayList<String>()
+                    fallbackParagraphs.addAll(preliminaryIllustrations)
+                    fallbackParagraphs.addAll(currentChapterParagraphs)
                     epubBuilder.appendChapter(
-                        rawTitle = bookTitle,
-                        paragraphs = currentChapterParagraphs,
+                        rawTitle = effectiveTitle,
+                        paragraphs = fallbackParagraphs,
                         sourceUrl = "full_book"
                     )
                     chaptersCount = 1

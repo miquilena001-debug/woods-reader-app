@@ -2,6 +2,7 @@ package com.example.woodsreader.core.backup
 
 import android.content.Context
 import android.net.Uri
+import com.example.woodsreader.core.storage.WoodsFolderStructure
 import com.example.woodsreader.core.tts.PhoneticRule
 import com.example.woodsreader.core.tts.PronunciationLexiconManager
 import com.example.woodsreader.core.tts.SoundscapeMode
@@ -10,6 +11,8 @@ import com.example.woodsreader.data.database.BookDao
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.database.BookmarkDao
 import com.example.woodsreader.data.database.BookmarkEntity
+import com.example.woodsreader.data.database.CollectionDao
+import com.example.woodsreader.data.database.CollectionEntity
 import com.example.woodsreader.data.database.HighlightDao
 import com.example.woodsreader.data.database.HighlightEntity
 import com.example.woodsreader.data.database.ReadingSessionDao
@@ -27,7 +30,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import timber.log.Timber
 import java.io.File
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,6 +87,15 @@ data class BookmarkBackup(
 )
 
 @Serializable
+data class CollectionBackup(
+    val id: String = "",
+    val name: String,
+    val description: String = "",
+    val coverBookId: String? = null,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Serializable
 data class PhoneticRuleBackup(
     val id: String = "",
     val originalWord: String,
@@ -129,14 +143,34 @@ data class ReadingSessionBackup(
 )
 
 @Serializable
+data class WoodsBackupHeader(
+    val formatVersion: Int = 3,
+    val app: String = "Woods Reader",
+    val appVersionCode: Int = 11,
+    val appVersionName: String = "1.0.10",
+    val roomSchemaVersion: Int = 11,
+    val exportedAt: Long = System.currentTimeMillis(),
+    val exportDateFormatted: String = "",
+    val checksumSha256: String = "",
+    val booksCount: Int = 0,
+    val highlightsCount: Int = 0,
+    val bookmarksCount: Int = 0,
+    val collectionsCount: Int = 0,
+    val sessionsCount: Int = 0,
+    val readingStatsCount: Int = 0
+)
+
+@Serializable
 data class WoodsReaderBackupVault(
-    val formatVersion: Int = 2,
+    val formatVersion: Int = 3,
     val app: String = "Woods Reader",
     val exportedAt: Long = System.currentTimeMillis(),
     val exportDateFormatted: String = "",
+    val header: WoodsBackupHeader? = null,
     val books: List<BookProgressBackup> = emptyList(),
     val highlights: List<HighlightBackup> = emptyList(),
     val bookmarks: List<BookmarkBackup> = emptyList(),
+    val collections: List<CollectionBackup> = emptyList(),
     val phoneticRules: List<PhoneticRuleBackup> = emptyList(),
     val builtInLexiconEnabled: Boolean = true,
     val studioPreferences: StudioPreferencesBackup? = null,
@@ -152,12 +186,14 @@ class WoodsBackupManager @Inject constructor(
     private val bookDao: BookDao,
     private val highlightDao: HighlightDao,
     private val bookmarkDao: BookmarkDao,
+    private val collectionDao: CollectionDao,
     private val readingSessionDao: ReadingSessionDao,
     private val readingStatsDao: ReadingStatsDao,
     private val pronunciationLexiconManager: PronunciationLexiconManager,
     private val preferencesRepository: UserPreferencesRepository,
     private val ambientSoundscapePlayer: com.example.woodsreader.core.tts.AmbientSoundscapePlayer,
-    private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao
+    private val ttsRuleDao: com.example.woodsreader.data.database.TtsRuleDao,
+    private val woodsFolderStructure: WoodsFolderStructure
 ) {
     private val json = Json {
         prettyPrint = true
@@ -165,15 +201,23 @@ class WoodsBackupManager @Inject constructor(
         encodeDefaults = true
     }
 
+    fun calculateSha256(bytes: ByteArray): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val digest = md.digest(bytes)
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     /**
-     * Empaqueta el progreso de lectura, subrayados, marcadores, reglas fonéticas,
-     * preferencias acústicas de estudio y estadísticas en un archivo JSON en cacheDir.
+     * Empaqueta el progreso de lectura, subrayados, marcadores, colecciones, reglas fonéticas,
+     * preferencias acústicas de estudio y estadísticas en un archivo JSON en Documents/WoodsReader/Backups.
      */
     suspend fun createBackupFile(): File = withContext(Dispatchers.IO) {
         val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.US)
+        val timeFormat = SimpleDateFormat("HHmmss", Locale.US)
         val fullDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val now = Date()
         val dateStamp = dateFormat.format(now)
+        val timeStamp = timeFormat.format(now)
 
         val localBooks = bookDao.getAllBooks()
         val booksMap = localBooks.associateBy { it.id }
@@ -228,6 +272,18 @@ class WoodsBackupManager @Inject constructor(
                 createdAt = b.createdAt
             )
         }
+
+        val collectionsBackup = runCatching {
+            collectionDao.getAll().first().map { c ->
+                CollectionBackup(
+                    id = c.id,
+                    name = c.name,
+                    description = c.description,
+                    coverBookId = c.coverBookId,
+                    createdAt = c.createdAt
+                )
+            }
+        }.getOrDefault(emptyList())
 
         val customRulesBackup = pronunciationLexiconManager.getAllCustomRules().map { r ->
             PhoneticRuleBackup(
@@ -284,14 +340,33 @@ class WoodsBackupManager @Inject constructor(
 
         val userPrefs = runCatching { preferencesRepository.userPreferencesFlow.first() }.getOrNull()
 
-        val vault = WoodsReaderBackupVault(
-            formatVersion = 2,
+        val header = WoodsBackupHeader(
+            formatVersion = 3,
+            app = "Woods Reader",
+            appVersionCode = 11,
+            appVersionName = "1.0.10",
+            roomSchemaVersion = 11,
+            exportedAt = now.time,
+            exportDateFormatted = fullDateFormat.format(now),
+            checksumSha256 = "",
+            booksCount = booksBackup.size,
+            highlightsCount = highlightsBackup.size,
+            bookmarksCount = bookmarksBackup.size,
+            collectionsCount = collectionsBackup.size,
+            sessionsCount = sessionsBackup.size,
+            readingStatsCount = statsBackup.size
+        )
+
+        var vault = WoodsReaderBackupVault(
+            formatVersion = 3,
             app = "Woods Reader",
             exportedAt = now.time,
             exportDateFormatted = fullDateFormat.format(now),
+            header = header,
             books = booksBackup,
             highlights = highlightsBackup,
             bookmarks = bookmarksBackup,
+            collections = collectionsBackup,
             phoneticRules = customRulesBackup,
             builtInLexiconEnabled = pronunciationLexiconManager.builtInEnabled.value,
             studioPreferences = studioBackup,
@@ -301,14 +376,85 @@ class WoodsBackupManager @Inject constructor(
             userPreferences = userPrefs
         )
 
-        val jsonString = json.encodeToString(vault)
-        val fileName = "woods_reader_backup_$dateStamp.json"
-        val targetFile = File(context.cacheDir, fileName)
-        targetFile.outputStream().use { fos ->
-            fos.write(jsonString.toByteArray(Charsets.UTF_8))
-            fos.flush()
+        val initialBytes = json.encodeToString(vault).toByteArray(Charsets.UTF_8)
+        val sha256 = calculateSha256(initialBytes)
+        vault = vault.copy(header = header.copy(checksumSha256 = sha256))
+        val finalJsonString = json.encodeToString(vault)
+        val finalBytes = finalJsonString.toByteArray(Charsets.UTF_8)
+
+        val targetDir = woodsFolderStructure.backupsDir
+        if (targetDir.exists() && targetDir.usableSpace in 1 until 25 * 1024 * 1024L) {
+            Timber.w("Espacio en disco bajo para backups (< 25 MB libre)")
         }
+
+        val fileName = "woods_backup_${dateStamp}_${timeStamp}.json"
+        val targetFile = File(targetDir, fileName)
+        val tempFile = File(targetDir, ".woods_backup_in_progress.tmp")
+
+        try {
+            tempFile.outputStream().use { fos ->
+                fos.write(finalBytes)
+                fos.flush()
+                try { fos.fd.sync() } catch (_: Throwable) {}
+            }
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Error al escribir backup en backupsDir, recurriendo a cacheDir")
+            val fallbackFile = File(context.cacheDir, fileName)
+            fallbackFile.writeBytes(finalBytes)
+            return@withContext fallbackFile
+        }
+
+        pruneOldBackups(targetDir, maxCopies = 5)
+
         targetFile
+    }
+
+    private fun pruneOldBackups(backupsDir: File, maxCopies: Int = 5) {
+        try {
+            val files = backupsDir.listFiles { _, name ->
+                name.startsWith("woods_backup_") && name.endsWith(".json")
+            } ?: return
+            if (files.size > maxCopies) {
+                val sorted = files.sortedByDescending { it.lastModified() }
+                for (i in maxCopies until sorted.size) {
+                    sorted[i].delete()
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Error al podar respaldos antiguos")
+        }
+    }
+
+    fun getLatestBackupFile(): File? {
+        val dir = woodsFolderStructure.backupsDir
+        return dir.listFiles { _, name ->
+            name.startsWith("woods_backup_") && name.endsWith(".json")
+        }?.maxByOrNull { it.lastModified() }
+    }
+
+    fun readBackupHeader(file: File): WoodsBackupHeader? {
+        return try {
+            val text = file.readText(Charsets.UTF_8)
+            val vault = json.decodeFromString<WoodsReaderBackupVault>(text)
+            vault.header ?: WoodsBackupHeader(
+                formatVersion = vault.formatVersion,
+                app = vault.app,
+                exportedAt = vault.exportedAt,
+                exportDateFormatted = vault.exportDateFormatted,
+                booksCount = vault.books.size,
+                highlightsCount = vault.highlights.size,
+                bookmarksCount = vault.bookmarks.size,
+                collectionsCount = vault.collections.size,
+                sessionsCount = vault.readingSessions.size,
+                readingStatsCount = vault.readingStats.size
+            )
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**
@@ -347,7 +493,7 @@ class WoodsBackupManager @Inject constructor(
     }
 
     /**
-     * Deserializa y restaura el JSON asegurando compatibilidad hacia atrás.
+     * Deserializa y restaura el JSON asegurando compatibilidad hacia atrás (v1, v2 y v3).
      */
     suspend fun restoreFromJson(rawJson: String): Int = withContext(Dispatchers.IO) {
         var restoredCount = 0
@@ -361,13 +507,31 @@ class WoodsBackupManager @Inject constructor(
 
         val bookIdRemap = mutableMapOf<String, String>()
 
-        // Intentar parsear como WoodsReaderBackupVault (Formato actual)
+        // Intentar parsear como WoodsReaderBackupVault (Formatos v1, v2 o v3)
         val vaultResult = runCatching { json.decodeFromString<WoodsReaderBackupVault>(rawJson) }
 
         if (vaultResult.isSuccess) {
             val vault = vaultResult.getOrThrow()
 
-            // 1. Restaurar progreso de libros emparejados
+            // 0. Restaurar Colecciones
+            if (vault.collections.isNotEmpty()) {
+                for (col in vault.collections) {
+                    if (col.name.isNotBlank()) {
+                        collectionDao.upsert(
+                            CollectionEntity(
+                                id = if (col.id.isNotBlank()) col.id else UUID.randomUUID().toString(),
+                                name = col.name,
+                                description = col.description,
+                                coverBookId = col.coverBookId,
+                                createdAt = col.createdAt
+                            )
+                        )
+                        restoredCount++
+                    }
+                }
+            }
+
+            // 1. Restaurar progreso de libros emparejados y auto-creación de stubs si no existen
             for (backupBook in vault.books) {
                 val matched = localByHash[backupBook.fileHash]
                     ?: localByPath[backupBook.filePath]
@@ -393,6 +557,31 @@ class WoodsBackupManager @Inject constructor(
                         collectionId = matched.collectionId ?: backupBook.collectionId
                     )
                     bookDao.upsert(merged)
+                    restoredCount++
+                } else {
+                    // Auto-creación de stub para preservar subrayados y marcadores de libros aún no re-escaneados
+                    val targetId = if (backupBook.id.isNotBlank()) backupBook.id else UUID.randomUUID().toString()
+                    val stub = BookEntity(
+                        id = targetId,
+                        title = backupBook.title,
+                        fileHash = backupBook.fileHash.ifBlank { "restored-${UUID.randomUUID()}" },
+                        filePath = backupBook.filePath,
+                        author = backupBook.author,
+                        readingProgressPercent = backupBook.readingProgressPercent,
+                        currentLocatorJson = backupBook.currentLocatorJson,
+                        fallbackLocatorHref = backupBook.fallbackLocatorHref,
+                        fallbackLocatorPosition = backupBook.fallbackLocatorPosition,
+                        lastOpenedAt = backupBook.lastOpenedAt,
+                        totalReadingTimeMs = backupBook.totalReadingTimeMs,
+                        readingStatus = runCatching { ReadingStatus.valueOf(backupBook.readingStatus) }
+                            .getOrDefault(ReadingStatus.NOT_STARTED),
+                        userRating = backupBook.userRating,
+                        userNotes = backupBook.userNotes,
+                        collectionId = backupBook.collectionId,
+                        perBookSettingsJson = backupBook.perBookSettingsJson
+                    )
+                    bookDao.upsert(stub)
+                    bookIdRemap[backupBook.id] = targetId
                     restoredCount++
                 }
             }
@@ -486,9 +675,7 @@ class WoodsBackupManager @Inject constructor(
                     .putFloat("ambient_volume", sp.soundscapeIntensity)
                     .commit()
 
-                // Refrescar inmediatamente los StateFlows en memoria del reproductor ambiental
                 ambientSoundscapePlayer.reloadPreferences()
-
                 restoredCount++
             }
 

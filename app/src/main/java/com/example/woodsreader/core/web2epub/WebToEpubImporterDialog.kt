@@ -911,7 +911,14 @@ fun WebToEpubImporterDialog(
                                                         }
                                                     }
 
-                                                    val outputDir = File(context.getExternalFilesDir(null) ?: context.filesDir, "WebNovels").apply { mkdirs() }
+                                                    val outputDir = try {
+                                                        val docs = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)
+                                                        val dir = File(docs, "WoodsReader/Epubs")
+                                                        if (!dir.exists()) dir.mkdirs()
+                                                        dir
+                                                    } catch (_: Exception) {
+                                                        File(context.getExternalFilesDir(null) ?: context.filesDir, "WebNovels").apply { mkdirs() }
+                                                    }
                                                     val resultFile = withContext(Dispatchers.IO) {
                                                         importer.importNovel(
                                                             novelUrl = index.indexUrl,
