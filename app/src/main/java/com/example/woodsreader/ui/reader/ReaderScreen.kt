@@ -309,12 +309,8 @@ fun ReaderScreen(
     var showSearch by remember { mutableStateOf(false) }
     var showXRaySheet by remember { mutableStateOf(false) }
     var xRayReport by remember { mutableStateOf<ChapterXRayReport?>(null) }
-    var showDictionarySheet by remember { mutableStateOf(false) }
-    var showTranslateSheet by remember { mutableStateOf(false) }
-    var selectedTextForQuery by remember { mutableStateOf("") }
     var quoteToShare by remember { mutableStateOf<String?>(null) }
     var pullProgress by remember { mutableFloatStateOf(0f) }
-    var footnoteContent by remember { mutableStateOf<String?>(null) }
     var showEgoGraphSheet by remember { mutableStateOf(false) }
     var showAddToGraphDialog by remember { mutableStateOf(false) }
     var initialEgoEntityName by remember { mutableStateOf<String?>(null) }
@@ -1655,14 +1651,6 @@ fun ReaderScreen(
             )
         }
 
-        // Popup de Nota al Pie
-        footnoteContent?.let { content ->
-            FootnoteSheet(
-                content = content,
-                hazeState = hazeState,
-                onDismiss = { footnoteContent = null }
-            )
-        }
 
         // CAPA 5: TTS Controls (style-dependent)
         val chapterProgressForTts = chapterInfoForTts.progress
@@ -1722,14 +1710,6 @@ fun ReaderScreen(
 
 
 
-        // BottomSheets para Diccionario y Traducción
-        ReaderExternalLookupSheets(
-            showDictionarySheet = showDictionarySheet,
-            showTranslateSheet = showTranslateSheet,
-            selectedTextForQuery = selectedTextForQuery,
-            onDismissDictionary = { showDictionarySheet = false },
-            onDismissTranslate = { showTranslateSheet = false }
-        )
 
         if (showTtsRulesSheet) {
             TtsRulesBottomSheet(
