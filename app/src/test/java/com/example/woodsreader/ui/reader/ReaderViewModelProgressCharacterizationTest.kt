@@ -70,13 +70,6 @@ class ReaderViewModelProgressCharacterizationTest {
         return field.get(vm) as MutableStateFlow<Locator?>
     }
 
-    private fun getShowEpubCoverPageFlow(vm: ReaderViewModel): MutableStateFlow<Boolean> {
-        val field = ReaderViewModel::class.java.getDeclaredField("_showEpubCoverPage")
-        field.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        return field.get(vm) as MutableStateFlow<Boolean>
-    }
-
     private fun getGlobalProgressFlow(vm: ReaderViewModel): MutableStateFlow<Float> {
         val field = ReaderViewModel::class.java.getDeclaredField("_globalProgress")
         field.isAccessible = true
@@ -266,23 +259,10 @@ class ReaderViewModelProgressCharacterizationTest {
         }
     }
 
-    // --- P11: onTtsLocatorChanged retorna de inmediato si _showEpubCoverPage es true ---
-    @Test
-    fun testP11_onTtsLocatorChanged_coverPageActive_returnsEarly() = runTest(testDispatcher) {
-        val vm = fixture.loadedVm(format = BookFormat.EPUB, reflow = false)
-        getShowEpubCoverPageFlow(vm).value = true
-        val loc = fixture.createMockLocator(hrefStr = "cover.html", position = 0)
-
-        invokeOnTtsLocatorChanged(vm, loc)
-
-        verify(exactly = 0) { fixture.saveReadingProgressUseCase.saveTtsProgressDebounced(any(), any(), any(), any()) }
-    }
-
     // --- P12: onTtsLocatorChanged actualiza lastSavedLocatorJson y despacha saveTtsProgressDebounced ---
     @Test
     fun testP12_onTtsLocatorChanged_updatesLastSavedLocatorAndSavesTtsProgress() = runTest(testDispatcher) {
         val vm = fixture.loadedVm(format = BookFormat.EPUB, reflow = false)
-        getShowEpubCoverPageFlow(vm).value = false
         val loc = fixture.createMockLocator(hrefStr = "c1.html", position = 3)
         every { fixture.saveReadingProgressUseCase.serializeLocator(loc) } returns "{\"tts\":\"loc12\"}"
 

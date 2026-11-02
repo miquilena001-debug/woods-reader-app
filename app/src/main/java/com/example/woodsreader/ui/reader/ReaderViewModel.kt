@@ -174,7 +174,6 @@ class ReaderViewModel @Inject constructor(
     val bookTimeRemaining = _bookTimeRemaining.asStateFlow()
     private val _chapterTimeRemaining = MutableStateFlow<String?>(null)
     val chapterTimeRemaining = _chapterTimeRemaining.asStateFlow()
-    private var lastTtsSentence: String? = null
 
     val userPreferences: StateFlow<com.example.woodsreader.data.datastore.UserPreferences> = userPreferencesRepository.userPreferencesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.example.woodsreader.data.datastore.UserPreferences())
 
@@ -191,7 +190,6 @@ class ReaderViewModel @Inject constructor(
     private val _globalProgress = MutableStateFlow(0f)
 
     val globalProgress = _globalProgress.asStateFlow()
-    private val _showEpubCoverPage = MutableStateFlow(false)
     val ttsActiveBlockIndex = pdfReflowManager.ttsActiveBlockIndex
 
     // -- Teleprompter / Auto-Scroll Controller ----------------------------------
@@ -489,7 +487,6 @@ class ReaderViewModel @Inject constructor(
                 }
                 val book: BookEntity = loadedBook
 
-                _showEpubCoverPage.value = false
                 lastProcessedChapterHref = null
                 _uiState.value = ReaderUiState.InitialLoading(book)
 
@@ -560,7 +557,6 @@ class ReaderViewModel @Inject constructor(
 
     private fun startNewSession(mode: ReadingMode, initialLocator: Locator? = null) {
         sessionCoordinator.start(mode, initialLocator)?.let { progressTracker.lastRecordedProgression = it }
-        lastTtsSentence = null
     }
     private fun stopActiveSession() { sessionCoordinator.stop() }
     private fun switchSessionMode(newMode: ReadingMode) { sessionCoordinator.switchMode(newMode) }
@@ -760,7 +756,6 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun onTtsLocatorChanged(locator: Locator) {
-        if (_showEpubCoverPage.value) return
         annotations.currentLocator = locator
         val locJson = saveReadingProgressUseCase.serializeLocator(locator)
         progressTracker.lastSavedLocatorJson = locJson
@@ -1566,7 +1561,6 @@ class ReaderViewModel @Inject constructor(
 
     fun saveCurrentProgressBeforeExit() {
         autoScroll.deactivate()
-        if (_showEpubCoverPage.value) return
         flushReadingProgressImmediately()
     }
 
