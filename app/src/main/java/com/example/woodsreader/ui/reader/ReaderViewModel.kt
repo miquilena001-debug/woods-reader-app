@@ -144,9 +144,12 @@ class ReaderViewModel @Inject constructor(
 
     var navigator: Navigator? = null
         set(value) {
+            val changed = field !== value
             field = value
             epubFormatManager.updateNavigator(value)
-            observeNavigator(value)
+            if (changed || navigatorLocatorJob?.isActive != true) {
+                observeNavigator(value)
+            }
         }
 
     private fun observeNavigator(nav: Navigator?) {

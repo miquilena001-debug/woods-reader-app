@@ -65,10 +65,10 @@ class ReaderViewModelLocatorDispatchCharacterizationTest {
     }
 
     // =========================================================================
-    // Caso a: Asignar la misma instancia dos veces (comportamiento actual en HEAD)
+    // Caso a: Asignar la misma instancia dos veces (con guarda de identidad)
     // =========================================================================
     @Test
-    fun `case a - assigning same visual navigator instance twice produces two subscriptions in HEAD`() = runTest(testDispatcher) {
+    fun `case a - assigning same visual navigator instance twice produces single subscription with identity guard`() = runTest(testDispatcher) {
         val vm = fixture.createViewModel()
         val loc = fixture.createMockLocator()
         val (nav, trackingFlow) = createTrackingVisualNavigator(loc)
@@ -77,9 +77,9 @@ class ReaderViewModelLocatorDispatchCharacterizationTest {
         assertEquals(1, trackingFlow.totalSubscriptions)
         assertEquals(1, trackingFlow.activeSubscriptions)
 
-        // En HEAD, reasignar la misma instancia cancela y vuelve a suscribir
+        // Con la guarda de identidad, reasignar la misma instancia no re-suscribe
         vm.navigator = nav
-        assertEquals(2, trackingFlow.totalSubscriptions)
+        assertEquals(1, trackingFlow.totalSubscriptions)
         assertEquals(1, trackingFlow.activeSubscriptions)
     }
 
