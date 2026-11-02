@@ -773,7 +773,7 @@ fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, isFingerDown, lastTouchUpTime, navigatorState.value, ttsState) {
+    LaunchedEffect(isAutoScrollActive, autoScrollWpm, isAutoScrollManuallyPaused, navigatorState.value, ttsState) {
         if (!isAutoScrollActive) return@LaunchedEffect
 
         val nav = navigatorState.value as? VisualNavigator ?: return@LaunchedEffect
@@ -783,7 +783,7 @@ fun ReaderScreen(
             delay(16L)
 
             val now = System.currentTimeMillis()
-            val isTouchPaused = isFingerDown || (now - lastTouchUpTime < 1200L)
+            val isTouchPaused = isTouchActiveState.value
 
             if (isTouchPaused || isAutoScrollManuallyPaused || isAdvancingChapter || ttsState == TtsState.PLAYING) {
                 continue
