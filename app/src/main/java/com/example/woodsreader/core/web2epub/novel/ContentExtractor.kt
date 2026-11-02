@@ -68,6 +68,9 @@ class ContentExtractor(
         // 3. Clonar contenedor para manipulación
         val workingElement = contentElement.clone()
 
+        // 3.5 Remover elementos ocultos por CSS (reglas en <style> e inline)
+        removeHiddenCssElements(doc, workingElement)
+
         // 4. Remover elementos no deseados por selector
         val selectorsToRemove = mutableListOf(
             "script", "style", "noscript", "iframe", "svg", "button", "input", "form",
@@ -305,5 +308,98 @@ class ContentExtractor(
         }
 
         return ChapterStatus.OK
+    }
+    private fun removeHiddenCssElements(doc: Document, workingElement: Element) {
+        // 1. Parsear reglas display:none y visibility:hidden en tags <style>
+        val styleElements = (doc.select("style") + workingElement.select("style")).distinct()
+        // Requiere propiedades explicitas (evita falsos positivos como --custom-display: none o background: none)
+        val hideDeclarationRegex = Regex("""(?i)(?:^|[\s;{])(?:display\s*:\s*none|visibility\s*:\s*hidden)(?:\s*!important)?\s*(?:;|$)""")
+        val simpleSelectorRegex = Regex("""^[a-zA-Z0-9]*[.#][a-zA-Z0-9_-]+$""")
+
+        for (styleEl in styleElements) {
+            val rawCss = listOf(styleEl.data(), styleEl.html())
+                .firstOrNull { it.isNotBlank() } ?: continue
+            val cleanCss = rawCss.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+            // Descarta at-rules (@media, @supports, @keyframes, etc.) para no aplicar reglas condicionales de responsive/print
+            val topLevelCss = stripAtRules(cleanCss)
+
+            val ruleRegex = Regex("""([^{}]+)\{([^{}]+)\}""")
+            for (match in ruleRegex.findAll(topLevelCss)) {
+                val selectorsPart = match.groupValues[1]
+                val declsPart = match.groupValues[2]
+                if (hideDeclarationRegex.containsMatchIn(declsPart)) {
+                    val subSelectors = selectorsPart.split(",")
+                    for (subSel in subSelectors) {
+                        val trimmedSel = subSel.trim()
+                        if (simpleSelectorRegex.matches(trimmedSel)) {
+                            try {
+                                workingElement.select(trimmedSel).remove()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Parsear style inline en workingElement
+        for (el in workingElement.select("[style]")) {
+            val inlineStyle = el.attr("style")
+            if (hideDeclarationRegex.containsMatchIn(inlineStyle)) {
+                try {
+                    el.remove()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun stripAtRules(css: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        val len = css.length
+        while (i < len) {
+            val c = css[i]
+            if (c == '@') {
+                var j = i
+                var inQuote: Char? = null
+                while (j < len && (inQuote != null || (css[j] != ';' && css[j] != '{'))) {
+                    val ch = css[j]
+                    if (inQuote != null) {
+                        if (ch == inQuote && (j == 0 || css[j - 1] != '\\')) inQuote = null
+                    } else if (ch == '"' || ch == '\'') {
+                        inQuote = ch
+                    }
+                    j++
+                }
+                if (j < len && css[j] == ';') {
+                    i = j + 1
+                } else if (j < len && css[j] == '{') {
+                    var depth = 1
+                    j++
+                    inQuote = null
+                    while (j < len && depth > 0) {
+                        val ch = css[j]
+                        if (inQuote != null) {
+                            if (ch == inQuote && (j == 0 || css[j - 1] != '\\')) inQuote = null
+                        } else if (ch == '"' || ch == '\'') {
+                            inQuote = ch
+                        } else if (ch == '{') {
+                            depth++
+                        } else if (ch == '}') {
+                            depth--
+                        }
+                        j++
+                    }
+                    i = j
+                } else {
+                    i = j
+                }
+            } else {
+                sb.append(c)
+                i++
+            }
+        }
+        return sb.toString()
     }
 }

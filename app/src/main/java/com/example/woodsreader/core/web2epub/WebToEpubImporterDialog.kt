@@ -107,7 +107,7 @@ fun WebToEpubImporterDialog(
     val isPro by proLicenseManager.isProUnlocked.collectAsState()
 
     // Preparar dependencias del importador
-    val profileRegistry = remember { SiteProfileLoader(context).load() }
+    val adapterRegistry = remember { SiteProfileLoader(context).loadRegistry() }
     val okHttpClient = remember {
         OkHttpClient.Builder()
             .callTimeout(40, java.util.concurrent.TimeUnit.SECONDS)
@@ -127,7 +127,7 @@ fun WebToEpubImporterDialog(
     val importer = remember {
         NovelImporter(
             fetcher = fetcher,
-            profileRegistry = profileRegistry,
+            adapterRegistry = adapterRegistry,
             store = store,
             imageDownloader = imageDownloader
         )
@@ -548,9 +548,11 @@ fun WebToEpubImporterDialog(
                                                             cleanWithoutQuery
                                                         }
 
-                                                        val loader = NovelIndexLoader(fetcher, profileRegistry)
+                                                        val adapter = adapterRegistry.forUrl(resolvedUrl)
+                                                        val normalizedUrl = adapter.normalizeUrl(resolvedUrl)
+                                                        val indexUrl = adapter.indexUrl(normalizedUrl)
                                                         val index = withContext(Dispatchers.IO) {
-                                                            loader.load(resolvedUrl)
+                                                            adapter.parseIndex("", indexUrl, fetcher)
                                                         }
                                                         novelIndex = index
                                                         startIndexText = "1"
@@ -560,10 +562,10 @@ fun WebToEpubImporterDialog(
                                                     } catch (c: FetchFailure.Challenge) {
                                                         isCloudflareChallenge = true
                                                         stage = ImporterUiStage.ERROR
-                                                        errorMessage = "El sitio requiere verificación de navegador (Cloudflare)."
+                                                        errorMessage = WebImportErrorFormatter.format(c)
                                                     } catch (e: Exception) {
                                                         stage = ImporterUiStage.ERROR
-                                                        errorMessage = e.message ?: "No se pudo cargar el índice de la novela."
+                                                        errorMessage = WebImportErrorFormatter.format(e)
                                                     }
                                                 }
                                             } else {

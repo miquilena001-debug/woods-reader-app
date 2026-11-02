@@ -82,7 +82,10 @@ data class SiteProfile(
     }
 }
 
-class SiteProfileRegistry(private val profiles: List<SiteProfile>) {
+class SiteProfileRegistry(val profiles: List<SiteProfile>) {
+
+    fun toAdapterRegistry(): SiteAdapterRegistry =
+        SiteAdapterRegistry.fromProfiles(assetProfiles = profiles)
 
     fun forUrl(url: String): SiteProfile {
         val host = extractHost(url)

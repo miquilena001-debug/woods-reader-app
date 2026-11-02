@@ -31,11 +31,28 @@ data class ImportProgress(
  */
 class NovelImporter(
     private val fetcher: PageFetcher,
-    private val profileRegistry: SiteProfileRegistry,
+    private val adapterRegistry: SiteAdapterRegistry,
     private val store: ImportStore,
     private val imageDownloader: ImageDownloader? = null,
     private val assembler: EpubAssembler = EpubAssembler()
 ) {
+    /**
+     * Sobrecarga de compatibilidad hacia atrás con SiteProfileRegistry para tests existentes.
+     */
+    constructor(
+        fetcher: PageFetcher,
+        profileRegistry: SiteProfileRegistry,
+        store: ImportStore,
+        imageDownloader: ImageDownloader? = null,
+        assembler: EpubAssembler = EpubAssembler()
+    ) : this(
+        fetcher = fetcher,
+        adapterRegistry = profileRegistry.toAdapterRegistry(),
+        store = store,
+        imageDownloader = imageDownloader,
+        assembler = assembler
+    )
+
     private val _progressFlow = MutableStateFlow(ImportProgress())
     val progressFlow: Flow<ImportProgress> = _progressFlow.asStateFlow()
 
@@ -46,16 +63,18 @@ class NovelImporter(
         endIndex: Int? = null,
         forceReverse: Boolean? = null
     ): File? {
-        val profile = profileRegistry.forUrl(novelUrl)
+        val adapter = adapterRegistry.forUrl(novelUrl)
+        val profile = adapter.profile
         val jobId = ImportStore.computeJobId(novelUrl)
 
         _progressFlow.value = ImportProgress(stage = ImportStage.FETCHING_INDEX)
 
         // 1. Obtener o restaurar índice de la novela
         val existingState = store.loadState(jobId)
-        val indexLoader = NovelIndexLoader(fetcher, profileRegistry)
         val novelIndex = try {
-            indexLoader.load(novelUrl)
+            val normalizedNovelUrl = adapter.normalizeUrl(novelUrl)
+            val indexUrl = adapter.indexUrl(normalizedNovelUrl)
+            adapter.parseIndex("", indexUrl, fetcher)
         } catch (challenge: FetchFailure.Challenge) {
             _progressFlow.value = ImportProgress(stage = ImportStage.PAUSED_CHALLENGE)
             return null
@@ -74,7 +93,7 @@ class NovelImporter(
                     warnings = emptyList()
                 )
             } else {
-                _progressFlow.value = ImportProgress(stage = ImportStage.ERROR, error = e.message ?: "Error al cargar índice")
+                _progressFlow.value = ImportProgress(stage = ImportStage.ERROR, error = WebImportErrorFormatter.format(e))
                 return null
             }
         }
@@ -124,7 +143,6 @@ class NovelImporter(
         store.saveState(jobState)
 
         // 4. Descargar y extraer capítulos pendientes
-        val contentExtractor = ContentExtractor(profile)
         val downloadedImages = mutableListOf<EpubImageInput>()
 
         // Cargar portada si existe
@@ -166,8 +184,9 @@ class NovelImporter(
                 currentChapterTitle = chRef.title
             )
 
+            val effectiveChapterUrl = adapter.normalizeUrl(chRef.url)
             val page = try {
-                fetcher.get(chRef.url, referer = novelUrl)
+                fetcher.get(effectiveChapterUrl, referer = novelUrl)
             } catch (c: FetchFailure.Challenge) {
                 jobState = jobState.copy(status = JobStatus.PAUSED_CHALLENGE)
                 store.saveState(jobState)
@@ -194,7 +213,7 @@ class NovelImporter(
             }
 
             val html = CharsetDetector.decode(page.bytes, page.contentType)
-            val extracted = contentExtractor.extract(html, page.finalUrl, fallbackTitle = chRef.title)
+            val extracted = adapter.extractChapter(html, page.finalUrl, fallbackTitle = chRef.title)
 
             // Descargar imágenes del capítulo si hay
             if (imageDownloader != null && extracted.imageSources.isNotEmpty()) {
