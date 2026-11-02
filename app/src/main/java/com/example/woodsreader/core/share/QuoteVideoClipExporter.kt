@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import timber.log.Timber
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,6 +29,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.sqrt
+
+internal fun videoFramePtsUs(frameIndex: Long, fps: Int): Long =
+    frameIndex * 1_000_000L / fps
 
 @Singleton
 class QuoteVideoClipExporter @Inject constructor(
@@ -138,6 +142,8 @@ class QuoteVideoClipExporter @Inject constructor(
                 }
             }
 
+            var videoPacketIndex = 0L
+
             fun drainEncoder(
                 encoder: MediaCodec,
                 info: MediaCodec.BufferInfo,
@@ -162,6 +168,10 @@ class QuoteVideoClipExporter @Inject constructor(
                     } else if (outIdx >= 0) {
                         val encodedData = encoder.getOutputBuffer(outIdx)
                         if (encodedData != null && (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0 && info.size > 0) {
+                            if (isVideo) {
+                                info.presentationTimeUs = videoFramePtsUs(videoPacketIndex, fps)
+                                videoPacketIndex++
+                            }
                             encodedData.position(info.offset)
                             encodedData.limit(info.offset + info.size)
                             if (muxerStarted) {
@@ -212,6 +222,9 @@ class QuoteVideoClipExporter @Inject constructor(
                     if (frameIdx % 8 == 0) yield()
                 }
                 drainEncoder(videoEncoder, videoBufferInfo, isVideo = true, endOfStream = true)
+                if (videoPacketIndex != totalVideoFrames.toLong()) {
+                    Timber.w("QuoteVideoClipExporter: video packet count mismatch (encoded=$videoPacketIndex, expected=$totalVideoFrames)")
+                }
 
                 // 4. Codificar pista de audio PCM -> AAC
                 var sampleOffset = 0
