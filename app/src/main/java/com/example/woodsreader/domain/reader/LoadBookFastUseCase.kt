@@ -170,12 +170,8 @@ class LoadBookFastUseCase @Inject constructor(
                     )
                 }
 
-                // 4. Aplanar Tabla de Contenidos (TOC) y generar TOC virtual para PDFs sin índice
-                val finalPub = if (isPdf && pub.tableOfContents.isEmpty()) {
-                    generateVirtualPdfPublication(pub, uri, book)
-                } else {
-                    pub
-                }
+                // 4. Aplanar Tabla de Contenidos (el TOC virtual de PDFs sin índice se inyecta en openPublication)
+                val finalPub = pub
 
                 val flatToc = flattenToc(finalPub.tableOfContents.ifEmpty { finalPub.readingOrder })
 
@@ -192,6 +188,8 @@ class LoadBookFastUseCase @Inject constructor(
                         flatTableOfContents = flatToc
                     )
                 )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error cargando libro ${book.id}: ${e.message}", e)
                 LoadBookResult.Error("Error al cargar libro: ${e.message}", e)
@@ -217,41 +215,45 @@ class LoadBookFastUseCase @Inject constructor(
             }
         }
         val asset = assetResult?.getOrNull() ?: return null
-        return publicationOpener.open(
-            asset = EpubPackageSanitizer.transformAsset(asset),
-            allowUserInteraction = false
-        ).getOrNull()
+        val isPdf = book.format.name == "PDF"
+        return if (isPdf) {
+            publicationOpener.open(
+                asset = EpubPackageSanitizer.transformAsset(asset),
+                allowUserInteraction = false,
+                onCreatePublication = {
+                    if (manifest.tableOfContents.isEmpty()) {
+                        val virtualLinks = buildVirtualPdfToc(uri, book)
+                        if (virtualLinks.isNotEmpty()) {
+                            manifest = manifest.copy(tableOfContents = virtualLinks)
+                        }
+                    }
+                }
+            ).getOrNull()
+        } else {
+            publicationOpener.open(
+                asset = EpubPackageSanitizer.transformAsset(asset),
+                allowUserInteraction = false
+            ).getOrNull()
+        }
     }
 
-    private fun generateVirtualPdfPublication(pub: Publication, uri: Uri, book: BookEntity): Publication {
+    private fun buildVirtualPdfToc(uri: Uri, book: BookEntity): List<Link> {
         return try {
             val file = when (uri.scheme) {
                 "file" -> uri.path?.let { File(it) } ?: File(book.filePath)
                 else -> File(book.filePath)
             }
-            if (!file.exists()) return pub
+            if (!file.exists()) return emptyList()
 
             val chapters = com.tom_roush.pdfbox.pdmodel.PDDocument.load(file).use { doc ->
                 com.example.woodsreader.core.pdf.PdfParagraphHealer.scanChapters(doc)
             }
-            if (chapters.isEmpty()) return pub
+            if (chapters.isEmpty()) return emptyList()
 
-            val virtualLinks = com.example.woodsreader.core.pdf.PdfParagraphHealer.chaptersToTocLinks(chapters)
-            if (virtualLinks.isEmpty()) return pub
-
-            val containerField = Publication::class.java.getDeclaredField("container").apply { isAccessible = true }
-            @Suppress("UNCHECKED_CAST")
-            val container = containerField.get(pub) as org.readium.r2.shared.util.data.Container<org.readium.r2.shared.util.resource.Resource>
-            val servicesBuilderField = Publication::class.java.getDeclaredField("servicesBuilder").apply { isAccessible = true }
-            val servicesBuilder = servicesBuilderField.get(pub) as? Publication.ServicesBuilder
-            Publication(
-                manifest = pub.manifest.copy(tableOfContents = virtualLinks),
-                container = container,
-                servicesBuilder = servicesBuilder ?: Publication.ServicesBuilder()
-            )
+            com.example.woodsreader.core.pdf.PdfParagraphHealer.chaptersToTocLinks(chapters)
         } catch (e: Throwable) {
             Log.w(TAG, "No se pudo generar TOC virtual para PDF: ${e.message}")
-            pub
+            emptyList()
         }
     }
 
