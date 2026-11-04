@@ -120,6 +120,8 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
 
     fun clearSearchCache() {
         cancelInBookSearch()
+        _inBookSearchResults.value = emptyList()
+        _inBookSearchProgress.value = null
         FastEpubSearchEngine.clearCache()
     }
 
@@ -392,7 +394,7 @@ class ReaderIntelligenceAndExportCoordinator @Inject constructor(
         if (pdfFile != null) {
             val startPage = currentTtsPage.takeIf { it > 0 } ?: 1
             exportPdfChapters(
-                scope = scope, book = book, pdfFile = pdfFile, startPage = startPage,
+                scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO), book = book, pdfFile = pdfFile, startPage = startPage,
                 maxChaptersOrPagesToExport = maxChaptersToExport, speed = speed,
                 coverFile = coverFile, publication = publication
             )

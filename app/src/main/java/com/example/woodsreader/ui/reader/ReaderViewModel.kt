@@ -483,6 +483,7 @@ class ReaderViewModel @Inject constructor(
                 // Liberar inmediatamente cualquier publicación previa
                 publication?.close()
                 publication = null
+                chapterNavigationCoordinator.clear()
 
                 val loadedBook = loadBookFastUseCase.getBookEntity(bookId)
                 if (loadedBook == null) {

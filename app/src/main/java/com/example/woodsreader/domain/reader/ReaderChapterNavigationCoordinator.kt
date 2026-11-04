@@ -1,6 +1,7 @@
 package com.example.woodsreader.domain.reader
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import com.example.woodsreader.core.pipeline.ProcessedDocument
@@ -20,6 +21,7 @@ import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -90,7 +92,7 @@ class ReaderChapterNavigationCoordinator @Inject constructor(
 
     val chapterLruCache = LruCache<Int, ParsedChapterData>(MAX_CACHED_CHAPTERS)
     private var prefetchJob: Job? = null
-    private var lastChapterAdvanceTime = 0L
+    private val lastChapterAdvanceTime = AtomicLong(0L)
 
     fun findMatchingResourceIndex(
         rawHref: String,
@@ -387,12 +389,12 @@ class ReaderChapterNavigationCoordinator @Inject constructor(
         resourceIndexCache: Map<String, Int>?,
         onNavigatePdfNext: () -> Unit
     ) {
-        val now = System.currentTimeMillis()
-        if (now - lastChapterAdvanceTime < CHAPTER_ADVANCE_DEBOUNCE_MS) {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastChapterAdvanceTime.get()
+        if (now - last < CHAPTER_ADVANCE_DEBOUNCE_MS || !lastChapterAdvanceTime.compareAndSet(last, now)) {
             Log.d(TAG, "advanceTtsToNextChapter: Ignorado disparo duplicado dentro de 1.2s")
             return
         }
-        lastChapterAdvanceTime = now
 
         val pub = publication ?: return
         if (isPdfBook || isReflowMode) {
