@@ -64,13 +64,21 @@ class MediaStoreBookScanner @Inject constructor(
         val resolver: ContentResolver = context.contentResolver
         val coroutineContext = currentCoroutineContext()
 
-        resolver.query(
-            contentUri,
-            PROJECTION,
-            SELECTION,
-            SELECTION_ARGS,
-            null
-        )?.use { cursor ->
+        val queryCursor = try {
+            resolver.query(
+                contentUri,
+                PROJECTION,
+                SELECTION,
+                SELECTION_ARGS,
+                null
+            )
+        } catch (e: SecurityException) {
+            return@flow
+        } catch (e: IllegalArgumentException) {
+            return@flow
+        }
+
+        queryCursor?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)

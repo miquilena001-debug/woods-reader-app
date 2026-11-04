@@ -40,10 +40,10 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     fun getByIdFlow(id: String): Flow<BookEntity?>
 
-    @Query("SELECT * FROM books WHERE readingStatus = :status ORDER BY lastOpenedAt DESC NULLS LAST")
+    @Query("SELECT * FROM books WHERE readingStatus = :status ORDER BY lastOpenedAt DESC, id ASC")
     fun getByStatus(status: String): androidx.paging.PagingSource<Int, BookEntity>
 
-    @Query("SELECT * FROM books WHERE collectionId = :collectionId ORDER BY lastOpenedAt DESC NULLS LAST")
+    @Query("SELECT * FROM books WHERE collectionId = :collectionId ORDER BY lastOpenedAt DESC, id ASC")
     fun getBooksByCollection(collectionId: String): androidx.paging.PagingSource<Int, BookEntity>
 
     @Query("SELECT * FROM books WHERE lastOpenedAt IS NOT NULL ORDER BY lastOpenedAt DESC LIMIT 1")
@@ -159,7 +159,7 @@ interface BookDao {
         SELECT books.* FROM books
         INNER JOIN books_fts ON books.rowid = books_fts.rowid
         WHERE books_fts MATCH :query
-        ORDER BY lastOpenedAt DESC NULLS LAST
+        ORDER BY lastOpenedAt DESC, books.id ASC
     """)
     fun searchBooks(query: String): androidx.paging.PagingSource<Int, BookEntity>
 
@@ -184,7 +184,7 @@ interface BookDao {
     @Query("SELECT SUM(totalReadingTimeMs) FROM books")
     fun getTotalReadingTimeMs(): Flow<Long?>
 
-    @Query("SELECT * FROM books WHERE readingStatus = :status ORDER BY lastOpenedAt DESC NULLS LAST LIMIT 1")
+    @Query("SELECT * FROM books WHERE readingStatus = :status ORDER BY lastOpenedAt DESC, id ASC LIMIT 1")
     fun getFirstByStatus(status: String): Flow<BookEntity?>
 
     @Query("UPDATE books SET totalReadingTimeMs = totalReadingTimeMs + :addMs WHERE id = :id")

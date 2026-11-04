@@ -6,7 +6,9 @@ import com.example.woodsreader.model.ScrollMode
 import com.example.woodsreader.model.TtsUiStyle
 import androidx.datastore.core.DataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,7 +16,15 @@ import javax.inject.Singleton
 class UserPreferencesRepository @Inject constructor(
     private val dataStore: DataStore<UserPreferences>
 ) {
-    val userPreferencesFlow: Flow<UserPreferences> = dataStore.data.distinctUntilChanged()
+    val userPreferencesFlow: Flow<UserPreferences> = dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(UserPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .distinctUntilChanged()
 
     // ── Core update helper ────────────────────────────────────────────────────
 

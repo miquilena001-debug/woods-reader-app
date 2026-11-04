@@ -115,7 +115,7 @@ class BookRepository @Inject constructor(
                     "TITLE_ASC" -> " ORDER BY books.title ASC, books.id ASC"
                     "TITLE_DESC" -> " ORDER BY books.title DESC, books.id ASC"
                     "AUTHOR_ASC" -> " ORDER BY books.author ASC, books.id ASC"
-                    "LAST_OPENED" -> " ORDER BY books.lastOpenedAt DESC NULLS LAST, books.id ASC"
+                    "LAST_OPENED" -> " ORDER BY books.lastOpenedAt DESC, books.id ASC"
                     "DATE_ADDED" -> " ORDER BY books.importedAt DESC, books.id ASC"
                     else -> " ORDER BY books.id ASC"
                 }
@@ -134,7 +134,7 @@ class BookRepository @Inject constructor(
                     "TITLE_ASC" -> " ORDER BY books.title ASC, books.id ASC"
                     "TITLE_DESC" -> " ORDER BY books.title DESC, books.id ASC"
                     "AUTHOR_ASC" -> " ORDER BY books.author ASC, books.id ASC"
-                    "LAST_OPENED" -> " ORDER BY books.lastOpenedAt DESC NULLS LAST, books.id ASC"
+                    "LAST_OPENED" -> " ORDER BY books.lastOpenedAt DESC, books.id ASC"
                     "DATE_ADDED" -> " ORDER BY books.importedAt DESC, books.id ASC"
                     else -> " ORDER BY books.id ASC"
                 }
