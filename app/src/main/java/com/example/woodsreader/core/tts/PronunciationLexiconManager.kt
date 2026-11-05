@@ -42,7 +42,7 @@ class PronunciationLexiconManager @Inject constructor(
     private fun recompileCustomRules(rules: List<PhoneticRule>) {
         cachedCompiledCustomRules = rules.map { rule ->
             val opts = if (rule.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
-            Regex("""\b${Regex.escape(rule.originalWord)}\b""", opts) to rule.phoneticReplacement
+            Regex("""\b${Regex.escape(rule.originalWord)}\b""", opts) to Regex.escapeReplacement(rule.phoneticReplacement)
         }
     }
 

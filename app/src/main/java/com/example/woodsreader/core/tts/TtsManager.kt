@@ -65,9 +65,11 @@ class TtsManager @Inject constructor(
     @Volatile
     private var loadedVoiceId: String? = null
     private val nativeTtsMutex = Mutex()
+    private val nativeTtsInitMutex = Mutex()
+    private val playbackMutex = Mutex()
     @Volatile
     private var persistentSherpaTrack: AudioTrack? = null
-    private val shortConversionBuffer = ShortArray(4096)
+    // Eliminado shortConversionBuffer (ahora es local)
     @Volatile
     private var persistentTrackSampleRate: Int = 0
     @Volatile
@@ -333,29 +335,31 @@ class TtsManager @Inject constructor(
 
     private val wordExclusionEngine = com.example.woodsreader.core.pipeline.WordExclusionEngine()
 
-    suspend fun initialize(locale: Locale = Locale.getDefault(), voiceName: String? = null): Boolean {
+    suspend fun initialize(locale: Locale = Locale.getDefault(), voiceName: String? = null): Boolean = nativeTtsInitMutex.withLock {
         if (isReady && tts != null) {
             if (voiceName != null) setVoice(voiceName)
-            return true
+            return@withLock true
         }
         
-        return suspendCancellableCoroutine { cont ->
-            tts = TextToSpeech(context) { status ->
-                isReady = status == TextToSpeech.SUCCESS
-                if (isReady) {
-                    tts?.setLanguage(locale)
-                    tts?.setOnUtteranceProgressListener(utteranceProgressListener)
-                    if (voiceName != null) setVoice(voiceName)
+        return@withLock withTimeoutOrNull(15000L) {
+            suspendCancellableCoroutine { cont ->
+                tts = TextToSpeech(context) { status ->
+                    isReady = status == TextToSpeech.SUCCESS
+                    if (isReady) {
+                        tts?.setLanguage(locale)
+                        tts?.setOnUtteranceProgressListener(utteranceProgressListener)
+                        if (voiceName != null) setVoice(voiceName)
+                    }
+                    if (cont.isActive) cont.resume(isReady)
                 }
-                cont.resume(isReady)
+                cont.invokeOnCancellation {
+                    tts?.stop()
+                    tts?.shutdown()
+                    tts = null
+                    isReady = false
+                }
             }
-            cont.invokeOnCancellation {
-                tts?.stop()
-                tts?.shutdown()
-                tts = null
-                isReady = false
-            }
-        }
+        } ?: false
     }
 
     suspend fun speak(text: String, onRangeUpdate: ((IntRange) -> Unit)? = null): Boolean {
@@ -415,7 +419,7 @@ class TtsManager @Inject constructor(
 
                             try {
                                 for (audio in audioChannel) {
-                                    if (userRequestedStop) break
+                                    if (userRequestedStop || !currentCoroutineContext().isActive) break
                                     val played = playPcmSamplesBlocking(audio.first, audio.second)
                                     if (played) playedAny = true
                                 }
@@ -436,7 +440,7 @@ class TtsManager @Inject constructor(
             }
 
             if (!isReady || tts == null) {
-                val ok = withTimeoutOrNull(2500L) {
+                val ok = withTimeoutOrNull(8000L) {
                     initialize()
                 } ?: false
                 if (!ok || tts == null || !isReady) return false
@@ -882,6 +886,10 @@ class TtsManager @Inject constructor(
     }
 
     fun shutdown() {
+        // NO desregistrar studioPrefsListener si el Singleton se va a reutilizar
+        ambientSoundscapePlayer.pausePlayback()
+        smartSleepTimerManager.onTimerExpiredPauseAudio = null
+        smartSleepTimerManager.setSleepTimer(SleepTimerPreset.OFF)
         userRequestedStop = true
         isSynthesizingOrPlayingSherpa = false
         _isPlaying.value = false
@@ -1051,7 +1059,9 @@ class TtsManager @Inject constructor(
 
     private suspend fun playPcmSamplesBlocking(samples: FloatArray, sampleRate: Int): Boolean = withContext(Dispatchers.IO) {
         if (samples.isEmpty() || sampleRate <= 0) return@withContext false
-        val track = getOrCreateSherpaTrack(sampleRate)
+        if (!playbackMutex.tryLock()) return@withContext false
+        try {
+            val track = getOrCreateSherpaTrack(sampleRate)
 
         // Sincronizar PlaybackParams (velocidad hardware y tono) de forma segura en tiempo real
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -1066,7 +1076,7 @@ class TtsManager @Inject constructor(
             runCatching { track.play() }
         }
 
-        val buffer = shortConversionBuffer
+        val buffer = ShortArray(4096)
         val chunkSize = buffer.size
         var offset = 0
         while (offset < samples.size && !userRequestedStop) {
@@ -1086,7 +1096,10 @@ class TtsManager @Inject constructor(
         }
         // Al terminar una oración normal (!userRequestedStop) NO se llama a track.stop() ni track.release(),
         // permitiendo que el hardware de audio drene suavemente los últimos ~150 ms sin cortar el final
-        offset > 0
+            offset > 0
+        } finally {
+            playbackMutex.unlock()
+        }
     }
 
     fun setRate(rate: Float) { 
@@ -1402,6 +1415,7 @@ class TtsManager @Inject constructor(
         ensurePreferencesLoaded()
 
         userRequestedStop = false
+        isSpeakingCancelled = false
         isNarratingSequence = true
         _isPlaying.value = true
         acquireAudioLocks()

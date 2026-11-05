@@ -31,8 +31,10 @@ object AudiobookProsodyEngine {
         """^\s*(?:dijo|pregunt\u00F3|respondi\u00F3|exclam\u00F3|susurr\u00F3|murmur\u00F3|grit\u00F3|a\u00F1adi\u00F3|continu\u00F3|contest\u00F3|pens\u00F3|replic\u00F3|interrumpi\u00F3|suspir\u00F3|ri\u00F3|sonri\u00F3|orden\u00F3|explic\u00F3)\b""",
         RegexOption.IGNORE_CASE
     )
-    private val repeatedOpeningPunctuationRegex = Regex("""[¿¡]{2,}""")
-    private val repeatedClosingPunctuationRegex = Regex("""[?!]{2,}""")
+    private val repeatedInvExclamationRegex = Regex("""¡{2,}""")
+    private val repeatedInvQuestionRegex = Regex("""¿{2,}""")
+    private val repeatedExclamationRegex = Regex("""!{2,}""")
+    private val repeatedQuestionRegex = Regex("""\?{2,}""")
     private val quoteRegex = Regex("""(\u00AB[^\u00BB]+\u00BB|\u201C[^\u201D]+\u201D|"[^"]+")""")
 
     fun analyzeSentence(
@@ -79,8 +81,10 @@ object AudiobookProsodyEngine {
                 .replace("\"", "")
                 .replace("\u201C", "")
                 .replace("\u201D", "")
-                .replace(repeatedOpeningPunctuationRegex, "¿")
-                .replace(repeatedClosingPunctuationRegex, "?")
+                .replace(repeatedInvExclamationRegex, "¡")
+                .replace(repeatedInvQuestionRegex, "¿")
+                .replace(repeatedExclamationRegex, "!")
+                .replace(repeatedQuestionRegex, "?")
                 .trim()
 
             if (cleaned.isBlank() || !cleaned.any { it.isLetterOrDigit() }) continue

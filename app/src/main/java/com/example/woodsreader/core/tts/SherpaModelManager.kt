@@ -448,7 +448,19 @@ class SherpaModelManager @Inject constructor(
             return null
         }
 
-        android.util.Log.i("WOODS_SHERPA_DIAG", "Instancia com.k2fsa.sherpa.onnx.OfflineTts creada exitosamente para ${voice.id}")
+        try {
+            val testResult = ttsInstance.generate("a", sid = voice.speakerId, speed = 1.0f)
+            if (testResult.samples.isEmpty()) {
+                android.util.Log.e("WOODS_SHERPA_DIAG", "El modelo ${voice.id} generó 0 muestras en el auto-test. Liberando instancia.")
+                ttsInstance.release()
+                return null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("WOODS_SHERPA_DIAG", "Excepción en auto-test de ${voice.id}. Liberando instancia.", e)
+            ttsInstance.release()
+            return null
+        }
+        android.util.Log.i("WOODS_SHERPA_DIAG", "Instancia OfflineTts creada y testeada exitosamente para ${voice.id}")
         return ttsInstance
     }
 

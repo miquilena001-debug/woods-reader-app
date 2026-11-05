@@ -45,6 +45,7 @@ class SherpaTtsEngine(
 
     @Volatile private var isSherpa: Boolean = false
     @Volatile private var currentRequestUsesSherpa: Boolean = false
+    private val requestsUsingSherpa = java.util.concurrent.ConcurrentHashMap<TtsEngine.RequestId, Boolean>()
 
     // Listener que Readium inyecta en nuestro engine para recibir eventos
     private var engineListener: TtsEngine.Listener<AndroidTtsEngine.Error>? = null
@@ -89,27 +90,30 @@ class SherpaTtsEngine(
         // Solo cuando la solicitud activa está usando el delegado nativo
         delegate.setListener(object : TtsEngine.Listener<AndroidTtsEngine.Error> {
             override fun onStart(requestId: TtsEngine.RequestId) {
-                if (!currentRequestUsesSherpa) engineListener?.onStart(requestId)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onStart(requestId)
             }
 
             override fun onRange(requestId: TtsEngine.RequestId, range: IntRange) {
-                if (!currentRequestUsesSherpa) engineListener?.onRange(requestId, range)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onRange(requestId, range)
             }
 
             override fun onInterrupted(requestId: TtsEngine.RequestId) {
-                if (!currentRequestUsesSherpa) engineListener?.onInterrupted(requestId)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onInterrupted(requestId)
+                requestsUsingSherpa.remove(requestId)
             }
 
             override fun onFlushed(requestId: TtsEngine.RequestId) {
-                if (!currentRequestUsesSherpa) engineListener?.onFlushed(requestId)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onFlushed(requestId)
             }
 
             override fun onDone(requestId: TtsEngine.RequestId) {
-                if (!currentRequestUsesSherpa) engineListener?.onDone(requestId)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onDone(requestId)
+                requestsUsingSherpa.remove(requestId)
             }
 
             override fun onError(requestId: TtsEngine.RequestId, error: AndroidTtsEngine.Error) {
-                if (!currentRequestUsesSherpa) engineListener?.onError(requestId, error)
+                if (requestsUsingSherpa[requestId] != true) engineListener?.onError(requestId, error)
+                requestsUsingSherpa.remove(requestId)
             }
         })
     }
@@ -140,6 +144,7 @@ class SherpaTtsEngine(
      */
     override fun speak(requestId: TtsEngine.RequestId, text: String, language: Language?) {
         val canUseSherpa = isSherpa && ttsManager.isSherpaReady()
+        requestsUsingSherpa[requestId] = canUseSherpa
         if (canUseSherpa) {
             currentRequestUsesSherpa = true
             speakWithSherpa(requestId, text, language)
@@ -209,9 +214,13 @@ class SherpaTtsEngine(
     }
 
     override fun close() {
+        val sherpaInFlight = activeJob?.isActive == true
         activeJob?.cancel()
+        activeJob = null
         currentRequestUsesSherpa = false
+        requestsUsingSherpa.clear()
         scope.cancel()
+        if (sherpaInFlight) runCatching { ttsManager.stop() }
         delegate.close()
     }
 }

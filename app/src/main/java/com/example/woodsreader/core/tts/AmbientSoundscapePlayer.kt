@@ -32,7 +32,7 @@ class AmbientSoundscapePlayer @Inject constructor(
 ) {
     private val prefs = context.getSharedPreferences("woods_ambient_soundscape_prefs", Context.MODE_PRIVATE)
     private val studioPrefs = context.getSharedPreferences("woods_studio_voice_hd", Context.MODE_PRIVATE)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var streamJob: Job? = null
 
     private val _mode = MutableStateFlow(
@@ -113,12 +113,12 @@ class AmbientSoundscapePlayer @Inject constructor(
         }
     }
 
+    @Synchronized
     private fun startStreamingIfNeeded() {
         if (streamJob?.isActive == true) return
 
-        woodsKeepAliveManager.acquireKeepAliveWakeLock()
-
         streamJob = scope.launch {
+            woodsKeepAliveManager.acquireKeepAliveWakeLock()
             val sampleRate = 22050
             val chunkSamples = 1024 // ~46ms por bloque para respuesta inmediata
             val minBuffer = AudioTrack.getMinBufferSize(
@@ -298,6 +298,7 @@ class AmbientSoundscapePlayer @Inject constructor(
         }
     }
 
+    @Synchronized
     fun stopStreaming() {
         streamJob?.cancel()
         streamJob = null

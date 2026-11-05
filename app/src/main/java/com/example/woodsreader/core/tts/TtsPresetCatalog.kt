@@ -112,6 +112,8 @@ class TtsPresetCatalog @Inject constructor(
         val existingPatterns = ttsRuleDao.getAllRulesFlow().first().map { it.pattern to it.bookId }.toSet()
         var count = 0
         for (item in imported) {
+            if (item.pattern.isEmpty()) continue
+            if (item.isRegex && runCatching { Regex(item.pattern) }.isFailure) continue
             if ((item.pattern to item.bookId) !in existingPatterns) {
                 ttsRuleDao.insert(
                     TtsRuleEntity(

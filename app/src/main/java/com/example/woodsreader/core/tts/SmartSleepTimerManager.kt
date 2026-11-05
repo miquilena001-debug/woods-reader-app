@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -52,7 +53,7 @@ class SmartSleepTimerManager @Inject constructor() {
         _remainingSeconds.value = totalSecs
 
         countdownJob = scope.launch {
-            while (_remainingSeconds.value > 0) {
+            while (isActive && _remainingSeconds.value > 0) {
                 delay(1000L)
                 val next = _remainingSeconds.value - 1
                 _remainingSeconds.value = next
@@ -62,8 +63,10 @@ class SmartSleepTimerManager @Inject constructor() {
                     _fadeMultiplier.value = (next / 20.0f).coerceIn(0.0f, 1.0f)
                 }
             }
-            _activePreset.value = SleepTimerPreset.OFF
-            onTimerExpiredPauseAudio?.invoke()
+            if (isActive) {
+                _activePreset.value = SleepTimerPreset.OFF
+                onTimerExpiredPauseAudio?.invoke()
+            }
         }
     }
 

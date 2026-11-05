@@ -28,7 +28,7 @@ enum class AmbiencePreset(val displayName: String, val subtitle: String) {
 @Singleton
 class ForestAmbienceEngine @Inject constructor() {
 
-    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var playbackJob: Job? = null
     @Volatile
     private var audioTrack: AudioTrack? = null

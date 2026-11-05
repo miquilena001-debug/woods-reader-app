@@ -171,11 +171,15 @@ class EdgeNeuralTtsClient @Inject constructor(
         val deferred = inFlightRequests.computeIfAbsent(cacheKey) {
             prefetchScope.async(Dispatchers.IO) {
                 try {
-                    val bytes = fetchMp3ViaWebSocket(cleanText, voice.shortName, rateStr, pitchStr)
+                    val bytes = kotlinx.coroutines.withTimeoutOrNull(25_000L) {
+                        fetchMp3ViaWebSocket(cleanText, voice.shortName, rateStr, pitchStr)
+                    }
                     if (bytes != null && bytes.size > 256) {
                         runCatching {
                             cleanOldCacheIfNeeded()
-                            cachedFile.writeBytes(bytes)
+                            val tmp = File(cacheDir, "$cacheKey.tmp")
+                            tmp.writeBytes(bytes)
+                            if (!tmp.renameTo(cachedFile)) tmp.delete()
                         }
                     }
                     bytes
@@ -295,6 +299,13 @@ class EdgeNeuralTtsClient @Inject constructor(
                 if (!completed && cont.isActive) {
                     cont.resume(null)
                 }
+            }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+                if (!completed && cont.isActive) cont.resume(null)
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (!completed && cont.isActive) cont.resume(null)
             }
         })
 
