@@ -81,7 +81,7 @@ class EpubContentExtractor @Inject constructor() {
                 }
 
                 "h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "li" -> {
-                    val hasChildBlocks = element.children().select("h1, h2, h3, h4, h5, h6, p, figure, img, blockquote, li").isNotEmpty()
+                    val hasChildBlocks = element.children().select("h1, h2, h3, h4, h5, h6, p, figure, blockquote, li").isNotEmpty()
                     if (hasChildBlocks) {
                         // Elementos contenedores como blockquote o li que alojan párrafos u otros bloques
                         // no deben extraerse en bloque con .text() para no duplicar el contenido de sus hijos.
@@ -102,7 +102,6 @@ class EpubContentExtractor @Inject constructor() {
                         continue
                     }
 
-                    processedElements.add(element)
                     val text = element.text().trim()
                     if (text.isNotBlank()) {
                         val fontSize = when (tag) {

@@ -1,6 +1,7 @@
 package com.example.woodsreader.core.pdf
 
 import com.example.woodsreader.core.web2epub.LocalEpubBuilder
+import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -42,7 +43,7 @@ data class PdfConversionProgress(
 object PdfCleanExtractorAndConverter {
 
     private val SPAM_TEXT_REGEX = Regex(
-        """(?i)\b(?:https?://|www\.|t\.me/|discord(?:\.gg|app\.com)/|patreon\.com/|wattpad\.com/|paypal\.me/|traducid[oa]\s+por|le[ea]\s+gratis\s+en|scan(?:lation)?|novelupdates)\b"""
+        """(?i)\b(?:https?://|www\.|t\.me/|discord(?:\.gg|app\.com)/|patreon\.com/|wattpad\.com/|paypal\.me/|traducid[oa]\s+por|le[ea]\s+gratis\s+en|scanlation|scanned\s+by|novelupdates)\b"""
     )
 
     /**
@@ -94,7 +95,7 @@ object PdfCleanExtractorAndConverter {
                 throw IllegalArgumentException("El archivo PDF no existe o está vacío: ${pdfFile.path}")
             }
 
-            PDDocument.load(pdfFile).use { doc ->
+            PDDocument.load(pdfFile, MemoryUsageSetting.setupMixed(32L * 1024 * 1024)).use { doc ->
                 val totalPages = doc.numberOfPages
                 if (totalPages == 0) {
                     throw IllegalStateException("El documento PDF no contiene páginas legibles.")
@@ -132,7 +133,6 @@ object PdfCleanExtractorAndConverter {
                 // ── FASE 1: Análisis Ligero de Muestreo de Huellas y Encabezados Repetidos ──
                 val imageHashCounts = HashMap<String, Int>(64)
                 val imageFirstPage = HashMap<String, Int>(64)
-                val rawImageMap = HashMap<String, ByteArray>(64)
                 val headerOccurrences = HashMap<String, Int>(64)
                 val footerOccurrences = HashMap<String, Int>(64)
 
@@ -173,7 +173,7 @@ object PdfCleanExtractorAndConverter {
                     val pageLines = rawPageText.lines().map { it.trim() }.filter { it.isNotEmpty() }
                     if (pageLines.isNotEmpty()) {
                         val firstNorm = normalizeForHeaderComparison(pageLines.first())
-                        if (firstNorm.length in 4..80) {
+                        if (firstNorm.length in 4..80 && !PdfParagraphHealer.isChapterHeading(pageLines.first())) {
                             headerOccurrences[firstNorm] = (headerOccurrences[firstNorm] ?: 0) + 1
                         }
                         val lastNorm = normalizeForHeaderComparison(pageLines.last())
@@ -201,7 +201,6 @@ object PdfCleanExtractorAndConverter {
                                     imageHashCounts[hash] = (imageHashCounts[hash] ?: 0) + 1
                                     if (!imageFirstPage.containsKey(hash)) {
                                         imageFirstPage[hash] = pageIdx
-                                        rawImageMap[hash] = bytes
                                     }
 
                                     // Si estamos en las primeras 3 páginas y no hay portada, buscar candidata
@@ -231,8 +230,10 @@ object PdfCleanExtractorAndConverter {
                 val spamImageHashes = imageHashCounts.filter { it.value >= 2 }.keys.toSet()
 
                 // Encabezados o pies de página repetidos
-                val spamHeaders = headerOccurrences.filter { it.value >= 3 }.keys.toSet()
-                val spamFooters = footerOccurrences.filter { it.value >= 3 }.keys.toSet()
+                val headerThreshold = if (totalPages <= 3) 2 else 3
+                val spamHeaders = headerOccurrences.filter { it.value >= headerThreshold }.keys.toSet()
+                val footerThreshold = if (totalPages <= 3) 2 else 3
+                val spamFooters = footerOccurrences.filter { it.value >= footerThreshold }.keys.toSet()
 
                 // ── FASE 2: Extracción Limpia y Construcción de Capítulos con LocalEpubBuilder ──
                 val epubBuilder = LocalEpubBuilder(
@@ -487,12 +488,17 @@ object PdfCleanExtractorAndConverter {
 
                 outputEpubFile
             }
-        }
+        }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     private fun compressToJpegFallback(rawBytes: ByteArray): ByteArray {
         return try {
-            val bitmap = android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, bounds)
+            var sample = 1
+            while (bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > 6_000_000L) sample *= 2
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, opts)
             if (bitmap != null) {
                 val bos = ByteArrayOutputStream()
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, bos)

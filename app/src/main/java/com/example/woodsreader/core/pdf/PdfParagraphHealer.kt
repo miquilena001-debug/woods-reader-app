@@ -48,6 +48,7 @@ object PdfParagraphHealer {
     fun isPageNumberLine(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.isEmpty()) return false
+        if (trimmed.length > 40) return false
         if (trimmed.all { it.isDigit() }) return true
         return PAGE_NUMBER_REGEX.matches(trimmed)
     }
