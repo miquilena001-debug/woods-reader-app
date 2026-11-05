@@ -78,8 +78,8 @@ object MultilingualAudiobookNormalizer {
         Regex("""\b(?:St|Lv|Lvl)\.?\s*(?=\d)""", RegexOption.IGNORE_CASE) to "Stufe ",
         Regex("""\bDr\.\s+""") to "Doktor ",
         Regex("""\bProf\.\s+""") to "Professor ",
-        Regex("""\bz\.B\.\b""", RegexOption.IGNORE_CASE) to "zum Beispiel",
-        Regex("""\bd\.h\.\b""", RegexOption.IGNORE_CASE) to "das heißt"
+        Regex("""\bz\.\s?B\.""", RegexOption.IGNORE_CASE) to "zum Beispiel ",
+        Regex("""\bd\.\s?h\.""", RegexOption.IGNORE_CASE) to "das heißt "
     )
 
     private val italianRules = listOf(

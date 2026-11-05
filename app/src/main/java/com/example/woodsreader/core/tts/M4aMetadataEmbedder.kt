@@ -67,33 +67,34 @@ object M4aMetadataEmbedder {
                 val newMoovPayload = preservedMoovContent.toByteArray()
                 val newMoovAtom = wrapAtom("moov", newMoovPayload)
 
+                val parsedEnd = moovChildren.lastOrNull()?.let { it.offset + it.size } ?: moovPayloadOffset
+                if (moovPayloadEnd - parsedEnd >= 8) return false
+
                 if (moovBox.offset > mdatBox.offset) {
                     // 'moov' ya está al final del archivo: reemplazar directamente en el sitio
                     raf.seek(moovBox.offset)
                     raf.write(newMoovAtom)
                     raf.setLength(moovBox.offset + newMoovAtom.size)
+                    raf.fd.sync()
                 } else {
-                    // 'moov' está antes de 'mdat': convertir el viejo 'moov' en un átomo 'free' del
-                    // mismo tamaño exacto para NO desplazar 'mdat' ni invalidar punteros 'stco',
-                    // y escribir el nuevo 'moov' completo al final del archivo.
-                    val oldSize = moovBox.size.toInt()
-                    if (oldSize >= 8) {
-                        raf.seek(moovBox.offset)
-                        val freeHeader = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).apply {
-                            putInt(oldSize)
-                            put("free".toByteArray(Charsets.US_ASCII))
-                        }.array()
-                        raf.write(freeHeader)
-                        val zeroBuf = ByteArray(minOf(4096, oldSize - 8))
-                        var remaining = oldSize - 8
-                        while (remaining > 0) {
-                            val toWrite = minOf(remaining, zeroBuf.size)
-                            raf.write(zeroBuf, 0, toWrite)
-                            remaining -= toWrite
-                        }
+                    // 'moov' está antes de 'mdat': escribir nuevo 'moov' al final primero (WAL),
+                    // y luego convertir el viejo 'moov' en 'free' sin desplazar 'mdat' ni invalidar 'stco'
+                    try {
                         raf.seek(fileLen)
                         raf.write(newMoovAtom)
+                        raf.fd.sync()
+                    } catch (e: Exception) {
+                        runCatching { raf.setLength(fileLen) }
+                        throw e
                     }
+
+                    raf.seek(moovBox.offset)
+                    raf.write(
+                        ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).apply {
+                            putInt(moovBox.size.toInt())
+                            put("free".toByteArray(Charsets.US_ASCII))
+                        }.array()
+                    )
                 }
             }
             true
@@ -130,8 +131,15 @@ object M4aMetadataEmbedder {
             if (isJpeg && coverFile.length() <= 800 * 1024L) {
                 coverFile.readBytes()
             } else {
-                val bmp = BitmapFactory.decodeFile(coverFile.absolutePath) ?: return@runCatching coverFile.readBytes()
                 val maxDim = 800
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(coverFile.absolutePath, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= maxDim && bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
+                val bmp = BitmapFactory.decodeFile(
+                    coverFile.absolutePath,
+                    BitmapFactory.Options().apply { inSampleSize = sample }
+                ) ?: return@runCatching null
                 val scaled = if (bmp.width > maxDim || bmp.height > maxDim) {
                     val ratio = minOf(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
                     val w = (bmp.width * ratio).toInt().coerceAtLeast(1)

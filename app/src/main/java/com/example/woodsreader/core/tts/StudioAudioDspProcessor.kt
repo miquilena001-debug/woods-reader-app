@@ -146,12 +146,13 @@ object StudioAudioDspProcessor {
 
         // Detector de sibilancia seguro respecto a Nyquist
         val sibFreq = 5800f.coerceAtMost(sampleRate * 0.42f)
-        val sibilanceDetector = BiquadFilter().apply { configurePeakingEq(sampleRate, sibFreq, 1.8f, 6.0f) }
+        val sibilanceDetector = BiquadFilter().apply { configureHighPass(sampleRate, sibFreq, 0.707f) }
 
         var sumSquares = 0.0
         var peakVal = 0.0001f
         var deEssEnvelope = 0.0f
-        val deEssThreshold = 0.16f
+        val deEssThreshold = 0.04f // umbral sobre energia HP > 5.8 kHz (valor estimado: calibrar a oido)
+        val deEssCoef = 1.0f - 1.0f / (0.003f * sampleRate) // envolvente ~3 ms
 
         for (i in 0 until activeLen) {
             var s = output[i]
@@ -161,7 +162,7 @@ object StudioAudioDspProcessor {
             s = presenceFilter.processSample(s)
 
             val sibEnergy = abs(sibilanceDetector.processSample(s))
-            deEssEnvelope = 0.88f * deEssEnvelope + 0.12f * sibEnergy
+                            deEssEnvelope = deEssCoef * deEssEnvelope + (1.0f - deEssCoef) * sibEnergy
             if (deEssEnvelope > deEssThreshold) {
                 val reduction = (deEssThreshold / (deEssEnvelope + 0.0001f)).coerceIn(0.68f, 1.0f)
                 s *= reduction

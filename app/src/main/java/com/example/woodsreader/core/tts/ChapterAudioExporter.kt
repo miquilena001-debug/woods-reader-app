@@ -365,7 +365,12 @@ class ChapterAudioExporter @Inject constructor(
                     val sentenceStartMs = (totalSamplesSubmitted * 1000L) / sampleRate
                     val audio = ttsManager.synthesizeExpressiveStudioAudio(sentence, speed)
                     if (audio != null && audio.first.isNotEmpty()) {
-                        feedSamples(audio.first)
+                        val resampled = if (audio.second != sampleRate && audio.second > 0) {
+                            resampleLinear(audio.first, audio.second, sampleRate)
+                        } else {
+                            audio.first
+                        }
+                        feedSamples(resampled)
                         val sentenceEndMs = (totalSamplesSubmitted * 1000L) / sampleRate
                         syncedCues.add(SyncedSubtitleCue(sentenceStartMs, sentenceEndMs, sentence))
                     }
@@ -386,6 +391,20 @@ class ChapterAudioExporter @Inject constructor(
             }
             runCatching { muxer?.release() }
         }
+    }
+
+    private fun resampleLinear(input: FloatArray, inputRate: Int, outputRate: Int): FloatArray {
+        if (inputRate == outputRate) return input
+        val outputLength = (input.size.toLong() * outputRate / inputRate).toInt()
+        val output = FloatArray(outputLength)
+        val ratio = inputRate.toDouble() / outputRate
+        for (i in 0 until outputLength) {
+            val srcPos = i * ratio
+            val srcIdx = srcPos.toInt().coerceIn(0, input.size - 2)
+            val fraction = (srcPos - srcIdx).toFloat()
+            output[i] = input[srcIdx] * (1f - fraction) + input[srcIdx + 1] * fraction
+        }
+        return output
     }
 
     private fun generateLrc(cues: List<SyncedSubtitleCue>, title: String, artist: String): String {

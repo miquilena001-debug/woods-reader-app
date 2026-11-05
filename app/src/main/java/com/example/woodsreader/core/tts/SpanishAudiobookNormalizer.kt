@@ -23,8 +23,7 @@ object SpanishAudiobookNormalizer {
     private val multiSpacesRegex = Regex("""[ \t]{2,}""")
 
     private val romanChapterRegex = Regex(
-        """\b(Cap[\u00EDi]tulo|Tomo|Volumen|Parte|Libro|Nivel|Piso|Rango|Siglo)\s+([IVXLCDM]{1,7})\b""",
-        RegexOption.IGNORE_CASE
+        """\b((?i:Cap[\u00EDi]tulo|Tomo|Volumen|Parte|Libro|Nivel|Piso|Rango|Siglo))\s+([IVX]|[IVXLCDM]{2,7})\b"""
     )
 
     private val abbreviations = listOf(
@@ -147,8 +146,7 @@ object SpanishAudiobookNormalizer {
         }
 
         // Risas e interjecciones alargadas y compuestas
-        text = text.replace(repeatedOpeningPunctuationRegex, "¿")
-            .replace(repeatedQuestionExclamationRegex, "?")
+        // ¡¡ !! ¿¿ ?? se colapsan más abajo conservando el tipo de signo
         text = laughJaRegex.replace(text, "ja, ja, ja")
         text = laughJeRegex.replace(text, "je, je, je")
         text = laughJiRegex.replace(text, "ji, ji, ji")
