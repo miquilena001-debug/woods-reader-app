@@ -24,6 +24,19 @@ configurations.all {
         "org.jetbrains.kotlin:kotlin-stdlib-common:2.0.21"
     )
 }
+
+val localProperties = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
+val translateApiKey = (
+    providers.environmentVariable("WOODS_TRANSLATE_API_KEY").orNull
+        ?: localProperties.getProperty("woods.translateApiKey")
+        ?: ""
+    ).trim()
+if (translateApiKey.isNotEmpty() && !translateApiKey.matches(Regex("[A-Za-z0-9_-]+"))) {
+    throw GradleException("WOODS_TRANSLATE_API_KEY contains unsupported characters")
+}
+
 android {
     namespace = "com.example.woodsreader"
     compileSdk = 36
@@ -34,6 +47,7 @@ android {
         versionCode = 11
         versionName = "1.0.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "TRANSLATE_API_KEY", "\"\"")
         // arm64 para rendimiento, armeabi-v7a para compatibilidad total (excluye x86/x86_64 de emuladores)
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -61,6 +75,10 @@ android {
         keystorePropertiesFile.inputStream().use(keystoreProperties::load)
     }
 
+    val releaseKeystoreFile = rootProject.file(
+        keystoreProperties.getProperty("storeFile", "keystore/woodsreader.jks")
+    )
+
     signingConfigs {
         getByName("debug") {
             enableV1Signing = true
@@ -68,24 +86,20 @@ android {
             enableV3Signing = true
             enableV4Signing = true
         }
-        create("release") {
-            val keyPath = keystoreProperties.getProperty("storeFile", "keystore/woodsreader.jks")
-            val keyFile = rootProject.file(keyPath)
-            if (keyFile.exists()) {
-                storeFile = keyFile
+        if (releaseKeystoreFile.exists()) {
+            create("release") {
+                storeFile = releaseKeystoreFile
                 storePassword = keystoreProperties.getProperty("storePassword")
                     ?: throw GradleException("Missing storePassword in keystore.properties")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                     ?: throw GradleException("Missing keyAlias in keystore.properties")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
                     ?: throw GradleException("Missing keyPassword in keystore.properties")
-            } else {
-                throw GradleException("Release keystore not found: ${keyFile.absolutePath}")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
             }
-            enableV1Signing = true
-            enableV2Signing = true
-            enableV3Signing = true
-            enableV4Signing = true
         }
     }
 
@@ -93,7 +107,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            // A key shipped in an APK is extractable; authenticated translation stays disabled in release.
+            signingConfig = signingConfigs.getByName(
+                if (releaseKeystoreFile.exists()) "release" else "debug"
+            )
+            buildConfigField("String", "TRANSLATE_API_KEY", "\"\"")
             buildConfigField("long", "BUILD_TIME_MILLIS", "${System.currentTimeMillis()}L")
             buildConfigField("long", "BETA_EXPIRATION_DAYS", "0L")
             proguardFiles(
@@ -103,6 +121,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            buildConfigField("String", "TRANSLATE_API_KEY", "\"$translateApiKey\"")
             buildConfigField("long", "BUILD_TIME_MILLIS", "0L")
             buildConfigField("long", "BETA_EXPIRATION_DAYS", "0L")
         }

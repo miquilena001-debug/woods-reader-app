@@ -286,7 +286,13 @@ fun SettingsScreen(
                             isEnriching -> "Enriqueciendo metadatos…"
                             else        -> "Sincronizar biblioteca"
                         },
-                        subtitle = progress.ifBlank { "Buscar libros nuevos en el dispositivo" },
+                        subtitle = progress.ifBlank {
+                            if (prefs.manualFolderScanOnly) {
+                                "Actualizar libros en las carpetas elegidas"
+                            } else {
+                                "Buscar libros nuevos en el dispositivo"
+                            }
+                        },
                         enabled  = !isBusy,
                         onClick  = { viewModel.startScan() }
                     )

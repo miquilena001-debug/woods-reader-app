@@ -299,8 +299,11 @@ class SettingsViewModel @Inject constructor(
 
     fun startScan() {
         viewModelScope.launch {
-            val paths = preferences.value.customScanPaths
-            scannerService.scan(paths)
+            val prefs = preferences.value
+            scannerService.scan(
+                prefs.customScanPaths,
+                scanWholeDevice = !prefs.manualFolderScanOnly
+            )
         }
     }
 

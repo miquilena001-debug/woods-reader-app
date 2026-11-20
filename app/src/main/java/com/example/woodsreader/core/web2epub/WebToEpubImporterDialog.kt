@@ -110,9 +110,9 @@ fun WebToEpubImporterDialog(
     val adapterRegistry = remember { SiteProfileLoader(context).loadRegistry() }
     val okHttpClient = remember {
         OkHttpClient.Builder()
-            .callTimeout(40, java.util.concurrent.TimeUnit.SECONDS)
             .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .build()

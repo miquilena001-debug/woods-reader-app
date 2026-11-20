@@ -7,9 +7,15 @@ import androidx.documentfile.provider.DocumentFile
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.model.BookFormat
 import com.example.woodsreader.data.model.ReadingStatus
+import com.example.woodsreader.data.source.BookSourceFormatValidator
+import com.example.woodsreader.data.source.ContentProviderIo
+import com.example.woodsreader.di.DefaultDispatcher
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.readium.r2.shared.publication.Publication
@@ -30,11 +36,13 @@ class BookMetadataExtractor @Inject constructor(
     private val assetRetriever: AssetRetriever,
     private val publicationOpener: Lazy<PublicationOpener>,
     private val summarizer: Summarizer,
-    private val coverExtractor: CoverExtractor
+    private val coverExtractor: CoverExtractor,
+    @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher
 ) {
     companion object {
         private const val TAG = "BookMetadataExtractor"
         private const val EXTRACT_TIMEOUT_MS = 15_000L
+        private const val MAX_PDF_SYNOPSIS_SOURCE_BYTES = 32L * 1_024L * 1_024L
     }
 
     suspend fun extractMetadata(file: File, fileHash: String): BookEntity? =
@@ -47,9 +55,8 @@ class BookMetadataExtractor @Inject constructor(
         extractFromSource(uri, fileName, fileSize, fileHash)
 
     /**
-     * Extracts full metadata from the book source using Readium.
-     * If Readium fails or times out, it gracefully degrades to a fallback strategy
-     * that parses basic information from the filename while still ensuring cover extraction.
+     * Validates source bytes before opening them with Readium. Unreadable publications are rejected;
+     * filename fallback is reserved for metadata failures after Readium opened the publication.
      */
     private suspend fun extractFromSource(
         source: Any,
@@ -58,59 +65,73 @@ class BookMetadataExtractor @Inject constructor(
         fileHash: String
     ): BookEntity? = withContext(Dispatchers.IO) {
         val filePath = extractPathFromSource(source)
-        val format = determineFormat(fileName, filePath)
+        val format = detectSourceFormat(source) ?: return@withContext null
 
         try {
             withTimeout(EXTRACT_TIMEOUT_MS) {
                 // Readium 3.0 asset retrieval:
                 // MUST use assetRetriever.retrieve(File) for local files.
                 // AbsoluteUrl with file:/// fails in Readium's ContentResolverAssetRetriever.
-                val assetResult = when (source) {
-                    is File -> assetRetriever.retrieve(source)
-                    is Uri -> {
-                        if (source.scheme == "file") {
-                            val path = source.path
-                            if (path != null && File(path).exists()) {
-                                assetRetriever.retrieve(File(path))
+                val assetResult = try {
+                    when (source) {
+                        is File -> assetRetriever.retrieve(source)
+                        is Uri -> {
+                            if (source.scheme == "file") {
+                                val path = source.path
+                                if (path != null && File(path).exists()) {
+                                    assetRetriever.retrieve(File(path))
+                                } else {
+                                    val url = AbsoluteUrl(source.toString())
+                                    if (url != null) assetRetriever.retrieve(url) else null
+                                }
                             } else {
                                 val url = AbsoluteUrl(source.toString())
                                 if (url != null) assetRetriever.retrieve(url) else null
                             }
-                        } else {
-                            val url = AbsoluteUrl(source.toString())
-                            if (url != null) assetRetriever.retrieve(url) else null
                         }
-                    }
-                    is String -> {
-                        if (source.startsWith("/")) {
-                            assetRetriever.retrieve(File(source))
-                        } else {
-                            val uri = Uri.parse(source)
-                            if (uri.scheme == "file" && uri.path != null) {
-                                assetRetriever.retrieve(File(uri.path!!))
+                        is String -> {
+                            if (source.startsWith("/")) {
+                                assetRetriever.retrieve(File(source))
                             } else {
-                                val url = AbsoluteUrl(source)
-                                if (url != null) assetRetriever.retrieve(url) else null
+                                val uri = Uri.parse(source)
+                                if (uri.scheme == "file" && uri.path != null) {
+                                    assetRetriever.retrieve(File(uri.path!!))
+                                } else {
+                                    val url = AbsoluteUrl(source)
+                                    if (url != null) assetRetriever.retrieve(url) else null
+                                }
                             }
                         }
+                        else -> return@withTimeout null
                     }
-                    else -> return@withTimeout null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Asset retrieval failed (${e.javaClass.simpleName})")
+                    return@withTimeout null
                 }
 
                 val asset = assetResult?.getOrNull()
                 if (asset == null) {
-                    Log.w(TAG, "Failed to retrieve asset for $fileName — using fallback extractor")
-                    return@withTimeout extractFallbackMetadata(source, filePath, fileName, fileSize, fileHash, format)
+                    Log.w(TAG, "Unable to retrieve validated book content")
+                    return@withTimeout null
                 }
 
-                val sanitizedAsset = EpubPackageSanitizer.transformAsset(asset)
-                val publication = publicationOpener.get().open(
-                    asset = sanitizedAsset,
-                    allowUserInteraction = false
-                ).getOrNull()
+                val publication = try {
+                    val sanitizedAsset = EpubPackageSanitizer.transformAsset(asset)
+                    publicationOpener.get().open(
+                        asset = sanitizedAsset,
+                        allowUserInteraction = false
+                    ).getOrNull()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Publication validation failed (${e.javaClass.simpleName})")
+                    return@withTimeout null
+                }
                 if (publication == null) {
-                    Log.w(TAG, "Failed to open publication for $fileName — using fallback extractor")
-                    return@withTimeout extractFallbackMetadata(source, filePath, fileName, fileSize, fileHash, format)
+                    Log.w(TAG, "Unable to open validated book publication")
+                    return@withTimeout null
                 }
 
                 try {
@@ -157,11 +178,44 @@ class BookMetadataExtractor @Inject constructor(
                     publication.close()
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            Log.w(TAG, "Book metadata extraction timed out")
+            throw java.io.IOException("Book metadata extraction timed out", e)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            val reason = if (e is kotlinx.coroutines.TimeoutCancellationException) "Timeout" else e.message
-            Log.e(TAG, "Error extracting metadata from $fileName ($reason)", e)
+            Log.e(TAG, "Book metadata extraction failed (${e.javaClass.simpleName})")
             extractFallbackMetadata(source, filePath, fileName, fileSize, fileHash, format)
         }
+    }
+
+    private suspend fun detectSourceFormat(source: Any): BookFormat? = when (source) {
+        is File -> source.inputStream().use(BookSourceFormatValidator::detectFormat)
+        is Uri -> if (source.scheme == "file" && source.path != null) {
+            File(source.path!!).inputStream().use(BookSourceFormatValidator::detectFormat)
+        } else {
+            ContentProviderIo.run {
+                context.contentResolver.openInputStream(source)
+                    ?.let(BookSourceFormatValidator::detectFormat)
+            }
+        }
+        is String -> {
+            if (source.startsWith("/")) {
+                File(source).inputStream().use(BookSourceFormatValidator::detectFormat)
+            } else {
+                val uri = Uri.parse(source)
+                if (uri.scheme == "content") {
+                    ContentProviderIo.run {
+                        context.contentResolver.openInputStream(uri)
+                            ?.let(BookSourceFormatValidator::detectFormat)
+                    }
+                } else {
+                    val file = if (uri.scheme == "file" && uri.path != null) File(uri.path!!) else null
+                    file?.inputStream()?.use(BookSourceFormatValidator::detectFormat)
+                }
+            }
+        }
+        else -> null
     }
 
     private fun extractPathFromSource(source: Any): String = when (source) {
@@ -221,16 +275,25 @@ class BookMetadataExtractor @Inject constructor(
      */
     private suspend fun extractPdfSynopsis(source: Any): String = withContext(Dispatchers.IO) {
         try {
+            val sourceFile = when (source) {
+                is File -> source
+                is Uri -> if (source.scheme == "file") source.path?.let(::File) else null
+                is String -> if (source.startsWith("/")) {
+                    File(source)
+                } else {
+                    Uri.parse(source).takeIf { it.scheme == "file" }?.path?.let(::File)
+                }
+                else -> null
+            }
+            if (sourceFile == null || sourceFile.length() > MAX_PDF_SYNOPSIS_SOURCE_BYTES) {
+                return@withContext ""
+            }
+
             val inputStream = when (source) {
                 is File -> source.inputStream()
-                is Uri -> context.contentResolver.openInputStream(source)
+                is Uri -> sourceFile.inputStream()
                 is String -> {
-                    val uri = Uri.parse(source)
-                    if (uri.scheme == "content") {
-                        context.contentResolver.openInputStream(uri)
-                    } else {
-                        File(source).inputStream()
-                    }
+                    sourceFile.inputStream()
                 }
                 else -> null
             } ?: return@withContext ""
@@ -285,13 +348,16 @@ class BookMetadataExtractor @Inject constructor(
 
             val combinedText = cleanParagraphs.take(15).joinToString("\n\n")
             if (combinedText.length >= 150) {
-                val summary = summarizer.summarize(combinedText, numSentences = 3)
+                val summary = withContext(defaultDispatcher) {
+                    summarizer.summarize(combinedText, numSentences = 3)
+                }
                 if (summary.isNotBlank()) return@withContext summary
             }
 
             cleanParagraphs.firstOrNull { it.length in 80..400 } ?: ""
         } catch (e: Exception) {
-            Log.w(TAG, "Error extracting PDF synopsis", e)
+            if (e is CancellationException) throw e
+            Log.w(TAG, "Error extracting PDF synopsis (${e.javaClass.simpleName})")
             ""
         }
     }
@@ -334,26 +400,21 @@ class BookMetadataExtractor @Inject constructor(
                             ?.let { String(it, Charsets.UTF_8) } ?: continue
                         val plainText = summarizer.stripHtml(html)
                         if (plainText.length > bestText.length) bestText = plainText
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) { }
                 }
 
                 if (bestText.length < 200) return@withContext ""
 
-                summarizer.summarize(bestText, numSentences = 4)
+                withContext(defaultDispatcher) {
+                    summarizer.summarize(bestText, numSentences = 4)
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "extractSynopsisFromContent failed", e)
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Synopsis extraction failed (${e.javaClass.simpleName})")
                 ""
             }
         }
 
-    private fun determineFormat(fileName: String, filePath: String = ""): BookFormat {
-        val ext = fileName.substringAfterLast('.', "").lowercase().ifBlank {
-            filePath.substringAfterLast('.', "").lowercase()
-        }
-        return when (ext) {
-            "epub" -> BookFormat.EPUB
-            "pdf" -> BookFormat.PDF
-            else -> BookFormat.UNKNOWN
-        }
-    }
 }

@@ -19,8 +19,10 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.Log
 import com.example.woodsreader.data.model.BookFormat
+import com.example.woodsreader.data.source.ContentProviderIo
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import org.readium.r2.shared.publication.Publication
 import org.readium.r2.shared.publication.services.cover
@@ -91,7 +93,8 @@ class CoverExtractor @Inject constructor(
                 legacyFile.copyTo(targetFile, overwrite = true)
                 return targetFile.absolutePath
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to migrate legacy cover to filesDir", e)
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Failed to migrate legacy cover (${e.javaClass.simpleName})")
                 return legacyFile.absolutePath
             }
         }
@@ -137,7 +140,11 @@ class CoverExtractor @Inject constructor(
         try {
             when (resolvedFormat) {
                 BookFormat.PDF -> {
-                    bitmap = extractPdfCover(source)
+                    bitmap = if (isContentBacked(source)) {
+                        ContentProviderIo.run { extractPdfCover(source) }
+                    } else {
+                        extractPdfCover(source)
+                    }
                 }
 
                 BookFormat.EPUB -> {
@@ -146,7 +153,8 @@ class CoverExtractor @Inject constructor(
                         try {
                             bitmap = publication.cover()
                         } catch (e: Exception) {
-                            Log.w(TAG, "publication.cover() failed: ${e.message}")
+                            if (e is CancellationException) throw e
+                            Log.w(TAG, "publication.cover() failed (${e.javaClass.simpleName})")
                         }
 
                         // Level B: Heuristic manifest resource search
@@ -157,7 +165,11 @@ class CoverExtractor @Inject constructor(
 
                     // Level C: Direct Zip inspection fallback (works even without Readium)
                     if (bitmap == null) {
-                        bitmap = extractCoverFromZipArchive(source, isEpub = true)
+                        bitmap = if (isContentBacked(source)) {
+                            ContentProviderIo.run { extractCoverFromZipArchive(source, isEpub = true) }
+                        } else {
+                            extractCoverFromZipArchive(source, isEpub = true)
+                        }
                     }
                 }
 
@@ -193,7 +205,8 @@ class CoverExtractor @Inject constructor(
 
             targetFile.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract/save cover for hash=$fileHash", e)
+            if (e is CancellationException) throw e
+            Log.e(TAG, "Failed to extract/save cover (${e.javaClass.simpleName})")
             null
         }
     }
@@ -231,7 +244,8 @@ class CoverExtractor @Inject constructor(
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             bitmap
         } catch (e: Exception) {
-            Log.w(TAG, "extractPdfCover failed: ${e.message}")
+            if (e is CancellationException) throw e
+            Log.w(TAG, "PDF cover extraction failed (${e.javaClass.simpleName})")
             null
         } finally {
             try { page?.close() } catch (_: Exception) {}
@@ -299,7 +313,8 @@ class CoverExtractor @Inject constructor(
 
             null
         } catch (e: Exception) {
-            Log.w(TAG, "extractEpubCoverFromManifest failed", e)
+            if (e is CancellationException) throw e
+            Log.w(TAG, "EPUB cover manifest extraction failed (${e.javaClass.simpleName})")
             null
         }
     }
@@ -348,7 +363,8 @@ class CoverExtractor @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "extractCoverFromZipFile failed for ${file.name}", e)
+            if (e is CancellationException) throw e
+            Log.w(TAG, "ZIP cover extraction failed (${e.javaClass.simpleName})")
             null
         }
     }
@@ -388,7 +404,8 @@ class CoverExtractor @Inject constructor(
                 firstImageBytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "extractCoverFromZipStream failed: ${e.message}")
+            if (e is CancellationException) throw e
+            Log.w(TAG, "ZIP stream cover extraction failed (${e.javaClass.simpleName})")
             null
         } finally {
             try { input?.close() } catch (_: Exception) {}
@@ -560,9 +577,16 @@ class CoverExtractor @Inject constructor(
                 else -> null
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to open InputStream for $source", e)
+            if (e is CancellationException) throw e
+            Log.w(TAG, "Failed to open book input stream (${e.javaClass.simpleName})")
             null
         }
+    }
+
+    private fun isContentBacked(source: Any): Boolean = when (source) {
+        is Uri -> source.scheme == "content"
+        is String -> Uri.parse(source).scheme == "content"
+        else -> false
     }
 
     private fun openParcelFileDescriptor(source: Any): ParcelFileDescriptor? {
@@ -591,7 +615,8 @@ class CoverExtractor @Inject constructor(
                 else -> null
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to open ParcelFileDescriptor for $source", e)
+            if (e is CancellationException) throw e
+            Log.w(TAG, "Failed to open book descriptor (${e.javaClass.simpleName})")
             null
         }
     }

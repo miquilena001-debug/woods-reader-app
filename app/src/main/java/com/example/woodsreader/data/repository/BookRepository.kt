@@ -10,6 +10,8 @@ import com.example.woodsreader.data.database.CollectionDao
 import com.example.woodsreader.data.database.CollectionEntity
 import com.example.woodsreader.data.database.BookDistribution
 import com.example.woodsreader.data.database.BookEntity
+import com.example.woodsreader.data.source.BookContentHash
+import kotlinx.coroutines.CancellationException
 import com.example.woodsreader.data.database.BookmarkDao
 import com.example.woodsreader.data.database.BookmarkEntity
 import com.example.woodsreader.data.database.TtsRuleDao
@@ -173,8 +175,19 @@ class BookRepository @Inject constructor(
     suspend fun upsertBooks(books: List<BookEntity>)   = bookDao.upsertAll(books)
     suspend fun deleteBook(book: BookEntity)           = bookDao.delete(book)
     suspend fun deleteBookById(id: String)             = bookDao.deleteById(id)
-    suspend fun bookExistsByHash(hash: String)         = bookDao.existsByHash(hash)
-    suspend fun getBookByHash(hash: String)            = bookDao.getByHash(hash)
+    suspend fun bookExistsByHash(hash: String) =
+        BookContentHash.isContentAddress(hash) && bookDao.existsByHash(hash)
+
+    suspend fun getBookByHash(hash: String) =
+        if (BookContentHash.isContentAddress(hash)) bookDao.getByHash(hash) else null
+
+    suspend fun upsertBookIfCurrent(book: BookEntity, isCurrent: () -> Boolean): Boolean =
+        db.withTransaction {
+            if (!isCurrent()) return@withTransaction false
+            bookDao.upsert(book)
+            if (!isCurrent()) throw CancellationException("Book import was superseded")
+            true
+        }
     suspend fun getBookByPath(path: String): BookEntity? = bookDao.getByPath(path)
     suspend fun existsByPath(path: String): Boolean = bookDao.existsByPath(path)
 

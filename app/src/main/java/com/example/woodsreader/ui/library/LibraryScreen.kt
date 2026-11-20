@@ -2,6 +2,7 @@ package com.example.woodsreader.ui.library
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -82,6 +83,7 @@ fun LibraryScreen(
     val activeCollectionFilter by viewModel.collectionFilter.collectAsStateWithLifecycle()
 
     var showCreateCollectionDialog by remember { mutableStateOf(false) }
+    var showCustomScanPathsDialog by remember { mutableStateOf(false) }
     var showWebToEpubDialog by remember { mutableStateOf(false) }
     var collectionToDelete by remember { mutableStateOf<CollectionEntity?>(null) }
     var newCollectionName by remember { mutableStateOf("") }
@@ -171,6 +173,7 @@ fun LibraryScreen(
                         }
                     },
                     onAddFolderClick = { folderPickerLauncher.launch(null) },
+                    onManageFoldersClick = { showCustomScanPathsDialog = true },
                     onWebToEpubClick = { showWebToEpubDialog = true }
                 )
             }
@@ -410,6 +413,80 @@ fun LibraryScreen(
                         colors = ButtonDefaults.textButtonColors(contentColor = HiddenForest.TextLow)
                     ) {
                         Text("Cancelar")
+                    }
+                }
+            )
+        }
+
+        if (showCustomScanPathsDialog) {
+            val customPaths = userPreferences?.customScanPaths.orEmpty()
+            AlertDialog(
+                onDismissRequest = { showCustomScanPathsDialog = false },
+                containerColor = HiddenForest.Surface,
+                titleContentColor = HiddenForest.Text,
+                textContentColor = HiddenForest.TextSecondary,
+                title = { Text("Carpetas añadidas") },
+                text = {
+                    if (customPaths.isEmpty()) {
+                        Text("Todavía no has añadido carpetas.")
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 320.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            customPaths.forEach { path ->
+                                val uri = remember(path) { Uri.parse(path) }
+                                val folderName = remember(path) {
+                                    Uri.decode(uri.lastPathSegment.orEmpty())
+                                        .substringAfterLast('/')
+                                        .substringAfterLast(':')
+                                        .ifBlank { path }
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        folderName,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = HiddenForest.Text
+                                    )
+                                    Text(
+                                        "Se incluyen sus subcarpetas",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = HiddenForest.TextLow
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        TextButton(onClick = { viewModel.scanCustomFolder(path) }) {
+                                            Text("Actualizar")
+                                        }
+                                        TextButton(onClick = { viewModel.removeCustomScanPath(path) }) {
+                                            Text("Quitar")
+                                        }
+                                    }
+                                }
+                                if (path != customPaths.last()) {
+                                    HorizontalDivider(color = HiddenForest.Outline)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.scanCustomFolders()
+                            showCustomScanPathsDialog = false
+                        }
+                    ) {
+                        Text("Actualizar todas")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCustomScanPathsDialog = false }) {
+                        Text("Cerrar")
                     }
                 }
             )

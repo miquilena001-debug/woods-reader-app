@@ -3,6 +3,7 @@ package com.example.woodsreader.core.translation.calibre
 import android.content.Context
 import android.os.SystemClock
 import android.util.LruCache
+import com.example.woodsreader.BuildConfig
 import com.example.woodsreader.core.translation.calibre.inplace.TextTranslator
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -31,8 +32,19 @@ object Placeholders {
     }
 }
 
+internal enum class TranslationEngine { NEW_TEXT, LEGACY }
+
+internal fun translationEngineOrder(apiKey: String): List<TranslationEngine> =
+    if (apiKey.isBlank()) {
+        listOf(TranslationEngine.LEGACY)
+    } else {
+        listOf(TranslationEngine.NEW_TEXT, TranslationEngine.LEGACY)
+    }
+
 /**
  * Réplica del motor "Google (Free)" del plugin Ebook Translator (Calibre): sin API ni claves de usuario.
+ * La ruta autenticada nueva solo se habilita en debug cuando hay una clave local; release usa el
+ * endpoint legacy porque toda clave incluida en un APK puede extraerse.
  * Cadena de endpoints: translate-pa (nuevo) -> translate_a/single (antiguo).
  * Modo "Merge to Translate": agrupa párrafos con separador "\n\n" y los realinea al volver.
  */
@@ -40,8 +52,6 @@ object Placeholders {
 class GoogleFreeNetworkTranslator @Inject constructor(
     @ApplicationContext private val context: Context
 ) : TextTranslator {
-    private enum class Engine { NEW_TEXT, LEGACY }
-
     private class HttpStatusException(val code: Int) : IOException("HTTP $code")
 
     private class Shielded(val text: String, val ids: List<Int>)
@@ -234,7 +244,7 @@ class GoogleFreeNetworkTranslator @Inject constructor(
 
     private suspend fun requestText(text: String, sl: String, tl: String): String {
         var last: IOException? = null
-        for (engine in listOf(Engine.NEW_TEXT, Engine.LEGACY)) {
+        for (engine in translationEngineOrder(BuildConfig.TRANSLATE_API_KEY)) {
             for (attempt in 0 until MAX_ATTEMPTS) {
                 currentCoroutineContext().ensureActive()
                 pace()
@@ -265,20 +275,21 @@ class GoogleFreeNetworkTranslator @Inject constructor(
         lastRequestAt = SystemClock.elapsedRealtime()
     }
 
-    private fun call(engine: Engine, text: String, sl: String, tl: String): String {
+    private fun call(engine: TranslationEngine, text: String, sl: String, tl: String): String {
         val request = when (engine) {
-            Engine.NEW_TEXT -> {
+            TranslationEngine.NEW_TEXT -> {
                 val q = URLEncoder.encode(text, "UTF-8")
                 val url = "https://translate-pa.googleapis.com/v1/translate" +
                     "?params.client=gtx&query.source_language=$sl&query.target_language=$tl" +
-                    "&query.display_language=en-US&data_types=TRANSLATION&key=$NEW_ENGINE_KEY&query.text=$q"
+                    "&query.display_language=en-US&data_types=TRANSLATION" +
+                    "&key=${BuildConfig.TRANSLATE_API_KEY}&query.text=$q"
                 Request.Builder().url(url)
                     .header("Accept", "*/*")
                     .header("Accept-Language", "en-US,en;q=0.9")
                     .header("User-Agent", CHROME_UA)
                     .build()
             }
-            Engine.LEGACY -> {
+            TranslationEngine.LEGACY -> {
                 val builder = Request.Builder()
                     .header("Accept", "*/*")
                     .header("Accept-Language", "en-US,en;q=0.9")
@@ -302,8 +313,8 @@ class GoogleFreeNetworkTranslator @Inject constructor(
             val body = response.body?.string().orEmpty()
             val parsed = try {
                 when (engine) {
-                    Engine.NEW_TEXT -> JSONObject(body).getString("translation")
-                    Engine.LEGACY -> {
+                    TranslationEngine.NEW_TEXT -> JSONObject(body).getString("translation")
+                    TranslationEngine.LEGACY -> {
                         val sentences = JSONObject(body).getJSONArray("sentences")
                         val sb = StringBuilder()
                         for (i in 0 until sentences.length()) sb.append(sentences.getJSONObject(i).optString("trans", ""))
@@ -328,8 +339,6 @@ class GoogleFreeNetworkTranslator @Inject constructor(
         const val MAX_INTERVAL_MS = 1500L
         const val RATE_LIMIT_WAIT_MS = 15_000L
 
-        // Claves públicas incluidas en el plugin de código abierto Ebook Translator (cliente web de Google)
-        const val NEW_ENGINE_KEY = "AIzaSyDLEeFI5OtFBwYBIoK_jj5m32rZK5CkCXA"
         const val CHROME_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
         const val LEGACY_UA = "DeepLBrowserExtension/1.3.0 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +

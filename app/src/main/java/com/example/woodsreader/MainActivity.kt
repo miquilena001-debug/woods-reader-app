@@ -49,6 +49,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.example.woodsreader.data.datastore.UserPreferencesRepository
 import com.example.woodsreader.data.repository.BookRepository
+import com.example.woodsreader.data.source.BookContentHash
+import com.example.woodsreader.data.source.BookSourceFormatValidator
+import com.example.woodsreader.data.source.ContentProviderIo
+import com.example.woodsreader.data.source.LatestImportRequestGate
 import com.example.woodsreader.service.BookMetadataExtractor
 import com.example.woodsreader.ui.permissions.PermissionsScreen
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +61,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import java.util.UUID
+import java.io.File
 import javax.inject.Inject
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -96,6 +105,10 @@ class MainActivity : FragmentActivity() {
      */
     private val _pendingBookId = MutableStateFlow<String?>(null)
     val pendingBookId: StateFlow<String?> = _pendingBookId.asStateFlow()
+    private val externalImportGate = LatestImportRequestGate()
+    private var externalImportJob: Job? = null
+    private var permissionCheckInProgress = false
+    private var permissionRequestPending = false
 
     // Registrar result launcher para STORAGE en Android 11+
     private val requestManageStorage = registerForActivityResult(
@@ -144,10 +157,25 @@ class MainActivity : FragmentActivity() {
                         BetaExpiredScreen(
                             onCloseApp = { finishAffinity() }
                         )
-                    } else if (!hasPermissions && !prefs!!.hasGrantedPermissions) {
+                    } else if (!hasPermissions && !prefs!!.manualFolderScanOnly) {
                         PermissionsScreen(
-                            onPermissionsGranted = { checkPermissionsAndSave() },
-                            onRequestPermission = { launchPermissionRequest() }
+                            onRequestPermission = { launchPermissionRequest() },
+                            onChooseFoldersManually = {
+                                lifecycleScope.launch {
+                                    try {
+                                        userPreferencesRepo.setManualFolderScanOnly(true)
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Log.e("WoodsReader", "Could not save manual folder mode", e)
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "No se pudo guardar el modo manual. Inténtalo de nuevo.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            }
                         )
                     } else {
                         // Permisos otorgados -> mostrar Library/Onboarding
@@ -177,18 +205,39 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun checkPermissionsAndSave() {
-        if (hasRequiredPermissions()) {
-            lifecycleScope.launch {
-                // << CHANGE: Validación previa para evitar escrituras redundantes en DataStore
+        if (!hasRequiredPermissions() || permissionCheckInProgress) return
+        permissionCheckInProgress = true
+        lifecycleScope.launch {
+            try {
                 val current = userPreferencesRepo.userPreferencesFlow.first()
-                if (current.hasGrantedPermissions) return@launch
-                
-                userPreferencesRepo.markPermissionsGranted()
+                val firstGrant = !current.hasGrantedPermissions
+                val returningFromManualMode = current.manualFolderScanOnly
+                if (firstGrant) userPreferencesRepo.markPermissionsGranted()
+                if (returningFromManualMode) {
+                    userPreferencesRepo.setManualFolderScanOnly(false)
+                }
+
+                if (firstGrant || permissionRequestPending || returningFromManualMode) {
+                    scannerService.scan(current.customScanPaths)
+                }
+                permissionRequestPending = false
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WoodsReader", "Could not save storage permission state", e)
+                Toast.makeText(
+                    this@MainActivity,
+                    "No se pudo guardar el estado del permiso.",
+                    Toast.LENGTH_LONG
+                ).show()
+            } finally {
+                permissionCheckInProgress = false
             }
         }
     }
 
     private fun launchPermissionRequest() {
+        permissionRequestPending = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
@@ -226,76 +275,148 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            val uri = intent.data ?: return
-            Log.d("WoodsReader", "URI externo recibido: $uri")
-            Toast.makeText(this, "Abriendo libro...", Toast.LENGTH_SHORT).show()
-            lifecycleScope.launch(Dispatchers.IO) {
-                try {
-                    val name = resolveFileName(uri)
-                    val size = resolveFileSize(uri)
-                    val hash = try { computePartialHash(uri) } catch (_: Exception) { "" }
+        if (intent?.action != Intent.ACTION_VIEW) return
 
-                    val existing = if (hash.isNotBlank()) {
-                        bookRepository.getBookByHash(hash)
-                    } else {
-                        null
-                    } ?: bookRepository.getBookByPath(uri.toString())
+        val requestId = externalImportGate.begin()
+        externalImportJob?.cancel()
+        externalImportJob = null
+        _pendingBookId.value = null
 
-                    if (existing != null) {
-                        _pendingBookId.value = existing.id
-                        return@launch
+        val uri = intent.data ?: return
+        Toast.makeText(this, "Abriendo libro...", Toast.LENGTH_SHORT).show()
+        externalImportJob = lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                if (!isValidIncomingBook(uri)) {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (externalImportGate.isCurrent(requestId)) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "No se pudo leer un PDF o EPUB válido.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
+                    return@launch
+                }
 
-                    // Extraer metadatos e insertar
-                    val entity = bookMetadataExtractor.extractMetadata(uri, name, size, hash)
-                        ?: com.example.woodsreader.data.database.BookEntity(
-                            id = java.util.UUID.randomUUID().toString(),
-                            title = name.substringBeforeLast('.'),
-                            author = "Desconocido",
-                            filePath = uri.toString(),
-                            format = if (name.endsWith(".pdf", ignoreCase = true)) {
-                                com.example.woodsreader.data.model.BookFormat.PDF
-                            } else {
-                                com.example.woodsreader.data.model.BookFormat.EPUB
-                            },
-                            fileSizeBytes = size,
-                            fileHash = hash,
-                            importedAt = System.currentTimeMillis()
-                        )
-                    bookRepository.upsertBook(entity)
-                    _pendingBookId.value = entity.id
-                } catch (e: Exception) {
-                    Log.e("WoodsReader", "Error al importar libro externo: $uri", e)
+                val name = resolveFileName(uri)
+                val size = resolveFileSize(uri)
+                val hash = scannerService.computePartialHash(uri)
+                if (!externalImportGate.isCurrent(requestId)) return@launch
+
+                val existing = (if (BookContentHash.isContentAddress(hash)) {
+                    bookRepository.getBookByHash(hash)
+                } else {
+                    null
+                }) ?: bookRepository.getBookByPath(uri.toString())
+
+                if (!externalImportGate.isCurrent(requestId)) return@launch
+                if (existing != null) {
+                    publishPendingBookIfCurrent(existing.id, requestId)
+                    return@launch
+                }
+
+                val entity = bookMetadataExtractor.extractMetadata(uri, name, size, hash)
+                if (entity == null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        if (externalImportGate.isCurrent(requestId)) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "No se pudo leer un PDF o EPUB válido.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    return@launch
+                }
+
+                val persistedEntity = entity.copy(
+                    fileHash = hash.takeIf(BookContentHash::isContentAddress)
+                        ?: "pending-import-${UUID.randomUUID()}"
+                )
+                bookRepository.upsertBookIfCurrent(persistedEntity) {
+                    externalImportGate.isCurrent(requestId)
+                }
+                publishPendingBookIfCurrent(persistedEntity.id, requestId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("WoodsReader", "External book import failed (${e.javaClass.simpleName})")
+                withContext(Dispatchers.Main.immediate) {
+                    if (externalImportGate.isCurrent(requestId)) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "No se pudo abrir el libro.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
             }
         }
     }
 
-    /** Delegates to BookScannerService's shared implementation to avoid code duplication. */
-    private fun computePartialHash(uri: Uri): String = scannerService.computePartialHash(uri)
+    private suspend fun isValidIncomingBook(uri: Uri): Boolean {
+        val format = if (uri.scheme == "file" && uri.path != null) {
+            File(uri.path!!).inputStream().use(BookSourceFormatValidator::detectFormat)
+        } else {
+            ContentProviderIo.run {
+                contentResolver.openInputStream(uri)
+                    ?.let(BookSourceFormatValidator::detectFormat)
+            }
+        }
+        return format != null
+    }
+
+    private suspend fun publishPendingBookIfCurrent(bookId: String, requestId: Long) {
+        withContext(Dispatchers.Main.immediate) {
+            if (externalImportGate.isCurrent(requestId)) {
+                _pendingBookId.value = bookId
+            }
+        }
+    }
 
     /** Resuelve el nombre del archivo desde la URI (content:// o file://). */
-    private fun resolveFileName(uri: Uri): String {
+    private suspend fun resolveFileName(uri: Uri): String {
         if (uri.scheme == "content") {
-            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val col = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (col >= 0) return cursor.getString(col)
+            val name = ContentProviderIo.run {
+                contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val col = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (col >= 0) cursor.getString(col) else null
+                    } else {
+                        null
+                    }
                 }
             }
+            if (!name.isNullOrBlank()) return name
         }
         return uri.lastPathSegment ?: "book.epub"
     }
 
     /** Resuelve el tamaño del archivo desde la URI. */
-    private fun resolveFileSize(uri: Uri): Long {
+    private suspend fun resolveFileSize(uri: Uri): Long {
         if (uri.scheme == "content") {
-            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val col = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                    if (col >= 0) return cursor.getLong(col)
-                }
+            return ContentProviderIo.run {
+                contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.SIZE),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val col = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                        if (col >= 0 && !cursor.isNull(col)) cursor.getLong(col) else 0L
+                    } else {
+                        0L
+                    }
+                } ?: 0L
             }
         }
         return 0L

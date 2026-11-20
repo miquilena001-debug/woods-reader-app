@@ -58,6 +58,7 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun markOnboardingComplete()           = update { it.copy(hasCompletedOnboarding = true) }
     suspend fun resetOnboarding()                  = update { it.copy(hasCompletedOnboarding = false) }
     suspend fun markPermissionsGranted()           = update { it.copy(hasGrantedPermissions = true) }
+    suspend fun setManualFolderScanOnly(value: Boolean) = update { it.copy(manualFolderScanOnly = value) }
     suspend fun updateLastReadBookId(id: String)   = update { it.copy(lastReadBookId = id) }
 
     // ── TTS ───────────────────────────────────────────────────────────────────
@@ -87,6 +88,10 @@ class UserPreferencesRepository @Inject constructor(
     suspend fun addCustomScanPath(path: String) = update { prefs ->
         if (path !in prefs.customScanPaths) prefs.copy(customScanPaths = prefs.customScanPaths + path)
         else prefs
+    }
+
+    suspend fun removeCustomScanPath(path: String) = update { prefs ->
+        prefs.copy(customScanPaths = prefs.customScanPaths.filterNot { it == path })
     }
 
     suspend fun saveScanStats(lastScanTime: Long, filesScanned: Int, newBooksFound: Int) =

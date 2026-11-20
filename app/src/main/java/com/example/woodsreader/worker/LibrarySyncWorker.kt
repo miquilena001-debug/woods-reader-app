@@ -38,18 +38,20 @@ class LibrarySyncWorker @AssistedInject constructor(
             true 
         }
 
-        if (!hasPermission) {
-            Log.d("LibrarySyncWorker", "No storage permission. Skipping sync.")
-            return Result.failure()
-        }
-
-        showProgressNotification("Buscando libros nuevos…")
-
         try {
             val prefs = preferencesRepo.userPreferencesFlow.first()
+            if (!hasPermission && !prefs.manualFolderScanOnly) {
+                Log.d("LibrarySyncWorker", "No storage permission. Skipping sync.")
+                return Result.failure()
+            }
+
+            showProgressNotification("Buscando libros nuevos…")
 
             // Phase 1: Quick Scan — discovers new books fast
-            val stats = scannerService.quickScan(prefs.customScanPaths)
+            val stats = scannerService.quickScan(
+                prefs.customScanPaths,
+                scanWholeDevice = !prefs.manualFolderScanOnly
+            )
 
             preferencesRepo.saveScanStats(
                 lastScanTime  = System.currentTimeMillis(),

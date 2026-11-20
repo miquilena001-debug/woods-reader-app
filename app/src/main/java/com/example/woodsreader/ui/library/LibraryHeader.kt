@@ -16,6 +16,10 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,8 +40,11 @@ fun LibraryHeader(
     finishedCount: Int, 
     onScanClick: () -> Unit,
     onAddFolderClick: () -> Unit,
+    onManageFoldersClick: () -> Unit = {},
     onWebToEpubClick: () -> Unit = {}
 ) {
+    var showFolderMenu by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -121,15 +128,36 @@ fun LibraryHeader(
             }
         }
 
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(HiddenForest.SurfaceVariant)
-                .border(1.dp, HiddenForest.Outline, RoundedCornerShape(12.dp))
-                .clickable { onAddFolderClick() }
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-        ) {
-            Icon(Icons.Default.FolderOpen, contentDescription = "Añadir Carpeta", tint = HiddenForest.TextSecondary, modifier = Modifier.size(18.dp))
+        Box {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(HiddenForest.SurfaceVariant)
+                    .border(1.dp, HiddenForest.Outline, RoundedCornerShape(12.dp))
+                    .clickable { showFolderMenu = true }
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+            ) {
+                Icon(Icons.Default.FolderOpen, contentDescription = "Carpetas", tint = HiddenForest.TextSecondary, modifier = Modifier.size(18.dp))
+            }
+            DropdownMenu(
+                expanded = showFolderMenu,
+                onDismissRequest = { showFolderMenu = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Añadir carpeta") },
+                    onClick = {
+                        showFolderMenu = false
+                        onAddFolderClick()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Carpetas añadidas") },
+                    onClick = {
+                        showFolderMenu = false
+                        onManageFoldersClick()
+                    }
+                )
+            }
         }
 
         Box(

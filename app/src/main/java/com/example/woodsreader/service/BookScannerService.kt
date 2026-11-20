@@ -10,6 +10,9 @@ import androidx.documentfile.provider.DocumentFile
 import com.example.woodsreader.data.database.BookEntity
 import com.example.woodsreader.data.model.BookFormat
 import com.example.woodsreader.data.repository.BookRepository
+import com.example.woodsreader.data.source.BookContentHash
+import com.example.woodsreader.data.source.BookSourceFormatValidator
+import com.example.woodsreader.data.source.ContentProviderIo
 import com.example.woodsreader.data.scanner.FileSystemScanner
 import com.example.woodsreader.data.scanner.MediaStoreScanner
 import com.example.woodsreader.data.model.BookScanResult
@@ -17,6 +20,7 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -94,11 +98,13 @@ class BookScannerService @Inject constructor(
     private val processingFiles = ConcurrentHashMap.newKeySet<String>()
 
     private val observers = mutableListOf<RecursiveFileObserver>()
-    private var contentObserver: ContentObserver? = null
+    private val contentObservers = mutableListOf<ContentObserver>()
     private var debounceJob: Job? = null
 
     /** Active scan job â€” can be cancelled by [cancelScan]. */
     private var activeScanJob: Job? = null
+    @Volatile private var watchedPaths: List<String> = emptyList()
+    @Volatile private var watchedWholeDevice: Boolean = true
 
     // â”€â”€ Supported formats (extension â†’ magic bytes map) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -142,14 +148,17 @@ class BookScannerService @Inject constructor(
      * The quick scan completes first and makes books visible immediately;
      * the deep enrich and cleanup run in the background.
      */
-    fun scan(paths: List<String> = DEFAULT_SCAN_PATHS) {
+    fun scan(
+        paths: List<String> = DEFAULT_SCAN_PATHS,
+        scanWholeDevice: Boolean = true
+    ) {
         // Cancel any active scan before starting a new one
         activeScanJob?.cancel()
         activeScanJob = scope.launch {
             _isScanning.value = true
             try {
                 // Phase 1: Quick Scan
-                val stats = quickScan(paths)
+                val stats = quickScan(paths, scanWholeDevice)
                 Log.d(TAG, "Quick scan done. Found=${stats.scannedCount} New=${stats.newBooksCount}")
                 _scanProgress.value = "✓ Escaneo rápido: ${stats.scannedCount} analizados, ${stats.newBooksCount} nuevos"
             } finally {
@@ -162,7 +171,7 @@ class BookScannerService @Inject constructor(
             if (isActive) deepEnrich()
 
             // Phase 3: Orphan cleanup
-            if (isActive) cleanupOrphanedBooks()
+            if (isActive && scanWholeDevice) cleanupOrphanedBooks()
         }
     }
 
@@ -182,7 +191,10 @@ class BookScannerService @Inject constructor(
      * **De-duplicated**: MediaStore results are tracked to avoid reprocessing in DeepScanner.
      * Suspendable for use from WorkManager.
      */
-    suspend fun quickScan(paths: List<String> = DEFAULT_SCAN_PATHS): ScanStats {
+    suspend fun quickScan(
+        paths: List<String> = DEFAULT_SCAN_PATHS,
+        scanWholeDevice: Boolean = true
+    ): ScanStats {
         var foundCount = 0
         var newCount   = 0
 
@@ -197,58 +209,59 @@ class BookScannerService @Inject constructor(
         // Batch buffer for new books
         val newBooksBatch = mutableListOf<BookEntity>()
 
-        // ── Phase 1/3: MediaStore (fastest — uses Android's indexed DB) ────────
-        Log.d(TAG, "QuickScan [1/3]: MediaStore...")
-        _scanProgress.value = "Fase 1/3 · MediaStore…"
-        mediaStoreScanner.scanDevice().collect { result ->
-            val path = if (result.uri.scheme == "file") {
-                result.uri.path ?: result.uri.toString()
-            } else {
-                result.uri.toString()
-            }
-            
-            if (!seenPaths.add(path)) return@collect
-            foundCount++
+        if (scanWholeDevice) {
+            // ── Phase 1/3: MediaStore (fastest — uses Android's indexed DB) ────────
+            Log.d(TAG, "QuickScan [1/3]: MediaStore...")
+            _scanProgress.value = "Fase 1/3 · MediaStore…"
+            mediaStoreScanner.scanDevice().collect { result ->
+                val path = if (result.uri.scheme == "file") {
+                    result.uri.path ?: result.uri.toString()
+                } else {
+                    result.uri.toString()
+                }
 
-            if (path !in knownPaths) {
-                val entity = createLightweightEntity(path, result.displayName, result.sizeBytes, result.dateModified)
-                newBooksBatch.add(entity)
-                knownPaths.add(path)
-                newCount++
+                if (!seenPaths.add(path)) return@collect
+                foundCount++
 
-                // Flush batch every 100 books
-                if (newBooksBatch.size >= 100) {
-                    repository.upsertBooks(newBooksBatch.toList())
-                    newBooksBatch.clear()
+                if (path !in knownPaths) {
+                    val entity = createLightweightEntity(path, result.displayName, result.sizeBytes, result.dateModified)
+                    newBooksBatch.add(entity)
+                    knownPaths.add(path)
+                    newCount++
+
+                    if (newBooksBatch.size >= 100) {
+                        repository.upsertBooks(newBooksBatch.toList())
+                        newBooksBatch.clear()
+                    }
+                }
+
+                if (foundCount % 200 == 0) {
+                    _scanProgress.value = "Fase 1/3 · Buscando… $foundCount archivos ($newCount nuevos)"
                 }
             }
 
-            if (foundCount % 200 == 0) {
-                _scanProgress.value = "Fase 1/3 · Buscando… $foundCount archivos ($newCount nuevos)"
-            }
-        }
+            // ── Phase 2/3: Deep filesystem scan (only files NOT seen by MediaStore) ─
+            Log.d(TAG, "QuickScan [2/3]: FileSystem...")
+            _scanProgress.value = "Fase 2/3 · Explorando carpetas…"
+            deepScanner.scanAllDevice().collect { file ->
+                val path = file.absolutePath
+                if (seenPaths.add(path) && path !in knownPaths) {
+                    val entity = createLightweightEntity(
+                        path, file.name, file.length(), file.lastModified()
+                    )
+                    newBooksBatch.add(entity)
+                    knownPaths.add(path)
+                    newCount++
 
-        // ── Phase 2/3: Deep filesystem scan (only files NOT seen by MediaStore) ─
-        Log.d(TAG, "QuickScan [2/3]: FileSystem...")
-        _scanProgress.value = "Fase 2/3 · Explorando carpetas…"
-        deepScanner.scanAllDevice().collect { file ->
-            val path = file.absolutePath
-            if (seenPaths.add(path) && path !in knownPaths) {
-                val entity = createLightweightEntity(
-                    path, file.name, file.length(), file.lastModified()
-                )
-                newBooksBatch.add(entity)
-                knownPaths.add(path)
-                newCount++
-
-                if (newBooksBatch.size >= 100) {
-                    repository.upsertBooks(newBooksBatch.toList())
-                    newBooksBatch.clear()
+                    if (newBooksBatch.size >= 100) {
+                        repository.upsertBooks(newBooksBatch.toList())
+                        newBooksBatch.clear()
+                    }
                 }
-            }
-            foundCount++
-            if (foundCount % 200 == 0) {
-                _scanProgress.value = "Fase 2/3 · Explorando… $foundCount archivos ($newCount nuevos)"
+                foundCount++
+                if (foundCount % 200 == 0) {
+                    _scanProgress.value = "Fase 2/3 · Explorando… $foundCount archivos ($newCount nuevos)"
+                }
             }
         }
 
@@ -306,15 +319,15 @@ class BookScannerService @Inject constructor(
 
                         // Verify the file still exists before opening
                         if (file != null && !file.exists()) {
-                            Log.w(TAG, "DeepEnrich: file missing for ${book.title}, skipping")
+                            Log.w(TAG, "DeepEnrich: source file missing")
                             continue
                         }
 
                         // Compute hash if missing (books from fast scan)
-                        val hash = if (book.fileHash.isEmpty() || book.fileHash.startsWith("pending-")) {
-                            try { computePartialHash(uri) } catch (_: Exception) { "" }
-                        } else {
+                        val hash = if (BookContentHash.isContentAddress(book.fileHash)) {
                             book.fileHash
+                        } else {
+                            computePartialHash(uri)
                         }
 
                         val enriched = enrichSemaphore.withPermit {
@@ -331,7 +344,7 @@ class BookScannerService @Inject constructor(
                         val resolvedCover = enriched.coverCachePath ?: if (existingCoverMissing) null else book.coverCachePath
 
                         // Check if another book entry already owns this real SHA-256 hash
-                        val existingWithHash = if (hash.isNotEmpty() && !hash.startsWith("pending-")) {
+                        val existingWithHash = if (BookContentHash.isContentAddress(hash)) {
                             repository.getBookByHash(hash)
                         } else null
 
@@ -343,7 +356,7 @@ class BookScannerService @Inject constructor(
                                 duplicateId = book.id,
                                 fallbackCoverPath = resolvedCover
                             )
-                            Log.d(TAG, "DeepEnrich: merged and removed duplicate ${book.filePath} (canonical=${existingWithHash.id})")
+                            Log.d(TAG, "DeepEnrich: merged duplicate book")
                             continue
                         }
 
@@ -354,7 +367,13 @@ class BookScannerService @Inject constructor(
                             description = enriched.description.ifBlank { book.description },
                             language = enriched.language.ifBlank { book.language },
                             coverCachePath = resolvedCover,
-                            fileHash = if (hash.isNotEmpty()) hash else book.fileHash
+                            fileHash = if (BookContentHash.isContentAddress(hash)) {
+                                hash
+                            } else if (book.fileHash.startsWith("pending-")) {
+                                book.fileHash
+                            } else {
+                                "pending-${book.id}"
+                            }
                         )
 
                         if (updated != book) {
@@ -369,10 +388,12 @@ class BookScannerService @Inject constructor(
                                 coverCachePath = updated.coverCachePath,
                                 fileHash = updated.fileHash
                             )
-                            Log.d(TAG, "DeepEnrich: enriched ${book.title} → author=${updated.author}, cover=${updated.coverCachePath != null}")
+                            Log.d(TAG, "DeepEnrich: metadata enriched; cover=${updated.coverCachePath != null}")
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
-                        Log.e(TAG, "DeepEnrich: error processing ${book.title}", e)
+                        Log.e(TAG, "DeepEnrich: processing failed (${e.javaClass.simpleName})")
                     }
                 }
             }
@@ -404,10 +425,10 @@ class BookScannerService @Inject constructor(
                     val uri = file?.let { Uri.fromFile(it) } ?: Uri.parse(book.filePath)
                     if (file != null && !file.exists()) continue
 
-                    val hash = if (book.fileHash.isNotBlank() && !book.fileHash.startsWith("pending-")) {
+                    val hash = if (BookContentHash.isContentAddress(book.fileHash)) {
                         book.fileHash
                     } else {
-                        try { computePartialHash(uri) } catch (_: Exception) { "book_${book.id}" }
+                        computePartialHash(uri).ifBlank { "book_${book.id}" }
                     }
 
                     val bookFormatExt = if (book.format == BookFormat.EPUB) ".epub" else if (book.format == BookFormat.PDF) ".pdf" else ""
@@ -424,10 +445,12 @@ class BookScannerService @Inject constructor(
 
                     if (enriched?.coverCachePath != null) {
                         repository.updateCoverPath(book.id, enriched.coverCachePath)
-                        Log.d(TAG, "enrichMissingCovers: restored cover for ${book.title}")
+                        Log.d(TAG, "enrichMissingCovers: restored cover")
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    Log.w(TAG, "enrichMissingCovers: failed for ${book.title}: ${e.message}")
+                    Log.w(TAG, "enrichMissingCovers: failed (${e.javaClass.simpleName})")
                 }
             }
         } finally {
@@ -507,24 +530,37 @@ class BookScannerService @Inject constructor(
                 _scanProgress.value = "✓ $orphanCount libros huérfanos eliminados"
                 delay(2_000)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "OrphanCleanup: error", e)
+            Log.e(TAG, "OrphanCleanup failed (${e.javaClass.simpleName})")
         } finally {
             _scanProgress.value = ""
         }
     }
 
     /** Installs watchers for real-time detection of new/modified books. */
-    fun startWatching(paths: List<String> = DEFAULT_SCAN_PATHS) {
+    fun startWatching(
+        paths: List<String> = DEFAULT_SCAN_PATHS,
+        scanWholeDevice: Boolean = true
+    ) {
         stopWatching()
-        startContentObserver()
+        watchedPaths = paths
+        watchedWholeDevice = scanWholeDevice
+        if (scanWholeDevice) {
+            startContentObserver(android.provider.MediaStore.Files.getContentUri("external"))
+        }
+        paths.asSequence()
+            .filter { it.startsWith("content://") }
+            .map(Uri::parse)
+            .forEach(::startContentObserver)
         paths.forEach { path ->
             val dir = File(path)
             if (dir.exists() && dir.isDirectory) {
                 createFileObserver(dir).also {
                     it.startWatching()
                     observers.add(it)
-                    Log.d(TAG, "FileObserver watching: $path")
+                    Log.d(TAG, "FileObserver watching directory")
                 }
             }
         }
@@ -534,10 +570,8 @@ class BookScannerService @Inject constructor(
     fun stopWatching() {
         observers.forEach { it.stopWatching() }
         observers.clear()
-        contentObserver?.let {
-            context.contentResolver.unregisterContentObserver(it)
-            contentObserver = null
-        }
+        contentObservers.forEach(context.contentResolver::unregisterContentObserver)
+        contentObservers.clear()
         debounceJob?.cancel()
     }
 
@@ -594,38 +628,43 @@ class BookScannerService @Inject constructor(
 
                     // If it HAS been modified, compute the hash
                     val hash = computePartialHash(uri)
-                if (hash == existingBook.fileHash) {
-                    // File timestamp changed, but content hash is identical. Just update importedAt.
-                    repository.upsertBook(existingBook.copy(importedAt = System.currentTimeMillis()))
+                    if (!BookContentHash.isContentAddress(hash)) return false
+                    if (hash == existingBook.fileHash) {
+                        // File timestamp changed, but content hash is identical. Just update importedAt.
+                        repository.upsertBook(existingBook.copy(importedAt = System.currentTimeMillis()))
+                        return false
+                    }
+
+                    // Content hash changed! Extract new metadata
+                    val enriched = enrichSemaphore.withPermit {
+                        metadataExtractor.get().extractMetadata(uri, name, size, hash)
+                    }
+                    if (enriched != null) {
+                        // Update existing book record, retaining user settings/progress
+                        val updatedBook = existingBook.copy(
+                            title = enriched.title,
+                            author = enriched.author,
+                            language = enriched.language,
+                            description = enriched.description,
+                            fileSizeBytes = size,
+                            fileHash = hash,
+                            coverCachePath = enriched.coverCachePath ?: existingBook.coverCachePath,
+                            importedAt = System.currentTimeMillis()
+                        )
+                        repository.upsertBook(updatedBook)
+                        Log.d(TAG, "Updated modified book")
+                        return true
+                    }
                     return false
                 }
-
-                // Content hash changed! Extract new metadata
-                val enriched = enrichSemaphore.withPermit {
-                    metadataExtractor.get().extractMetadata(uri, name, size, hash)
-                }
-                if (enriched != null) {
-                    // Update existing book record, retaining user settings/progress
-                    val updatedBook = existingBook.copy(
-                        title = enriched.title,
-                        author = enriched.author,
-                        language = enriched.language,
-                        description = enriched.description,
-                        fileSizeBytes = size,
-                        fileHash = hash,
-                        coverCachePath = enriched.coverCachePath ?: existingBook.coverCachePath,
-                        importedAt = System.currentTimeMillis()
-                    )
-                    repository.upsertBook(updatedBook)
-                    Log.d(TAG, "Updated modified book: $name")
-                    return true
-                }
-                return false
             }
-        }
 
-        val hash = computePartialHash(uri)
-            val existing = repository.getBookByHash(hash)
+            val hash = computePartialHash(uri)
+            val existing = if (BookContentHash.isContentAddress(hash)) {
+                repository.getBookByHash(hash)
+            } else {
+                null
+            }
 
             if (existing != null) {
                 // Self-heal: update file path if book moved, restore missing cover
@@ -642,14 +681,20 @@ class BookScannerService @Inject constructor(
             }
 
             if (entity != null) {
-                repository.upsertBook(entity)
-                Log.d(TAG, "Added: $name")
+                val persistedEntity = entity.copy(
+                    fileHash = hash.takeIf(BookContentHash::isContentAddress)
+                        ?: "pending-${System.nanoTime()}-${identifier.hashCode()}"
+                )
+                repository.upsertBook(persistedEntity)
+                Log.d(TAG, "Added book")
                 true
             } else {
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing: $name", e)
+            Log.e(TAG, "Book processing failed (${e.javaClass.simpleName})")
             false
         } finally {
             processingFiles.remove(identifier)
@@ -744,10 +789,8 @@ class BookScannerService @Inject constructor(
     // FILE WATCHERS
     // â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• â• 
 
-    private fun startContentObserver() {
-        if (contentObserver != null) return
-
-        contentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+    private fun startContentObserver(uri: Uri) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
                 if (selfChange) return
                 if (uri != null) {
@@ -762,16 +805,13 @@ class BookScannerService @Inject constructor(
                 debounceJob = scope.launch {
                     delay(DEBOUNCE_MS)
                     Log.d(TAG, "MediaStore relevant change detected — triggering debounced quick scan")
-                    quickScan()
+                    quickScan(watchedPaths, watchedWholeDevice)
                 }
             }
         }
 
-        context.contentResolver.registerContentObserver(
-            android.provider.MediaStore.Files.getContentUri("external"),
-            true,
-            contentObserver!!
-        )
+        context.contentResolver.registerContentObserver(uri, true, observer)
+        contentObservers.add(observer)
         Log.d(TAG, "ContentObserver registered")
     }
 
@@ -792,35 +832,53 @@ class BookScannerService @Inject constructor(
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     /**
-     * Computes a partial SHA-256 over the first 1MB of the file.
-     * Fast enough for real-time use while still uniquely identifying books.
+     * Computes a partial SHA-256 over the first 1MB of the file for deduplication.
      *
      * This method is public so that [MainActivity] can reuse it for
      * external intent handling without duplicating the implementation.
      */
-    fun computePartialHash(uri: Uri): String {
+    suspend fun computePartialHash(uri: Uri): String {
         return try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val stream = when {
-                uri.scheme == "file" && uri.path != null -> File(uri.path!!).inputStream()
-                uri.path?.startsWith("/") == true && File(uri.path!!).exists() -> File(uri.path!!).inputStream()
-                else -> context.contentResolver.openInputStream(uri)
-            } ?: return "uri_${kotlin.math.abs(uri.toString().hashCode())}"
+            if (uri.scheme != "file") {
+                ContentProviderIo.run { computePartialHashBlocking(uri) }
+            } else {
+                computePartialHashBlocking(uri)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Book hash unavailable (${e.javaClass.simpleName})")
+            ""
+        }
+    }
 
+    private fun computePartialHashBlocking(uri: Uri): String {
+        val stream = when {
+            uri.scheme == "file" && uri.path != null -> File(uri.path!!).inputStream()
+            uri.path?.startsWith("/") == true && File(uri.path!!).exists() -> File(uri.path!!).inputStream()
+            else -> context.contentResolver.openInputStream(uri)
+        } ?: return ""
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        stream.use { input ->
+            val buffer = ByteArray(8_192)
             var totalRead = 0L
-            stream.use { s ->
-                val buffer = ByteArray(8_192)
-                var bytesRead: Int
-                while (s.read(buffer).also { bytesRead = it } != -1 && totalRead < 1_048_576L) {
+            while (totalRead < 1_048_576L) {
+                val bytesRead = input.read(buffer, 0, minOf(buffer.size.toLong(), 1_048_576L - totalRead).toInt())
+                if (bytesRead < 0) break
+                if (bytesRead == 0) {
+                    val single = input.read()
+                    if (single < 0) break
+                    digest.update(single.toByte())
+                    totalRead++
+                } else {
                     digest.update(buffer, 0, bytesRead)
                     totalRead += bytesRead
                 }
             }
-            if (totalRead == 0L) return "uri_${kotlin.math.abs(uri.toString().hashCode())}"
-            digest.digest().joinToString("") { "%02x".format(it) }
-        } catch (_: Exception) {
-            "uri_${kotlin.math.abs(uri.toString().hashCode())}"
+            if (totalRead == 0L) return ""
         }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     // â”€â”€ File validation extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -830,32 +888,30 @@ class BookScannerService @Inject constructor(
         if (length() !in SIZE_RANGE) return false
         val ext = extension.lowercase()
         if (ext !in SUPPORTED_EXTENSIONS) return false
-        return validateMagicBytes(ext) { buffer -> inputStream().use { it.read(buffer); buffer } }
-    }
-
-    private fun DocumentFile.isBookFile(): Boolean {
-        if (!isFile || !canRead()) return false
-        if (length() !in SIZE_RANGE) return false
-        val ext = name?.substringAfterLast('.', "")?.lowercase() ?: return false
-        if (ext !in SUPPORTED_EXTENSIONS) return false
-        return validateMagicBytes(ext) { buffer ->
-            context.contentResolver.openInputStream(uri)?.use { it.read(buffer) }
-            buffer
+        return try {
+            inputStream().use(BookSourceFormatValidator::detectFormat) != null
+        } catch (e: Exception) {
+            Log.w(TAG, "File book validation failed (${e.javaClass.simpleName})")
+            false
         }
     }
 
-    private inline fun validateMagicBytes(ext: String, readBytes: (ByteArray) -> ByteArray): Boolean {
+    private suspend fun DocumentFile.isBookFile(): Boolean {
         return try {
-            val buffer = readBytes(ByteArray(4))
-            val header = buffer.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
-            when (ext) {
-                "pdf"        -> header.startsWith("25504446") // %PDF
-                "epub"        -> header.startsWith("504B0304") // PK.. (ZIP)
-                else         -> true
+            ContentProviderIo.run {
+                if (!isFile || !canRead() || length() !in SIZE_RANGE) return@run false
+                val ext = name?.substringAfterLast('.', "")?.lowercase() ?: return@run false
+                if (ext !in SUPPORTED_EXTENSIONS) return@run false
+                context.contentResolver.openInputStream(uri)
+                    ?.let(BookSourceFormatValidator::detectFormat) != null
             }
-        } catch (_: Exception) { false }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "SAF book validation failed (${e.javaClass.simpleName})")
+            false
+        }
     }
-
 }
 
 

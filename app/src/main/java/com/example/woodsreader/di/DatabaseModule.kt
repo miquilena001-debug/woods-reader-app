@@ -49,7 +49,8 @@ object DatabaseModule {
             com.example.woodsreader.data.database.migration.MIGRATION_6_7,
             com.example.woodsreader.data.database.migration.MIGRATION_7_8,
             com.example.woodsreader.data.database.migration.MIGRATION_8_9,
-            com.example.woodsreader.data.database.migration.MIGRATION_9_10
+            com.example.woodsreader.data.database.migration.MIGRATION_9_10,
+            com.example.woodsreader.data.database.migration.MIGRATION_11_12
         )
         // .fallbackToDestructiveMigration() // REMOVIDO: Protección estricta de datos (Parte 4)
         .build()

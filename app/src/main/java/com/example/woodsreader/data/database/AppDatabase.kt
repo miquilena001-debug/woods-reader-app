@@ -14,7 +14,7 @@ import com.example.woodsreader.data.graph.GraphTypeConverters
  * Base de datos Room principal del proyecto.
  *
  * - exportSchema = true  → genera JSON de schema en app/schemas/ para AutoMigrations
- * - version 1            → la versión inicial; nunca bajar esta cifra en producción
+ * - version              → nunca bajar esta cifra en producción
  * - addTypeConverter(AppTypeConverters::class) junto con @ProvidedTypeConverter
  *   permite que Hilt inyecte el convertor con posibles dependencias propias
  */
@@ -33,7 +33,7 @@ import com.example.woodsreader.data.graph.GraphTypeConverters
         GraphRelation::class,
         GraphMention::class
     ],
-    version = 11,
+    version = 12,
     autoMigrations = [
         AutoMigration(from = 10, to = 11)
     ],
@@ -51,6 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_7_8 = com.example.woodsreader.data.database.migration.MIGRATION_7_8
         val MIGRATION_8_9 = com.example.woodsreader.data.database.migration.MIGRATION_8_9
         val MIGRATION_9_10 = com.example.woodsreader.data.database.migration.MIGRATION_9_10
+        val MIGRATION_11_12 = com.example.woodsreader.data.database.migration.MIGRATION_11_12
     }
 
     abstract fun bookDao(): BookDao

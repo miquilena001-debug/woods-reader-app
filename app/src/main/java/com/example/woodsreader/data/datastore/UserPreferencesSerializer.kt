@@ -1,13 +1,13 @@
 package com.example.woodsreader.data.datastore
 
 import androidx.datastore.core.Serializer
+import androidx.datastore.core.CorruptionException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.InputStream
 import java.io.OutputStream
-import android.util.Log
 
 object UserPreferencesSerializer : Serializer<UserPreferences> {
     override val defaultValue: UserPreferences = UserPreferences()
@@ -26,9 +26,7 @@ object UserPreferencesSerializer : Serializer<UserPreferences> {
                 input.readBytes().decodeToString()
             ).sanitize()
         } catch (exception: SerializationException) {
-            // JSON inválido o preferencias corrompidas
-            Log.e("UserPrefsSerializer", "Error al leer preferencias: JSON inválido", exception)
-            defaultValue
+            throw CorruptionException("User preferences could not be decoded", exception)
         }
     }
 

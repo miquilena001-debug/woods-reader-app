@@ -38,6 +38,7 @@ data class UserPreferences(
     // ── Onboarding ────────────────────────────────────────────────────────────
     val hasCompletedOnboarding: Boolean = false,
     val hasGrantedPermissions: Boolean = false,
+    val manualFolderScanOnly: Boolean = false,
     val lastReadBookId: String? = null,
 
     // ── TTS ───────────────────────────────────────────────────────────────────

@@ -11,8 +11,8 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun PermissionsScreen(
-    onPermissionsGranted: () -> Unit,
-    onRequestPermission: () -> Unit
+    onRequestPermission: () -> Unit,
+    onChooseFoldersManually: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -31,16 +31,16 @@ fun PermissionsScreen(
             Spacer(modifier = Modifier.height(32.dp))
             
             Text(
-                text = "Permiso requerido",
+                text = "¿Cómo quieres buscar tus libros?",
                 style = MaterialTheme.typography.titleLarge
             )
             
             Spacer(modifier = Modifier.height(16.dp))
             
             val permissionText = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                "La app necesita acceso a 'Todos los archivos' para poder escanear el almacenamiento en busca de tus ePubs y audiolibros automáticamente."
+                "Concede acceso para buscar libros automáticamente en el dispositivo. Si prefieres no concederlo, continúa y luego usa «Añadir carpeta» en Biblioteca. La carpeta elegida y sus subcarpetas se podrán sincronizar cuando quieras."
             } else {
-                "La app necesita acceso al almacenamiento para poder encontrar tus ePubs y audiolibros."
+                "Concede acceso para buscar libros automáticamente. Si prefieres no concederlo, continúa y luego usa «Añadir carpeta» en Biblioteca. La carpeta elegida y sus subcarpetas se podrán sincronizar cuando quieras."
             }
             
             Text(
@@ -55,16 +55,16 @@ fun PermissionsScreen(
                 onClick = onRequestPermission,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "Otorgar Permiso")
+                Text(text = "Abrir Ajustes y conceder acceso total")
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
             TextButton(
-                onClick = onPermissionsGranted,
+                onClick = onChooseFoldersManually,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(text = "Explorar app sin escanear")
+                Text(text = "Continuar sin escaneo automático")
             }
         }
     }

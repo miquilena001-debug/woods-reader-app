@@ -60,17 +60,22 @@ class LibraryViewModel @Inject constructor(
 
     // Rutas vigiladas por los FileObservers — se actualiza SOLO si cambian realmente
     private var currentWatchedPaths: List<String> = emptyList()
+    private var currentWatchingWholeDevice = false
 
     init {
         viewModelScope.launch {
             preferencesRepository.userPreferencesFlow.collect { prefs ->
+                val scanWholeDevice = !prefs.manualFolderScanOnly
                 // Solo reiniciar los watchers si las rutas cambiaron realmente.
                 // Sin este guard, cada recomposición del NavGraph llama
                 // stopWatching() + startWatching() y el ContentObserver reciente
                 // dispara quickScan() inmediatamente al volver del lector.
-                if (prefs.customScanPaths != currentWatchedPaths) {
+                if (prefs.customScanPaths != currentWatchedPaths ||
+                    scanWholeDevice != currentWatchingWholeDevice
+                ) {
                     currentWatchedPaths = prefs.customScanPaths
-                    scannerService.startWatching(prefs.customScanPaths)
+                    currentWatchingWholeDevice = scanWholeDevice
+                    scannerService.startWatching(prefs.customScanPaths, scanWholeDevice)
                 }
             }
         }
@@ -269,7 +274,37 @@ class LibraryViewModel @Inject constructor(
     fun startScan() {
         viewModelScope.launch {
             val prefs = preferencesRepository.userPreferencesFlow.first()
-            scannerService.scan(prefs.customScanPaths)
+            scannerService.scan(
+                prefs.customScanPaths,
+                scanWholeDevice = !prefs.manualFolderScanOnly
+            )
+        }
+    }
+
+    fun scanCustomFolder(path: String) {
+        scannerService.scan(listOf(path), scanWholeDevice = false)
+    }
+
+    fun scanCustomFolders() {
+        viewModelScope.launch {
+            val paths = preferencesRepository.userPreferencesFlow.first().customScanPaths
+            if (paths.isNotEmpty()) scannerService.scan(paths, scanWholeDevice = false)
+        }
+    }
+
+    fun removeCustomScanPath(path: String) {
+        viewModelScope.launch {
+            preferencesRepository.removeCustomScanPath(path)
+            if (path.startsWith("content://")) {
+                try {
+                    context.contentResolver.releasePersistableUriPermission(
+                        Uri.parse(path),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (e: SecurityException) {
+                    android.util.Log.w("LibraryViewModel", "Could not release folder permission", e)
+                }
+            }
         }
     }
 
@@ -550,15 +585,21 @@ class LibraryViewModel @Inject constructor(
         try {
             context.contentResolver.takePersistableUriPermission(
                 uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
             viewModelScope.launch {
                 preferencesRepository.addCustomScanPath(uri.toString())
-                // Iniciar escaneo inmediatamente tras añadir carpeta
-                scannerService.scan(listOf(uri.toString()))
+                val paths = preferencesRepository.userPreferencesFlow.first().customScanPaths
+                // Scan the selected tree and its descendants without widening access.
+                scannerService.scan(paths, scanWholeDevice = false)
             }
         } catch (e: Exception) {
             android.util.Log.e("LibraryViewModel", "Error taking persistable permission", e)
+            android.widget.Toast.makeText(
+                context,
+                "No se pudo guardar el permiso para esta carpeta. Elige otra carpeta.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
         }
     }
 }

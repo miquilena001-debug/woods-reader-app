@@ -99,6 +99,18 @@ class BookScannerServiceExtremeTest {
         coVerify(exactly = 0) { repository.getBookByHash(any()) }
     }
 
+    @Test
+    fun `manual folder scan does not scan the whole device`() = runTest {
+        coEvery { repository.getAllKnownPaths() } returns emptySet()
+
+        val stats = service.quickScan(emptyList(), scanWholeDevice = false)
+
+        assertEquals(0, stats.scannedCount)
+        assertEquals(0, stats.newBooksCount)
+        verify(exactly = 0) { mediaStoreScanner.scanDevice() }
+        verify(exactly = 0) { deepScanner.scanAllDevice() }
+    }
+
     /**
      * Constraint #4: 100% Coverage
      * Tests that lightweight entity creation applies correct fallbacks and leaves hash empty

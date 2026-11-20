@@ -20,9 +20,9 @@ class OkHttpPageFetcher @JvmOverloads constructor(
     @Inject
     constructor() : this(
         client = OkHttpClient.Builder()
-            .callTimeout(40, TimeUnit.SECONDS)
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .build(),

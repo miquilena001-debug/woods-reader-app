@@ -6,6 +6,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
+import com.example.woodsreader.data.database.BookEntity
 import kotlinx.serialization.Serializable
 
 enum class EntityType {
@@ -34,6 +35,14 @@ class GraphTypeConverters {
 @Immutable
 @Entity(
     tableName = "graph_entity",
+    foreignKeys = [
+        ForeignKey(
+            entity = BookEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["bookId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
     indices = [
         Index(value = ["bookId", "name"], unique = true)
     ]
@@ -90,7 +99,12 @@ data class GraphAlias(
     indices = [
         Index("bookId"),
         Index("sourceId"),
-        Index("targetId")
+        Index("targetId"),
+        Index(
+            value = ["bookId", "sourceId", "targetId", "label"],
+            unique = true,
+            name = "index_graph_relation_unique"
+        )
     ]
 )
 data class GraphRelation(
